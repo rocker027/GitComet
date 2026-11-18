@@ -1355,6 +1355,7 @@ impl GitCometView {
             sidebar_collapsed_popover_anim_seq: 0,
             sidebar_collapsed_before_merge_view: None,
             details_collapsed: false,
+            details_hide_when_clean: false,
             sidebar_width_design: initial_sidebar_width_design,
             details_width_design: initial_details_width_design,
             sidebar_width: initial_sidebar_width,
@@ -1881,6 +1882,32 @@ impl GitCometView {
         if self.frame_decorations.replace(decorations) != Some(decorations) {
             gpui::AppContext::notify(cx, self.bottom_status_bar.entity_id());
         }
+    }
+
+    pub(super) fn details_auto_hidden(&self, cx: &App) -> bool {
+        self.details_hide_when_clean
+            && self.details_pane.read(cx).is_empty_working_copy()
+            && self.details_listing().is_none()
+    }
+
+    pub(super) fn set_details_hide_when_clean(
+        &mut self,
+        enabled: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.details_hide_when_clean != enabled {
+            self.details_hide_when_clean = enabled;
+            gpui::AppContext::notify(cx, self.bottom_status_bar.entity_id());
+            cx.notify();
+        }
+    }
+
+    pub(super) fn toggle_details(&mut self, cx: &mut gpui::Context<Self>) {
+        let show = self.details_collapsed || self.details_auto_hidden(cx);
+        if show {
+            self.set_details_hide_when_clean(false, cx);
+        }
+        self.set_details_collapsed(!show, cx);
     }
 
     pub(super) fn set_details_collapsed(&mut self, collapsed: bool, cx: &mut gpui::Context<Self>) {

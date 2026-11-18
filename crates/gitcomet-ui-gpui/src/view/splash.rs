@@ -766,6 +766,13 @@ impl GitCometView {
                 .then(|| self.terminal_panel_resize_handle(theme, cx));
             let main_content = self.repository_main_content();
             let details_tabs = self.details_tab_content(cx);
+            let details_auto_hidden = self.details_auto_hidden(cx);
+            if details_auto_hidden
+                && self.details_pane.read(cx).contains_focus(window, cx)
+                && let Some(focus) = self.mounted_main_focus(cx)
+            {
+                window.focus(&focus, cx);
+            }
             let sidebar_sections = (!self.sidebar_collapsed)
                 .then(|| self.sidebar_section_content(window, cx))
                 .flatten();
@@ -884,7 +891,7 @@ impl GitCometView {
                                             }
                                         }),
                                 )
-                                .child(
+                                .children((!details_auto_hidden).then(|| {
                                     div()
                                         .id("details_pane")
                                         .debug_selector(|| "details_pane".to_string())
@@ -904,9 +911,9 @@ impl GitCometView {
                                                 stable_cached_fill_view(self.details_pane.clone()),
                                             )),
                                             Some(content) => d.child(content),
-                                        }),
-                                )
-                                .child(
+                                        })
+                                }))
+                                .children((!details_auto_hidden).then(|| {
                                     // Keep the full resize hit target without reserving a
                                     // visible strip between the main and details panes.
                                     div()
@@ -923,8 +930,8 @@ impl GitCometView {
                                             "pane_resize_details",
                                             SidePane::Details,
                                             cx,
-                                        )),
-                                )
+                                        ))
+                                }))
                                 .child(card_left_corner_caps(
                                     px((main_content_card_radius(theme) - 1.0).max(0.0)),
                                     theme.colors.surface.chrome,

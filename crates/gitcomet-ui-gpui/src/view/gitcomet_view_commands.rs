@@ -309,7 +309,7 @@ impl GitCometView {
                 self.set_sidebar_collapsed(!self.sidebar_collapsed, cx);
             }
             Command::ToggleDetails => {
-                self.set_details_collapsed(!self.details_collapsed, cx);
+                self.toggle_details(cx);
             }
             Command::ToggleDiffView => {
                 let next = match self.diff_view_mode {

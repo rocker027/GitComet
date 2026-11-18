@@ -193,12 +193,17 @@ impl DiffNavigation for WindowNavigation {
     }
     fn layout(&self, cx: &App) -> Option<(Pixels, Pixels, bool, bool)> {
         self.0
-            .read_with(cx, |root, _| {
+            .read_with(cx, |root, cx| {
+                let auto_hidden = root.details_auto_hidden(cx);
                 (
                     root.sidebar_render_width,
-                    root.details_render_width,
+                    if auto_hidden {
+                        px(0.0)
+                    } else {
+                        root.details_render_width
+                    },
                     root.sidebar_collapsed,
-                    root.details_collapsed,
+                    root.details_collapsed || auto_hidden,
                 )
             })
             .ok()

@@ -43,7 +43,7 @@ pub(in crate::view) fn defer(
 }
 
 impl GitCometView {
-    fn mounted_main_focus(&self, cx: &App) -> Option<FocusHandle> {
+    pub(super) fn mounted_main_focus(&self, cx: &App) -> Option<FocusHandle> {
         match self.main_slot() {
             MainSlot::Document => return Some(self.repository_view_focus.clone()),
             MainSlot::Overlay(_) => return Some(self.canvas_overlay_focus.clone()),
@@ -110,6 +110,7 @@ impl GitCometView {
         {
             return;
         }
+        let details_were_hidden = self.details_auto_hidden(cx);
         self.dismiss_hover_popovers(cx);
         match navigation {
             ReviewNavigation::Files { from_graph } => {
@@ -142,6 +143,7 @@ impl GitCometView {
             }
             ReviewNavigation::WorkingCopy => {
                 self.set_details_collapsed(false, cx);
+                self.set_details_hide_when_clean(true, cx);
                 let focus = self.details_pane.update(cx, |pane, cx| {
                     pane.review_details_dismissed = true;
                     cx.notify();
@@ -159,7 +161,10 @@ impl GitCometView {
                 }
                 let fallback = if main.is_some() { handles.len() } else { 0 };
                 handles.extend(main);
-                if !self.details_collapsed && self.active_details_view().is_none() {
+                if !self.details_collapsed
+                    && !self.details_auto_hidden(cx)
+                    && self.active_details_view().is_none()
+                {
                     handles.extend(self.details_pane.read(cx).visible_review_focus_handles());
                 }
                 let current = handles
@@ -174,6 +179,9 @@ impl GitCometView {
                     window.focus(focus, cx);
                 }
             }
+        }
+        if details_were_hidden != self.details_auto_hidden(cx) {
+            gpui::AppContext::notify(cx, self.bottom_status_bar.entity_id());
         }
         cx.notify();
     }

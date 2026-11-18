@@ -148,6 +148,8 @@ fn review_close_commit_details_focuses_graph_when_status_is_empty(cx: &mut gpui:
         cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
     close_commit_details(cx, &view, None);
     assert!(graph_focused(cx, &view));
+    assert!(cx.debug_bounds("details_pane").is_none());
+    assert!(cx.debug_bounds("pane_resize_details").is_none());
     cx.simulate_keystrokes("secondary-f");
     draw_and_drain_test_window(cx);
     assert!(cx.debug_bounds("history_find").is_some());
@@ -201,6 +203,8 @@ fn assert_close_focuses_status(
     let (view, cx) =
         cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
     close_commit_details(cx, &view, Some(area));
+    assert!(cx.debug_bounds("details_pane").is_some());
+    assert!(cx.debug_bounds("pane_resize_details").is_some());
     assert!(cx.update(|window, app| {
         view.read(app)
             .details_pane
@@ -228,6 +232,53 @@ fn review_close_commit_details_focuses_unstaged_rows(cx: &mut gpui::TestAppConte
 #[gpui::test]
 fn review_close_commit_details_focuses_staged_rows(cx: &mut gpui::TestAppContext) {
     assert_close_focuses_status(cx, DiffArea::Staged, StatusSection::Staged);
+}
+
+#[gpui::test]
+fn review_close_commit_details_reopens_for_changes_or_commit_selection(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    close_commit_details(cx, &view, None);
+    assert!(cx.debug_bounds("details_pane").is_none());
+
+    let mut dirty = working_copy_repo(&[], &["working.rs"]);
+    dirty.status_rev += 1;
+    apply_state(cx, &view, app_state_with_active_repo(dirty));
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("status_row_9071_unstaged_0").is_some());
+    focus_status(cx, &view, StatusSection::CombinedUnstaged);
+
+    let mut clean = working_copy_repo(&[], &[]);
+    clean.status_rev += 2;
+    apply_state(cx, &view, app_state_with_active_repo(clean));
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_none());
+    assert!(graph_focused(cx, &view));
+
+    let commit = cx.debug_bounds("history_row_0").unwrap();
+    cx.simulate_click(commit.center(), gpui::Modifiers::default());
+    wait_until(cx, "commit details reopened", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.debug_bounds("commit_details_heading").is_some()
+    });
+}
+
+#[gpui::test]
+fn review_close_commit_details_allows_manually_reopening_clean_working_copy(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    close_commit_details(cx, &view, None);
+    assert!(cx.debug_bounds("details_pane").is_none());
+
+    cx.update(|_, app| view.update(app, |root, cx| root.toggle_details(cx)));
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_some());
 }
 
 fn working_copy_repo(staged: &[&str], unstaged: &[&str]) -> RepoState {

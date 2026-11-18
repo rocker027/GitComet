@@ -315,6 +315,20 @@ impl Element for StatusSectionResizeTracker {
 }
 
 impl DetailsPaneView {
+    pub(in crate::view) fn is_empty_working_copy(&self) -> bool {
+        self.active_repo().is_some_and(|repo| {
+            let showing_review = !self.review_details_dismissed
+                && (repo.history_state.selected_commit.is_some()
+                    || Self::shows_comparison(repo)
+                    || self.selected_worktree_summary().is_some());
+            !showing_review
+                && !self.commit_amend_enabled
+                && !merge_in_progress(repo)
+                && repo.worktree_status_entries().is_some_and(<[_]>::is_empty)
+                && repo.staged_status_entries().is_some_and(<[_]>::is_empty)
+        })
+    }
+
     fn notify_fingerprint(state: &AppState) -> u64 {
         let mut hasher = FxHasher::default();
         state.active_repo.hash(&mut hasher);
@@ -410,17 +424,26 @@ impl DetailsPaneView {
         let subscription = cx.observe(&ui_model, |this, model, cx| {
             let next = Arc::clone(&model.read(cx).state);
             let next_fingerprint = Self::notify_fingerprint(&next);
+            let was_empty = this.is_empty_working_copy();
             if this.advance_pending_commits(&next, cx) {
                 cx.notify();
             }
             if next_fingerprint == this.notify_fingerprint {
                 this.state = next;
-                return;
+            } else {
+                this.notify_fingerprint = next_fingerprint;
+                this.apply_state_snapshot(next, cx);
+                cx.notify();
             }
 
-            this.notify_fingerprint = next_fingerprint;
-            this.apply_state_snapshot(next, cx);
-            cx.notify();
+            if was_empty != this.is_empty_working_copy()
+                && let Some(root) = this.root_view.upgrade()
+                && root.read(cx).details_hide_when_clean
+            {
+                let footer = root.read(cx).bottom_status_bar.entity_id();
+                gpui::AppContext::notify(cx, root.entity_id());
+                gpui::AppContext::notify(cx, footer);
+            }
         });
 
         let commit_message_scroll = ScrollHandle::new();

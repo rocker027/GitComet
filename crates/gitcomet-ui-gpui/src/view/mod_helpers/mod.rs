@@ -1147,6 +1147,7 @@ pub struct GitCometView {
     pub(super) sidebar_collapsed_popover_anim_seq: u64,
     pub(super) sidebar_collapsed_before_merge_view: Option<bool>,
     pub(super) details_collapsed: bool,
+    pub(super) details_hide_when_clean: bool,
     pub(super) sidebar_width_design: f32,
     pub(super) details_width_design: f32,
     pub(super) sidebar_width: Pixels,

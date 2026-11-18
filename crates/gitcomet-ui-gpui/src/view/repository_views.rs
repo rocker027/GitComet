@@ -697,6 +697,7 @@ impl GitCometView {
         self.show_repository_canvas(cx);
         self.select_routed_for_repo(repo.clone(), RoutedArea::Main, None, window, cx);
         self.select_routed_for_repo(repo, RoutedArea::Details, None, window, cx);
+        self.set_details_hide_when_clean(false, cx);
         self.set_details_collapsed(false, cx);
         self.store.dispatch(Msg::SetActiveRepo { repo_id });
         self.store.dispatch(Msg::ClearCommitSelection {

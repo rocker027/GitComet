@@ -317,7 +317,10 @@ impl BarItemOwner for BottomStatusBarView {
             .upgrade()
             .map(|view| {
                 let root = view.read(cx);
-                (root.sidebar_collapsed, root.details_collapsed)
+                (
+                    root.sidebar_collapsed,
+                    root.details_collapsed || root.details_auto_hidden(cx),
+                )
             })
             .unwrap_or((false, false));
 
@@ -353,7 +356,7 @@ impl BarItemOwner for BottomStatusBarView {
             .style(components::ButtonStyle::Transparent)
             .on_click(theme, cx, |this, _e, _w, cx| {
                 let _ = this.root_view.update(cx, |root, cx| {
-                    root.set_details_collapsed(!root.details_collapsed, cx);
+                    root.toggle_details(cx);
                 });
             })
             .gitcomet_tooltip(
