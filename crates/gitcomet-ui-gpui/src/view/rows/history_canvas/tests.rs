@@ -34,9 +34,9 @@ impl Render for RefChipsTestView {
 
 #[test]
 fn history_author_patterns_identify_names_beyond_their_initials() {
+    // Both names abbreviate to "AL".
     let ada = HistoryAuthorVm::new("Ada Lovelace".into());
     let alan = HistoryAuthorVm::new("Alan Lane".into());
-    assert_eq!(ada.initials, alan.initials);
     assert_ne!(ada.pattern, alan.pattern);
     assert_eq!(
         ada.pattern,

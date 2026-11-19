@@ -616,106 +616,12 @@ pub(super) fn paint_history_author_node(
         crate::theme::mix_colors(background, row.lane, 0.75 + expansion * 0.25),
         window,
     );
-    // Adjacent cells in a row share a quad. Device-pixel cells keep the mark
-    // crisp without shaping text or allocating on each animation frame.
-    let cell = super::history_shapes::device_px(bounds.size.width * 0.105, window.scale_factor());
     let inset = if is_merge {
         bounds.size.width * 0.065
     } else {
         px(0.0)
     };
-    let origin = window.pixel_snap_point(point(
-        bounds.center().x - cell * 2.5 - inset,
-        bounds.center().y - cell * 2.0 - inset,
-    ));
-    for (y, bits) in author.pattern.iter().copied().enumerate() {
-        let mut x = 0;
-        while x < 5 {
-            if bits & (1 << x) == 0 {
-                x += 1;
-                continue;
-            }
-            let start = x;
-            while x < 5 && bits & (1 << x) != 0 {
-                x += 1;
-            }
-            let run = Bounds::new(
-                point(origin.x + cell * start as f32, origin.y + cell * y as f32),
-                size(cell * (x - start) as f32, cell),
-            );
-            window.paint_quad(PaintQuad::new(run).background(ink));
-        }
-    }
-}
-
-fn paint_author_initials(
-    bounds: Bounds<Pixels>,
-    author: &HistoryAuthorVm,
-    mut font: Pixels,
-    available: Pixels,
-    foreground: gpui::Rgba,
-    window: &mut Window,
-) {
-    let mut style = window.text_style();
-    style.font_weight = gpui::FontWeight::SEMIBOLD;
-    let mut shaped = shape_truncated_line_cached(
-        window,
-        &style,
-        font,
-        author.initials.shared(),
-        author.initials.text_hash(),
-        font * 16.0,
-        gpui::rgba(0xffffffff),
-        None,
-    );
-    // Unicode case expansion can produce more than two glyphs.
-    if shaped.width > available && shaped.width > px(0.0) {
-        font *= available / shaped.width;
-        shaped = shape_truncated_line_cached(
-            window,
-            &style,
-            font,
-            author.initials.shared(),
-            author.initials.text_hash(),
-            font * 16.0,
-            gpui::rgba(0xffffffff),
-            None,
-        );
-    }
-    let cap_height = shaped
-        .paint_fragments
-        .first()
-        .map(|run| window.text_system().cap_height(run.font_id, font))
-        .unwrap_or(font * 0.7);
-    // Glyph positions stay cached; color is paint-only state.
-    // These single-line initials have no decorations or inline elements.
-    let origin = point(
-        bounds.left() + (bounds.size.width - shaped.width).max(px(0.0)) * 0.5,
-        bounds.center().y + cap_height * 0.5,
-    );
-    let color = foreground.into_color();
-    for fragment in &shaped.paint_fragments {
-        for glyph in &*fragment.glyphs {
-            let position = origin + glyph.position;
-            let _ = if glyph.is_emoji {
-                window.paint_emoji_with_color(
-                    position,
-                    fragment.font_id,
-                    glyph.id,
-                    fragment.font_size,
-                    color,
-                )
-            } else {
-                window.paint_glyph(
-                    position,
-                    fragment.font_id,
-                    glyph.id,
-                    fragment.font_size,
-                    color,
-                )
-            };
-        }
-    }
+    components::paint_author_mark(bounds, inset, author.pattern, ink, window);
 }
 
 /// Whether one rendered ref is the branch selected in the sidebar. Comparison
@@ -2470,11 +2376,10 @@ pub(super) fn history_commit_row_canvas(
                         window,
                     );
 
-                    paint_author_initials(
+                    components::paint_author_mark(
                         avatar,
-                        &author,
-                        scale.ui_text(components::AVATAR_FONT_PX),
-                        avatar_d,
+                        px(0.0),
+                        author.pattern,
                         identity_color,
                         window,
                     );

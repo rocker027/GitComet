@@ -396,30 +396,18 @@ pub(in crate::view) fn history_text_hash(text: &str) -> u64 {
     hasher.finish()
 }
 
-/// Name, initials and a four-row, five-column mirrored mark shared by this author.
+/// Name and the mirrored mark every surface paints for this author.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::view) struct HistoryAuthorVm {
     name: HistoryTextVm,
-    pub(in crate::view) initials: HistoryTextVm,
-    pub(in crate::view) pattern: [u8; 4],
+    pub(in crate::view) pattern: [u8; components::AUTHOR_MARK_ROWS],
 }
 
 impl HistoryAuthorVm {
     pub(in crate::view) fn new(name: SharedString) -> Self {
-        let initials = HistoryTextVm::new(components::author_initials(name.as_ref()).into());
-        let name = HistoryTextVm::new(name);
-        // Each row has ink and a gap. Mirror symmetry keeps the mark legible
-        // even when a compact history row has only one device pixel per cell.
-        const ROWS: [u8; 6] = [0b00100, 0b01010, 0b10001, 0b01110, 0b10101, 0b11011];
-        let mut seed = name.text_hash();
-        let pattern = std::array::from_fn(|_| {
-            let row = ROWS[(seed % ROWS.len() as u64) as usize];
-            seed /= ROWS.len() as u64;
-            row
-        });
+        let pattern = components::author_mark(name.as_ref());
         Self {
-            name,
-            initials,
+            name: HistoryTextVm::new(name),
             pattern,
         }
     }
@@ -1732,7 +1720,6 @@ impl GitCometView {
 }
 
 #[cfg(test)]
-mod author_initials_tests;
 #[cfg(test)]
 mod history_list_plan_tests;
 #[cfg(test)]
