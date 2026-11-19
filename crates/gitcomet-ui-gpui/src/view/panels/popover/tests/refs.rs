@@ -1,5 +1,6 @@
 use super::branch::{create_tracking_store, wait_until};
 use super::*;
+use crate::localization::Language;
 use crate::view::panels::tests::{app_state_with_repo, push_test_state};
 
 fn click_debug_selector(cx: &mut gpui::VisualTestContext, selector: &'static str) {
@@ -1312,8 +1313,8 @@ fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppConte
                     remote_groups,
                     [
                         vec!["Checkout", "Open in new worktree"],
-                        vec!["Pull into current", "Set as tracking upstream"],
-                        vec!["Merge into current", "Squash into current", "Rebase main onto origin/feature/topic"],
+                        vec!["Pull into current (main)", "Set as tracking upstream"],
+                        vec!["Merge into current (main)", "Squash into current (main)", "Rebase main onto origin/feature/topic"],
                         vec!["Create branch", "Create tag…"],
                         vec!["Delete remote branch…"],
                         vec!["Mark origin/feature/topic for comparison", "Compare with working tree"],
@@ -1405,7 +1406,9 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Pull into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == "Pull into current (main)" => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1432,7 +1435,9 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Merge into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == "Merge into current (main)" => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1457,7 +1462,9 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Squash into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == "Squash into current (main)" => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1494,7 +1501,7 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
         ));
 
         let has_pull_into_current = model.items.iter().any(|item| match item {
-            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Pull into current",
+            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Pull into current (main)",
             _ => false,
         });
         assert!(has_pull_into_current);
@@ -1651,7 +1658,9 @@ fn remote_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCo
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Pull into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == "Pull into current (main)" => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1678,7 +1687,9 @@ fn remote_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCo
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Merge into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == "Merge into current (main)" => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1703,7 +1714,9 @@ fn remote_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCo
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Squash into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == "Squash into current (main)" => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1822,7 +1835,7 @@ fn remote_branch_menu_preserves_exact_identity_and_uses_its_loaded_tip(
             }) if remote == "team/alice" && branch == "main"
         ));
         assert!(matches!(
-            action("Pull into current"),
+            action("Pull into current (feature/local)"),
             Some(ContextMenuAction::PullBranch { remote, branch, .. })
                 if remote == "team/alice" && branch == "main"
         ));
@@ -1854,11 +1867,11 @@ fn remote_branch_menu_preserves_exact_identity_and_uses_its_loaded_tip(
             }) if target == selected_tip
         ));
         assert!(matches!(
-            action("Merge into current"),
+            action("Merge into current (feature/local)"),
             Some(ContextMenuAction::MergeRef { reference, .. }) if reference == selected_tip
         ));
         assert!(matches!(
-            action("Squash into current"),
+            action("Squash into current (feature/local)"),
             Some(ContextMenuAction::SquashRef { reference, .. }) if reference == selected_tip
         ));
         assert!(matches!(
@@ -1868,6 +1881,91 @@ fn remote_branch_menu_preserves_exact_identity_and_uses_its_loaded_tip(
             }) if onto == selected_tip
         ));
     });
+}
+
+#[gpui::test]
+fn branch_destination_labels_name_the_current_branch_when_known(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(1);
+    let kind = PopoverKind::BranchMenu {
+        repo_id,
+        target: BranchMenuTarget::remote("origin", "feature/topic"),
+    };
+
+    for (language, head_branch, expected) in [
+        (
+            Language::English,
+            Loadable::Ready("feature/本機".into()),
+            [
+                "Pull into current (feature/本機)",
+                "Merge into current (feature/本機)",
+                "Squash into current (feature/本機)",
+            ],
+        ),
+        (
+            Language::TraditionalChinese,
+            Loadable::Ready("feature/本機".into()),
+            [
+                "拉取至目前分支（feature/本機）",
+                "合併至目前分支（feature/本機）",
+                "壓縮合併至目前分支（feature/本機）",
+            ],
+        ),
+        (
+            Language::English,
+            Loadable::Ready("HEAD".into()),
+            [
+                "Pull into current",
+                "Merge into current",
+                "Squash into current",
+            ],
+        ),
+        (
+            Language::TraditionalChinese,
+            Loadable::NotLoaded,
+            ["拉取至目前分支", "合併至目前分支", "壓縮合併至目前分支"],
+        ),
+    ] {
+        cx.update(|_, app| {
+            app.set_global(language);
+            view.update(app, |this, cx| {
+                let mut repo = RepoState::new_opening(
+                    repo_id,
+                    gitcomet_core::domain::RepoSpec {
+                        workdir: std::path::PathBuf::from("/tmp/branch-destination-labels"),
+                    },
+                );
+                repo.head_branch = head_branch;
+                push_test_state(this, app_state_with_repo(repo, repo_id), cx);
+            });
+        });
+        cx.update(|_, app| {
+            let host = view.read(app).popover_host.clone();
+            let model = host
+                .update(app, |host, cx| host.context_menu_model(&kind, cx))
+                .expect("remote branch menu");
+            let labels: Vec<_> = model
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ContextMenuItem::Entry { label, action, .. }
+                        if matches!(
+                            action.as_ref(),
+                            ContextMenuAction::PullBranch { .. }
+                                | ContextMenuAction::MergeRef { .. }
+                                | ContextMenuAction::SquashRef { .. }
+                        ) =>
+                    {
+                        Some(label.as_ref())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(labels, expected, "{language:?}");
+        });
+    }
 }
 
 #[gpui::test]
@@ -2522,15 +2620,21 @@ fn local_branch_menu_excludes_pull_merge_and_squash_for_current_branch(
             .expect("expected branch context menu model");
 
         let has_merge = model.items.iter().any(|item| match item {
-            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Merge into current",
+            ContextMenuItem::Entry { action, .. } => {
+                matches!(action.as_ref(), ContextMenuAction::MergeRef { .. })
+            }
             _ => false,
         });
         let has_pull = model.items.iter().any(|item| match item {
-            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Pull into current",
+            ContextMenuItem::Entry { action, .. } => {
+                matches!(action.as_ref(), ContextMenuAction::PullBranch { .. })
+            }
             _ => false,
         });
         let has_squash = model.items.iter().any(|item| match item {
-            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Squash into current",
+            ContextMenuItem::Entry { action, .. } => {
+                matches!(action.as_ref(), ContextMenuAction::SquashRef { .. })
+            }
             _ => false,
         });
 

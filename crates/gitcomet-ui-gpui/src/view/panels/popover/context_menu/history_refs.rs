@@ -124,7 +124,7 @@ pub(super) fn model(
     model
 }
 
-/// Keep tooltip/debug metadata attached to its action while composing menus.
+/// Keep presentation metadata attached to its action while composing menus.
 fn append_actions(model: &mut ContextMenuModel, source: ContextMenuModel, clear_shortcuts: bool) {
     let first = source
         .items
@@ -141,6 +141,9 @@ fn append_actions(model: &mut ContextMenuModel, source: ContextMenuModel, clear_
         }
         if let Some(selector) = source.entry_debug_selectors.get(&old_index) {
             model.entry_debug_selectors.insert(index, selector.clone());
+        }
+        if let Some(label) = source.entry_source_labels.get(&old_index) {
+            model.entry_source_labels.insert(index, label.clone());
         }
         model.items.push(item);
     }

@@ -19,6 +19,7 @@ pub(super) fn model(
         .tooltip_mode(components::TruncatedTextTooltipMode::FullTextIfTruncated);
     let mut items = vec![ContextMenuItem::Header(header), ContextMenuItem::Separator];
     let mut branch_entry_tooltips: FxHashMap<usize, SharedString> = FxHashMap::default();
+    let mut branch_entry_source_labels = FxHashMap::default();
 
     let repo = this.state.repos.iter().find(|r| r.id == repo_id);
 
@@ -110,10 +111,29 @@ pub(super) fn model(
     }
 
     if !is_current_branch {
+        let current_branch = active_branch_name
+            .map(String::as_str)
+            .filter(|branch| !branch.is_empty() && *branch != "HEAD");
+        let mut label_with_current_branch =
+            |index, english: &'static str, chinese: &'static str| -> SharedString {
+                let label = language.text(english, chinese);
+                let Some(branch) = current_branch else {
+                    return label.into();
+                };
+                // Keep action styling and selectors independent of the branch name.
+                branch_entry_source_labels.insert(index, english.into());
+                let label: SharedString = match language {
+                    Language::English => format!("{label} ({branch})"),
+                    Language::TraditionalChinese => format!("{label}（{branch}）"),
+                }
+                .into();
+                branch_entry_tooltips.insert(index, label.clone());
+                label
+            };
         items.push(ContextMenuItem::Separator);
         let (remote, branch) = remote_parts.unwrap_or((".", &name));
         items.push(ContextMenuItem::Entry {
-            label: language.text("Pull into current", "拉取至目前分支").into(),
+            label: label_with_current_branch(items.len(), "Pull into current", "拉取至目前分支"),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: None,
             disabled: false,
@@ -159,7 +179,7 @@ pub(super) fn model(
         }
         items.push(ContextMenuItem::Separator);
         items.push(ContextMenuItem::Entry {
-            label: language.text("Merge into current", "合併至目前分支").into(),
+            label: label_with_current_branch(items.len(), "Merge into current", "合併至目前分支"),
             icon: Some("icons/swap.svg".into()),
             shortcut: None,
             disabled: merge_disabled,
@@ -169,9 +189,11 @@ pub(super) fn model(
             }),
         });
         items.push(ContextMenuItem::Entry {
-            label: language
-                .text("Squash into current", "壓縮合併至目前分支")
-                .into(),
+            label: label_with_current_branch(
+                items.len(),
+                "Squash into current",
+                "壓縮合併至目前分支",
+            ),
             icon: Some("icons/arrow_right.svg".into()),
             shortcut: None,
             disabled: merge_disabled,
@@ -411,7 +433,9 @@ pub(super) fn model(
         });
     }
 
-    ContextMenuModel::new(items).with_entry_tooltips(branch_entry_tooltips)
+    let mut model = ContextMenuModel::new(items).with_entry_tooltips(branch_entry_tooltips);
+    model.entry_source_labels = branch_entry_source_labels;
+    model
 }
 
 /// What a new worktree for the branch starts from.

@@ -224,7 +224,8 @@ fn localized_menu(cx: &App, build: impl Fn(Language) -> ContextMenuModel) -> Con
         // Both passes use the same repository state and action order. The menu
         // renderer still needs the source labels for its existing presentation rules.
         let source = build(Language::English);
-        model.entry_source_labels = source
+        let source_labels = source.entry_source_labels;
+        let translated_source_labels = source
             .items
             .into_iter()
             .zip(&model.items)
@@ -242,12 +243,13 @@ fn localized_menu(cx: &App, build: impl Fn(Language) -> ContextMenuModel) -> Con
                         && std::mem::discriminant(source_action.as_ref())
                             == std::mem::discriminant(action.as_ref()) =>
                     {
-                        Some((index, source))
+                        let label = source_labels.get(&index).cloned().unwrap_or(source);
+                        Some((index, label))
                     }
                     _ => None,
                 },
-            )
-            .collect();
+            );
+        model.entry_source_labels.extend(translated_source_labels);
     }
     model
 }
