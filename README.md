@@ -1,182 +1,35 @@
+# <img alt="RevWeave 圖示" src="assets/revweave.svg" width="32" /> RevWeave
 
-# <img alt="GitComet logo" src="assets/gitcomet_logo.svg" width="26" /> GitComet
+**開源桌面 Git 客戶端**
 
-[![Build Status](https://github.com/Auto-Explore/GitComet/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/Auto-Explore/GitComet/actions/workflows/rust.yml)
-[![Discord](https://img.shields.io/badge/Discord-Join%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/2ufDGP8RnA)
-[![Website](https://img.shields.io/badge/Website-gitcomet.dev-0A66C2?logo=googlechrome&logoColor=white)](https://gitcomet.dev)
-[![AutoExplore](https://img.shields.io/badge/AutoExplore-autoexplore.ai-0B7A75?logo=safari&logoColor=white)](https://autoexplore.ai)
-[![license](https://img.shields.io/github/license/Auto-Explore/gitcomet.svg)](LICENSE-AGPL-3.0)
-[![latest](https://img.shields.io/github/v/release/Auto-Explore/gitcomet.svg)](https://github.com/Auto-Explore/gitcomet/releases/latest)
-[![downloads](https://img.shields.io/github/downloads/Auto-Explore/gitcomet/total)](https://github.com/Auto-Explore/gitcomet/releases)
+RevWeave 以提交歷史、分支與差異檢視為核心，由 rocker027 維護，基於 AutoExplore Oy 開發的 [GitComet](https://github.com/Auto-Explore/GitComet)。修改內容與日期記錄於 [NOTICE](NOTICE)。
 
-**Fastest Open Source Git GUI**
-
-GitComet is built for teams that want fast Git operations with local-first privacy, familiar workflows, and open source freedom.
-
-Available for Linux, Windows, and macOS on x86-64 and ARM64. Linux supports Wayland, X11, and WSLg.
-
-[Documentation](https://docs.gitcomet.dev/) · [Features](https://gitcomet.dev/features/) · [GitComet Pro](https://gitcomet.dev/pro/)
-
-<video src="https://github.com/user-attachments/assets/1fc93e58-a04a-4cee-98ed-7b8e14f7a9da" controls></video>
+支援 macOS、Windows 與 Linux。Linux 可使用 Wayland、X11 或 WSLg。
 
 ### Download
 
-Download the latest Open Source binaries/installers from [GitHub Releases](https://github.com/Auto-Explore/GitComet/releases), or see [all installation options](https://gitcomet.dev/download/). Windows installers are signed, and the macOS disk image is notarized.
+在 [RevWeave 的 GitHub Releases](https://github.com/rocker027/GitComet/releases) 取得安裝包。每一版的 `revweave-v<版本>-source.tar.gz` 包含該版對應的原始碼與建置腳本，可在同一頁免費下載。
 
-Bought a GitComet Pro license? [Download the separate Pro client from your account](https://pro.gitcomet.dev/app/downloads). It installs beside the free edition.
-
-<details>
-<summary>Windows</summary>
-
-Download the latest Windows installer or portable binary from [GitHub Releases](https://github.com/Auto-Explore/GitComet/releases).
-
-Install from the Microsoft Store:
-
-<a href="https://apps.microsoft.com/detail/XPFD182V1H793R?referrer=appbadge&mode=full" target="_blank"  rel="noopener noreferrer">
-  <img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
-</a>
-
-</details>
-
-<details>
-<summary>Homebrew (macOS / Linux)</summary>
-
-App and `gitcomet` command from tap:
-
-```bash
-brew install --cask gitcomet
-```
-
-On Linux, the cask installs the AppImage build. If your system cannot launch AppImages, use the APT repo, the RPM, the release tarball, or the `.deb` instead.
-
-</details>
-
-<details>
-<summary>AUR (Arch Linux)</summary>
-
-The [`gitcomet-bin`](https://aur.archlinux.org/packages/gitcomet-bin) package repackages the release tarballs for x86_64 and aarch64 and is updated by the release workflow:
-
-```bash
-git clone https://aur.archlinux.org/gitcomet-bin.git
-cd gitcomet-bin && makepkg -si
-```
-
-</details>
-
-<details>
-<summary>GURU (Gentoo Linux)</summary>
-
-```bash
-emerge --ask dev-vcs/gitcomet
-```
-
-</details>
-
-<details>
-<summary>Nix / NixOS</summary>
-
-Run without installing:
-
-```bash
-nix run nixpkgs#gitcomet
-```
-
-Install for your user:
-
-```bash
-nix profile install nixpkgs#gitcomet
-```
-
-On NixOS, add `gitcomet` to `environment.systemPackages` in `/etc/nixos/configuration.nix` and apply it with `sudo nixos-rebuild switch`. See the [Nixpkgs package](https://search.nixos.org/packages?channel=unstable&show=gitcomet).
-
-</details>
-
-<details>
-<summary>apt (Debian/Ubuntu)</summary>
-
-```bash
-curl -fsSL https://apt.gitcomet.dev/gitcomet-archive-keyring.gpg | sudo tee /usr/share/keyrings/gitcomet-archive-keyring.gpg >/dev/null
-curl -fsSL https://apt.gitcomet.dev/gitcomet.sources | sudo tee /etc/apt/sources.list.d/gitcomet.sources >/dev/null
-sudo apt update
-sudo apt install gitcomet
-```
-
-If you install a Linux tarball or Homebrew binary on Debian, Ubuntu, or WSLg instead of the official `apt` package, install the GUI runtime libraries separately. GitComet uses Fontconfig to discover fonts, draws with Vulkan, or EGL when Vulkan is unavailable, and uses the Wayland libraries in Wayland sessions:
-
-```bash
-sudo apt install libfontconfig1 libxcb1 libxkbcommon0 libxkbcommon-x11-0 libvulkan1 libegl1 libwayland-client0 libwayland-egl1
-```
-
-</details>
-
-<details>
-<summary>RPM (Fedora)</summary>
-
-Download the `.rpm` for your architecture from [GitHub Releases](https://github.com/Auto-Explore/GitComet/releases) and install it:
-
-```bash
-sudo dnf install ./gitcomet-<version>-1.x86_64.rpm
-```
-
-The RPM supports Fedora 42 and newer. It needs glibc 2.35 or newer, so RHEL 9 and its rebuilds (glibc 2.34) cannot install it.
-
-</details>
+RevWeave 使用獨立的設定與工作階段目錄。原 GitComet 的設定仍在原本的位置。命令列與 Git diff／merge 工具繼續使用 `gitcomet` 指令。
 
 ### Requirements
 
-GitComet requires a local Git installation of `2.53` or newer. With an older Git, GitComet shows a notice asking you to update, and features that need newer Git (such as repository maintenance) are turned off.
+Git 2.53 以上可使用完整功能。使用較舊的 Git 時，依賴新版 Git 的功能會停用。
 
-### GitComet User Survey
+### Features
 
-We’re running this short survey to better understand how people use our Git GUI client in their daily work. Your feedback will help us improve the product and prioritize the features that matter most.
-
-https://docs.google.com/forms/d/e/1FAIpQLSd8DKIl222UomSXrpv1q9rWodRlBSQo9pJDD62GbZEANTgD1A/viewform?usp=dialog
-
-### Why GitComet
-
-GitComet started from frustration with existing tools on huge codebases like Chromium. We could not find a product that stays responsive and functional when browsing large repositories and file diffs.
-
-### Editions
-
-#### Open Source
-
-- **Price**: €0 forever
-- **Usage**: Free for personal and commercial use
-- **Privacy**: No account or cloud upload required; works with private repositories
-- **Includes**:
-  - Full local-first desktop workflow
-  - Git remotes, [branch-scoped Pull](docs/pull.md), push, staging, commits
-  - Configurable automatic background fetch across open workspaces ([docs](docs/automatic-fetch.md))
-  - Worktrees, branching, and full history, without agent checkpoints and other tool refs ([docs](docs/hidden-refs.md))
-  - Bare repository browsing and conversion ([docs](docs/bare-repositories.md))
-  - Multi-repository workspaces and windows
-  - Inline and side-by-side diffs, line-level staging, and [Difftastic](docs/difftastic.md)
-  - 2-way and 3-way merge tools
-  - Interactive rebase, cherry-pick, blame, stashes, and submodules
-  - Built-in editor, embedded terminal, and custom themes
-  - Git LFS: file status, content downloads, locks and tracking ([docs](docs/git-lfs.md))
-  - git-annex: content get/drop/copy/move, special remotes, adjusted branches ([docs](docs/git-annex.md))
-
-#### GitComet Pro
-
-[![GitComet Pro connects coding agents, AI providers, and cloud and self-hosted Git forges](assets/gitcomet_pro.png)](https://gitcomet.dev/pro/)
-
-GitComet Pro is available now as a separate desktop app for Linux, macOS, and Windows. Every license includes everything in Open Source, plus:
-
-- Pull request review, comments, approval, and merging on GitHub, GitLab, Azure DevOps, Bitbucket, Gitea, and Forgejo, with capabilities depending on the forge
-- Cloud and self-hosted forge connections, with several accounts at once
-- Coding agent sessions in History: Claude Code, Codex, OpenCode, and Copilot CLI
-- Optional AI for commit messages, explanations, change notes, and pull request descriptions, using your own provider or a local model
-- Projects and per-project Git identity
-
-| License | Price | Details |
-| --- | --- | --- |
-| Personal | €4 / month | Billed annually, plus VAT where applicable. For your own personal or commercial work, on up to five computers. |
-| Organization | €4 / user / month | Billed annually, plus VAT where applicable. Minimum 2 seats. Includes team management and Single Sign-On (SSO) support. |
-
-Forge credentials stay in your operating system's keychain, and pull requests, comments, and merges go directly from your desktop to the forge. The Pro service handles your account and license. AI is optional and sends requests to the provider you choose.
-
-[Compare plans and buy a license](https://gitcomet.dev/pro/#pricing). After purchase, [download and install the Pro client](https://pro.gitcomet.dev/app/downloads), then choose **Connect this machine** and approve the displayed code in your browser. See the [Pro getting started guide](https://docs.gitcomet.dev/gitcomet-pro/getting-started/) for installation and activation.
+- Full local-first desktop workflow
+- Git remotes, [branch-scoped Pull](docs/pull.md), push, staging, commits
+- Configurable automatic background fetch across open workspaces ([docs](docs/automatic-fetch.md))
+- Worktrees, branching, and full history, without agent checkpoints and other tool refs ([docs](docs/hidden-refs.md))
+- Bare repository browsing and conversion ([docs](docs/bare-repositories.md))
+- Multi-repository workspaces and windows
+- Inline and side-by-side diffs, line-level staging, and [Difftastic](docs/difftastic.md)
+- 2-way and 3-way merge tools
+- Interactive rebase, cherry-pick, blame, stashes, and submodules
+- Built-in editor, embedded terminal, and custom themes
+- Git LFS: file status, content downloads, locks and tracking ([docs](docs/git-lfs.md))
+- git-annex: content get/drop/copy/move, special remotes, adjusted branches ([docs](docs/git-annex.md))
 
 ### Build from source
 
@@ -198,10 +51,10 @@ GitComet can be used as a standalone diff and merge tool invoked by `git difftoo
 #### Setup / uninstall (recommended)
 
 ```bash
-# Configure Git globally to use GitComet for both difftool + mergetool
+# Configure Git globally to use RevWeave for both difftool + mergetool
 gitcomet setup
 
-# Remove GitComet integration safely
+# Remove RevWeave integration safely
 gitcomet uninstall
 ```
 
@@ -309,37 +162,19 @@ Choose **Settings → Diff → Diff Engine** to make Difftastic the default, or 
 
 GitComet supports built-in themes and user-provided custom themes.
 
-Built-in themes are embedded in the GitComet binary. Custom themes are loaded from JSON bundle files in your per-user themes directory, which GitComet creates on startup.
+Built-in themes are embedded in the RevWeave binary. Custom themes are loaded from JSON bundle files in your per-user themes directory, which RevWeave creates on startup.
 
 The full theme guide, including file locations, schema details, example bundles, and override behavior, now lives in [THEMES.md](docs/themes.md).
 
 ### Crash logs
 
-GitComet writes panic logs and abnormal-exit recovery state to:
+RevWeave 將當機紀錄寫在以下路徑：
 
-- Linux: `$XDG_STATE_HOME/gitcomet/crashes/` (fallback: `~/.local/state/gitcomet/crashes/`)
-- macOS: `~/Library/Logs/gitcomet/crashes/`
-- Windows: `%LOCALAPPDATA%\gitcomet\crashes\` (fallback: `%APPDATA%\gitcomet\crashes\`)
+- Linux: `$XDG_STATE_HOME/revweave/crashes/`（預設 `~/.local/state/revweave/crashes/`）
+- macOS: `~/Library/Logs/revweave/crashes/`
+- Windows: `%LOCALAPPDATA%\revweave\crashes`（備用 `%APPDATA%\revweave\crashes`）
 
-On Linux, the directory normally is `~/.local/state/gitcomet/crashes/`.
-GitComet creates a process-specific `session-in-progress-<pid>.log` before it
-starts the GPUI runtime. A native abort, terminated UI, or GPUI event loop exit
-without an explicitly requested user shutdown leaves that marker behind; Rust
-panics also write `panic-*.log`, except a panic GitComet contains in code it
-does not own (such as Difftastic), which falls back instead. Error-level runtime diagnostics are mirrored to
-`last-runtime-error-<pid>.log`, including their source location and a backtrace,
-so fatal errors logged and consumed by the UI runtime remain reportable.
-Recovery ignores markers owned by still-running GitComet processes, so one open
-instance cannot consume another's crash state.
-On the next launch, GitComet snapshots recovered data as
-`pending-startup-report.log` and retains it until the user reports or dismisses
-the notification, so a failed subsequent launch cannot discard the report before
-its notification is visible.
-
-GitComet presents the report in the next UI launch and also prints its
-prefilled GitHub issue URL and log path to the launching terminal. The report
-includes app version, platform, structured failure details, and a trimmed
-backtrace.
+發生異常結束時，RevWeave 會在下次啟動顯示復原報告，並在終端機印出記錄路徑。報告包含 App 版本、平台、錯誤資訊及精簡的堆疊追蹤。
 
 ### Prior work and ideas inspired by:
 
@@ -347,14 +182,8 @@ SourceTree, GitKraken, Zed, GPUI, KDiff3, Meld, Github Desktop, Git, Gix, Rust, 
 
 This project has been created with the help of AI tools, including OpenAI Codex and Claude Code. The [AI policy](AI_POLICY.md) sets how contributors use them.
 
-### Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Auto-Explore/gitcomet&type=Date)](https://star-history.com/#Auto-Explore/gitcomet&Date)
-
 ### License
 
-GitComet is licensed under the GNU Affero General Public License Version 3
-(AGPL-3.0-only). See `LICENSE-AGPL-3.0`.
+RevWeave 依 [GNU Affero General Public License v3.0 only](LICENSE-AGPL-3.0) 發行。
 
-Copyright (C) 2026 AutoExplore Oy  
-Contact: info@autoexplore.ai
+上游著作權為 Copyright (C) 2026 AutoExplore Oy，完整聲明見 [NOTICE](NOTICE)。各版的對應原始碼見 [Releases](https://github.com/rocker027/GitComet/releases)。

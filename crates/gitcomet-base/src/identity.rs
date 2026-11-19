@@ -213,6 +213,7 @@ pub struct ProductLinks {
     /// Community chat.
     pub community: Option<Text>,
     pub repository: Option<Text>,
+    pub upstream: Option<NamedLink>,
     /// Where a prefilled crash report is filed; the query string is appended.
     pub new_issue: Option<Text>,
     pub releases: Option<Text>,
@@ -230,6 +231,7 @@ impl ProductLinks {
             editions: None,
             community: None,
             repository: None,
+            upstream: None,
             new_issue: None,
             releases: None,
             license: None,
@@ -255,6 +257,11 @@ impl ProductLinks {
 
     pub const fn with_repository(mut self, url: &'static str) -> Self {
         put(&mut self.repository, Cow::Borrowed(url));
+        self
+    }
+
+    pub const fn with_upstream(mut self, upstream: NamedLink) -> Self {
+        put(&mut self.upstream, upstream);
         self
     }
 
@@ -455,6 +462,7 @@ impl ProductIdentity {
                 editions: Some(Cow::Borrowed("https://gitcomet.dev/#editions")),
                 community: Some(Cow::Borrowed("https://discord.com/invite/2ufDGP8RnA")),
                 repository: Some(Cow::Borrowed(GITCOMET_REPOSITORY)),
+                upstream: None,
                 license: Some(NamedLink {
                     name: Cow::Borrowed("AGPL-3.0"),
                     url: Cow::Borrowed(concat!(
@@ -493,6 +501,43 @@ impl ProductIdentity {
         }
     }
 
+    /// The desktop fork's identity, with its own profile and release channel.
+    pub const fn revweave() -> Self {
+        const LOGO: &[u8] = include_bytes!("../../../assets/revweave.svg");
+        static LINKS: ProductLinks = ProductLinks::new()
+            .with_repository("https://github.com/rocker027/GitComet")
+            .with_upstream(NamedLink::new(
+                Cow::Borrowed("GitComet (AutoExplore Oy)"),
+                Cow::Borrowed(GITCOMET_REPOSITORY),
+            ))
+            .with_releases("https://github.com/rocker027/GitComet/releases")
+            .with_documentation("https://github.com/rocker027/GitComet/blob/HEAD/docs")
+            .with_license(NamedLink::new(
+                Cow::Borrowed("AGPL-3.0-only"),
+                Cow::Borrowed("https://github.com/rocker027/GitComet/blob/HEAD/LICENSE-AGPL-3.0"),
+            ));
+        static UPDATES: UpdateSource =
+            UpdateSource::github_releases(Cow::Borrowed("rocker027"), Cow::Borrowed("GitComet"));
+
+        Self::gitcomet()
+            .with_display_name("RevWeave")
+            .with_directory_name("revweave")
+            .with_app_id("revweave")
+            .with_macos_bundle_id("io.github.rocker027.revweave")
+            .with_links(&LINKS)
+            .with_update_source(&UPDATES)
+            .with_branding(
+                ProductBranding::new()
+                    .with_app_icon_png(include_bytes!("../../../assets/revweave-512.png"))
+                    .with_window_icon_png(include_bytes!(
+                        "../../../assets/linux/hicolor/32x32/apps/revweave.png"
+                    ))
+                    .with_logo_svg(LOGO)
+                    .with_mark_svg(LOGO)
+                    .with_tagline("Open-source desktop Git client"),
+            )
+    }
+
     /// A compile-time identity, including a distinct reverse-DNS macOS bundle id.
     /// For names obtained at runtime, use [`Self::builder`].
     pub const fn new(
@@ -516,6 +561,7 @@ impl ProductIdentity {
                 editions: None,
                 community: None,
                 repository: None,
+                upstream: None,
                 new_issue: None,
                 releases: None,
                 license: None,
@@ -1060,5 +1106,29 @@ mod tests {
         let read_first = IdentitySlot::new();
         assert_eq!(read_first.current(), &ProductIdentity::gitcomet());
         assert_eq!(read_first.install(pro.clone()), Err(Box::new(pro)));
+    }
+
+    #[test]
+    fn revweave_uses_its_own_brand_and_release_channel() {
+        let product = ProductIdentity::revweave();
+        assert_eq!(product.display_name(), "RevWeave");
+        assert_eq!(product.executable_name(), "gitcomet");
+        assert_eq!(product.git_tool_name(), "gitcomet");
+        assert_eq!(product.macos_bundle_id(), "io.github.rocker027.revweave");
+        assert_eq!(product.window_app_id(WindowKind::Main), "revweave");
+        assert_eq!(
+            product.links().repository.as_deref(),
+            Some("https://github.com/rocker027/GitComet")
+        );
+        assert_eq!(
+            product.links().upstream.as_ref().unwrap().url,
+            "https://github.com/Auto-Explore/GitComet"
+        );
+        assert_eq!(
+            product.update_source(),
+            &UpdateSource::github_releases("rocker027".into(), "GitComet".into())
+        );
+        assert!(product.branding().logo_svg.is_some());
+        assert!(product.branding().mark_svg.is_some());
     }
 }

@@ -552,7 +552,7 @@ On macOS, `--gpu` uses IOKit and IOReport instead, without root:
 - whole-GPU energy and performance-state residency.
 
 `perf_macos.py` has the details. Launch the executable inside an app bundle
-(`GitComet.app/Contents/MacOS/gitcomet`). A bare binary relaunches itself from
+(`RevWeave.app/Contents/MacOS/gitcomet`). A bare binary relaunches itself from
 a bundle and exits.
 
 These measurements describe coarse GPU utilization and memory, not GPU duration

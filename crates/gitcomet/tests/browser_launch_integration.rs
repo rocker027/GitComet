@@ -93,7 +93,7 @@ fn a_running_browser_receives_requests_before_relaunch_or_gui_preparation() {
         "port": listener.local_addr().unwrap().port(),
         "token": "early-forward-fixture",
         "pid": std::process::id(),
-        "product": gitcomet_app::ProductIdentity::gitcomet().app_id(),
+        "product": gitcomet_app::ProductIdentity::revweave().app_id(),
     });
     std::fs::write(profile.path().join("instance.json"), descriptor.to_string()).unwrap();
     let server = std::thread::spawn(move || {
@@ -189,7 +189,7 @@ fn a_cli_launch_probes_a_running_browser_only_once() {
         "port": listener.local_addr().unwrap().port(),
         "token": "single-probe-fixture",
         "pid": std::process::id(),
-        "product": gitcomet_app::ProductIdentity::gitcomet().app_id(),
+        "product": gitcomet_app::ProductIdentity::revweave().app_id(),
     });
     std::fs::write(profile.path().join("instance.json"), descriptor.to_string()).unwrap();
     let launch_exited = Arc::new(AtomicBool::new(false));

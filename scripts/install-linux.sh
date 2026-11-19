@@ -7,8 +7,8 @@ Usage: scripts/install-linux.sh [--release|--debug] [--prefix PATH] [--no-build]
 
 Installs:
   - binary to <prefix>/bin/gitcomet
-  - desktop entry to ~/.local/share/applications/gitcomet.desktop
-  - icons to ~/.local/share/icons/hicolor/<size>x<size>/apps/gitcomet.png
+  - desktop entry to ~/.local/share/applications/revweave.desktop
+  - icons to ~/.local/share/icons/hicolor/<size>x<size>/apps/revweave.png
     sizes: 32, 48, 128, 256, 512
 
 Defaults:
@@ -59,21 +59,21 @@ install -Dm755 "$bin_src" "${bindir}/gitcomet"
 tmp_desktop="$(mktemp)"
 trap 'rm -f "$tmp_desktop"' EXIT
 sed "s|^Exec=.*$|Exec=${bindir}/gitcomet|g" \
-  "${repo_root}/assets/linux/gitcomet.desktop" >"$tmp_desktop"
-install -Dm644 "$tmp_desktop" "${appdir}/gitcomet.desktop"
+  "${repo_root}/assets/linux/revweave.desktop" >"$tmp_desktop"
+install -Dm644 "$tmp_desktop" "${appdir}/revweave.desktop"
 
 for size in "${icon_sizes[@]}"; do
-  install -Dm644 "${repo_root}/assets/linux/hicolor/${size}x${size}/apps/gitcomet.png" \
-    "${iconsroot}/${size}x${size}/apps/gitcomet.png"
+  install -Dm644 "${repo_root}/assets/linux/hicolor/${size}x${size}/apps/revweave.png" \
+    "${iconsroot}/${size}x${size}/apps/revweave.png"
 done
 
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$appdir" >/dev/null 2>&1 || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache "${iconsroot}" >/dev/null 2>&1 || true
 
-echo "Installed GitComet:"
+echo "Installed RevWeave:"
 echo "  ${bindir}/gitcomet"
-echo "  ${appdir}/gitcomet.desktop"
+echo "  ${appdir}/revweave.desktop"
 for size in "${icon_sizes[@]}"; do
-  echo "  ${iconsroot}/${size}x${size}/apps/gitcomet.png"
+  echo "  ${iconsroot}/${size}x${size}/apps/revweave.png"
 done
 echo "If GNOME still shows a generic icon, log out/in (or restart GNOME Shell)."

@@ -10,7 +10,7 @@ resulting ticket to the staged .app bundle and DMG.
 
 Expected inputs:
   - <out-dir>/gitcomet-v<VERSION>-macos-<ARCH>.dmg
-  - <out-dir>/stage/gitcomet-v<VERSION>-macos-<ARCH>/GitComet.app
+  - <out-dir>/stage/gitcomet-v<VERSION>-macos-<ARCH>/RevWeave.app
 
 Authentication:
   --keychain-profile PROFILE
@@ -139,7 +139,7 @@ fi
 release_root="gitcomet-v${version}-macos-${arch}"
 stage_root="${out_abs}/stage"
 release_dir="${stage_root}/${release_root}"
-app_path="${release_dir}/GitComet.app"
+app_path="${release_dir}/RevWeave.app"
 app_binary="${app_path}/Contents/MacOS/gitcomet"
 dmg_path="${out_abs}/${release_root}.dmg"
 

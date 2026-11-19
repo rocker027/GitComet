@@ -2987,6 +2987,10 @@ fn help_flag_exits_zero() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
+        stdout.contains("RevWeave"),
+        "help should identify the desktop fork"
+    );
+    assert!(
         stdout.contains("gitcomet"),
         "help output should mention the binary name"
     );

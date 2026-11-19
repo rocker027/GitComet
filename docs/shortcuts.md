@@ -43,7 +43,7 @@ These shortcuts apply in the normal GitComet window.
 | Increase UI scale | `Cmd-+`, `Cmd-=` | `Ctrl-+`, `Ctrl-=` | |
 | Decrease UI scale | `Cmd--` | `Ctrl--` | |
 | Reset UI scale | `Cmd-0` | `Ctrl-0` | |
-| Quit GitComet | `Cmd-Q` | `Ctrl-Q` | |
+| Quit application | `Cmd-Q` | `Ctrl-Q` | |
 
 Additional window-management shortcuts:
 
@@ -66,7 +66,7 @@ that chord (AltGr-S is `ś` on Polish), the shortcut does not run.
 | Action | macOS | Windows / Linux | Notes |
 | --- | --- | --- | --- |
 | Reload repository | `Cmd-R`, `F5` | `Ctrl-R`, `F5` | |
-| Undo the last Git operation | `Cmd-Z` | `Ctrl-Z` | Commits, branch creation and deletion, and soft resets made since GitComet started, as in GitKraken. Also the toolbar's Undo button. A commit or soft reset can only be undone with its branch checked out; its changes go back to the staged files. Refused, without changing anything, when a branch moved since or is checked out in another worktree. Any other operation that moves a branch or HEAD (a checkout, merge, rebase, pull, mixed or hard reset...) ends what can be undone. A recreated branch gets its commit back, not its upstream setting. Text inputs and the Files explorer keep the key for their own undo. |
+| Undo the last Git operation | `Cmd-Z` | `Ctrl-Z` | Commits, branch creation and deletion, and soft resets made since the application started, as in GitKraken. Also the toolbar's Undo button. A commit or soft reset can only be undone with its branch checked out; its changes go back to the staged files. Refused, without changing anything, when a branch moved since or is checked out in another worktree. Any other operation that moves a branch or HEAD (a checkout, merge, rebase, pull, mixed or hard reset...) ends what can be undone. A recreated branch gets its commit back, not its upstream setting. Text inputs and the Files explorer keep the key for their own undo. |
 | Redo the last undone Git operation | `Cmd-Shift-Z` | `Ctrl-Shift-Z` | Also the toolbar's Redo button. `Cmd-Y` / `Ctrl-Y` stays with the conflict resolver's manual alignment. |
 | Fetch all remotes | `Cmd-Shift-F`, `Cmd-L` | `Ctrl-Shift-F`, `Ctrl-L` | `Cmd-L` / `Ctrl-L` match GitKraken. |
 | Pull | `Cmd-Option-Down` | None | Uses the configured upstream. Available from the palette and buttons. |

@@ -145,7 +145,7 @@ pub(super) fn action(source: &str) -> Option<&'static str> {
         "Previous unresolved conflict" => "上一個未解決的衝突",
         "Pull" => "拉取",
         "Push" => "推送",
-        "Quit GitComet" => "結束 GitComet",
+        "Quit application" => "結束應用程式",
         "Redo" => "重做",
         "Redo the last undone Git operation" => "重做上一個已復原的 Git 操作",
         "Reload repository" => "重新載入儲存庫",
@@ -244,8 +244,8 @@ pub(super) fn note(source: &str) -> Option<&'static str> {
         "Commit message input only, and only when the Commit action is enabled. With nothing staged, the button reads Stage All & Commit and this stages every change, untracked files included, before committing. Not during an amend, a merge or rebase, or with a conflict." => {
             "只在提交訊息欄位且「提交」可用時生效。沒有暫存時按鈕顯示「全部暫存並提交」，會先暫存所有變更，包括未追蹤檔案。修訂提交、合併、變基或遇到衝突時不執行。"
         }
-        "Commits, branch creation and deletion, and soft resets made since GitComet started, as in GitKraken. Also the toolbar's Undo button. A commit or soft reset can only be undone with its branch checked out; its changes go back to the staged files. Refused, without changing anything, when a branch moved since or is checked out in another worktree. Any other operation that moves a branch or HEAD (a checkout, merge, rebase, pull, mixed or hard reset...) ends what can be undone. A recreated branch gets its commit back, not its upstream setting. Text inputs and the Files explorer keep the key for their own undo." => {
-            "可復原啟動 GitComet 後的提交、分支建立與刪除、以及軟重設，操作和工具列的「復原」相同。提交與軟重設須在原分支上復原，變更會回到暫存區。若分支已移動或由其他工作樹簽出，會拒絕執行並保持原狀。切換分支、合併、變基、拉取或混合／硬重設等移動分支或 HEAD 的操作，會清除可復原的紀錄。重建分支會還原到原提交，上游設定需另外設定。文字欄位及檔案總管各自保留復原快捷鍵。"
+        "Commits, branch creation and deletion, and soft resets made since the application started, as in GitKraken. Also the toolbar's Undo button. A commit or soft reset can only be undone with its branch checked out; its changes go back to the staged files. Refused, without changing anything, when a branch moved since or is checked out in another worktree. Any other operation that moves a branch or HEAD (a checkout, merge, rebase, pull, mixed or hard reset...) ends what can be undone. A recreated branch gets its commit back, not its upstream setting. Text inputs and the Files explorer keep the key for their own undo." => {
+            "可復原應用程式啟動後的提交、分支建立與刪除、以及軟重設，操作和工具列的「復原」相同。提交與軟重設須在原分支上復原，變更會回到暫存區。若分支已移動或由其他工作樹簽出，會拒絕執行並保持原狀。切換分支、合併、變基、拉取或混合／硬重設等移動分支或 HEAD 的操作，會清除可復原的紀錄。重建分支會還原到原提交，上游設定需另外設定。文字欄位及檔案總管各自保留復原快捷鍵。"
         }
         "Conflict resolver only (kdiff3 manual diff help)." => {
             "僅適用於衝突解決器（kdiff3 手動對齊）。"

@@ -2614,6 +2614,26 @@ impl SettingsWindowView {
                     ),
                 )
             })
+            .when_some(
+                gitcomet_core::identity::current().links().upstream.as_ref(),
+                |card, upstream| {
+                    card.child(
+                        self.link_row(
+                            "settings_window_upstream",
+                            text(cx, "Based on", "上游專案"),
+                            upstream.name.to_string().into(),
+                            theme,
+                        )
+                        .on_activate(
+                            false,
+                            controls::ControlActivation::Action,
+                            move |_, _, cx| {
+                                crate::view::platform_open::open_url_later(&upstream.url, cx);
+                            },
+                        ),
+                    )
+                },
+            )
             .when_some(crate::view::editions_url(), |card, url| {
                 let host = url_label(url);
                 let host: SharedString = host

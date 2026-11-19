@@ -6,9 +6,9 @@
 Name:           gitcomet
 Version:        %{gc_version}
 Release:        %{gc_release}
-Summary:        Fast, resource-efficient Git GUI written in Rust
+Summary:        RevWeave desktop Git client
 License:        AGPL-3.0-only
-URL:            https://gitcomet.dev/
+URL:            https://github.com/rocker027/GitComet
 
 # Linked libraries come from AutoReq. Runtime-loaded ones are declared here and
 # checked by scripts/check-linux-runtime-deps.sh.
@@ -36,8 +36,8 @@ cp -a %{gc_payload}/. %{buildroot}/
 
 %files
 %{_bindir}/gitcomet
-%{_datadir}/applications/gitcomet.desktop
-%{_datadir}/icons/hicolor/*/apps/gitcomet.png
+%{_datadir}/applications/revweave.desktop
+%{_datadir}/icons/hicolor/*/apps/revweave.png
 %license %{_datadir}/licenses/gitcomet/LICENSE-AGPL-3.0
 %license %{_datadir}/licenses/gitcomet/NOTICE
 %doc %{_datadir}/doc/gitcomet/README.md

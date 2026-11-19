@@ -78,11 +78,11 @@ cmd_stage() {
   require_tool desktop-file-validate
 
   install -Dm755 "$binary" "$out/usr/bin/gitcomet"
-  install -Dm644 "$source/assets/linux/gitcomet.desktop" "$out/usr/share/applications/gitcomet.desktop"
-  desktop-file-validate "$out/usr/share/applications/gitcomet.desktop"
+  install -Dm644 "$source/assets/linux/revweave.desktop" "$out/usr/share/applications/revweave.desktop"
+  desktop-file-validate "$out/usr/share/applications/revweave.desktop"
   for size in "${ICON_SIZES[@]}"; do
-    install -Dm644 "$source/assets/linux/hicolor/${size}x${size}/apps/gitcomet.png" \
-      "$out/usr/share/icons/hicolor/${size}x${size}/apps/gitcomet.png"
+    install -Dm644 "$source/assets/linux/hicolor/${size}x${size}/apps/revweave.png" \
+      "$out/usr/share/icons/hicolor/${size}x${size}/apps/revweave.png"
   done
   install -Dm644 "$source/LICENSE-AGPL-3.0" "$out/usr/share/licenses/gitcomet/LICENSE-AGPL-3.0"
   install -Dm644 "$source/NOTICE" "$out/usr/share/licenses/gitcomet/NOTICE"
@@ -133,7 +133,7 @@ cmd_deb() {
     echo
     echo "  * Release ${version}."
     echo
-    echo " -- AutoExplore Oy <info@autoexplore.ai>  $(date -Ru)"
+    echo " -- RevWeave Maintainers <18389739+rocker027@users.noreply.github.com>  $(date -Ru)"
   } > "$work/debian/changelog"
 
   (
@@ -203,8 +203,8 @@ cmd_appimage() {
   appdir="$work/AppDir"
   mkdir -p "$appdir"
   cp -a "$payload/." "$appdir/"
-  install -m644 "$payload/usr/share/applications/gitcomet.desktop" "$appdir/gitcomet.desktop"
-  install -m644 "$payload/usr/share/icons/hicolor/512x512/apps/gitcomet.png" "$appdir/gitcomet.png"
+  install -m644 "$payload/usr/share/applications/revweave.desktop" "$appdir/revweave.desktop"
+  install -m644 "$payload/usr/share/icons/hicolor/512x512/apps/revweave.png" "$appdir/revweave.png"
   cat > "$appdir/AppRun" <<'APPRUN'
 #!/usr/bin/env bash
 set -euo pipefail

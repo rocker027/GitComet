@@ -97,10 +97,10 @@ for version in 0.0.0 0.0.1-rc.1; do
       grep -Fxq "arch = $arch" "$installed/.PKGINFO"
       cmp "$fixtures/binary-$binary_arch" "$installed/usr/bin/gitcomet"
       test -x "$installed/usr/bin/gitcomet"
-      desktop-file-validate "$installed/usr/share/applications/gitcomet.desktop"
+      desktop-file-validate "$installed/usr/share/applications/revweave.desktop"
       for size in 32 48 128 256 512; do
-        cmp "$repo_dir/assets/linux/hicolor/${size}x${size}/apps/gitcomet.png" \
-          "$installed/usr/share/icons/hicolor/${size}x${size}/apps/gitcomet.png"
+        cmp "$repo_dir/assets/linux/hicolor/${size}x${size}/apps/revweave.png" \
+          "$installed/usr/share/icons/hicolor/${size}x${size}/apps/revweave.png"
       done
       for name in LICENSE-AGPL-3.0 NOTICE; do
         cmp "$repo_dir/$name" "$installed/usr/share/licenses/gitcomet-bin/$name"
