@@ -420,13 +420,14 @@ fn the_toolbar_pop_button_pops_the_newest_stash(cx: &mut gpui::TestAppContext) {
             crate::view::test_support::sync_store_snapshot(this, cx);
         });
     });
+    cx.simulate_resize(gpui::size(px(1200.0), px(600.0)));
     cx.update(|window, app| {
         let _ = window.draw(app);
     });
 
     let pop = cx
-        .debug_bounds("stash_pop")
-        .expect("expected the Pop button beside Stash")
+        .debug_bounds("stash_pop_toolbar_caption")
+        .expect("expected the clickable Pop caption beside Stash")
         .center();
     cx.simulate_click(pop, gpui::Modifiers::default());
     cx.run_until_parked();

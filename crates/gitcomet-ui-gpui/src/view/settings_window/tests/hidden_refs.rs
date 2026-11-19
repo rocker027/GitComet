@@ -1,5 +1,4 @@
 use super::*;
-use gitcomet_core::identity::HistoryRefPreset;
 use gitcomet_state::model::{HiddenRefPrefix, HiddenRefPrefixError};
 
 fn settings_window_for(cx: &mut gpui::VisualTestContext) -> gpui::WindowHandle<SettingsWindowView> {
@@ -36,6 +35,7 @@ fn a_window_starts_with_the_default_hidden_refs(cx: &mut gpui::TestAppContext) {
     for hidden in [
         "refs/t3/checkpoints/thread/turn/1",
         "refs/claude/checkpoint-1",
+        "refs/codex-backups/feature-side-bar-before-rebase-20261119T073523Z",
         "refs/pull/7/head",
         "refs/notes/commits",
     ] {
@@ -43,6 +43,7 @@ fn a_window_starts_with_the_default_hidden_refs(cx: &mut gpui::TestAppContext) {
     }
     assert!(!filter.excludes("refs/heads/main"));
     assert!(!filter.excludes("refs/remotes/origin/main"));
+    assert!(!filter.excludes("refs/codex-backups-extra/example"));
 }
 
 #[gpui::test]
@@ -59,21 +60,27 @@ fn hidden_ref_settings_reach_the_store_and_rules_apply_only_on_enter(
     let (store, events) = AppStore::new_test(Arc::new(TestBackend));
     let (_main, cx) =
         cx.add_window_view(|window, cx| GitCometView::new(store.clone(), events, None, window, cx));
+    let codex_backups = gitcomet_core::identity::current()
+        .history_ref_presets()
+        .iter()
+        .find(|preset| preset.id == "codex-backups")
+        .expect("Codex backups preset");
     let settings = settings_window_for(cx);
     let mut settings_cx = gpui::VisualTestContext::from_window(*settings.deref(), cx);
     settings
         .update(&mut settings_cx, |settings, window, cx| {
             settings.select_category(SettingsCategory::GitLog, cx);
             settings.toggle_section(SettingsSection::GitLogHiddenRefs, cx);
-            settings.set_hidden_ref_preset(&HistoryRefPreset::T3_CODE, false, cx);
+            settings.set_hidden_ref_preset(codex_backups, false, cx);
             settings.hidden_ref_prefix_input.update(cx, |input, cx| {
                 input.set_text("refs/review/", cx);
                 window.focus(&input.focus_handle(), cx);
             });
         })
         .expect("edit hidden refs");
-    wait_for_store(&mut settings_cx, &store, "t3 shown", |state| {
-        !state.history_hidden_refs.is_empty() && !state.history_hidden_refs.excludes("refs/t3/x")
+    wait_for_store(&mut settings_cx, &store, "Codex backups shown", |state| {
+        !state.history_hidden_refs.is_empty()
+            && !state.history_hidden_refs.excludes("refs/codex-backups/x")
     });
     assert!(
         !store
@@ -107,7 +114,7 @@ fn hidden_ref_settings_reach_the_store_and_rules_apply_only_on_enter(
                 saved
                     .history_hidden_ref_presets
                     .as_ref()
-                    .and_then(|presets| presets.get("t3-code").copied()),
+                    .and_then(|presets| presets.get("codex-backups").copied()),
                 Some(false)
             );
         })
@@ -216,6 +223,10 @@ fn hidden_ref_rows_explain_what_the_refs_are_and_why_to_hide_them(cx: &mut gpui:
         (
             "settings_window_git_log_hidden_ref_preset_t3-code",
             "Snapshots of the working tree T3 Code saves on every agent turn.\n",
+        ),
+        (
+            "settings_window_git_log_hidden_ref_preset_codex-backups",
+            "Refs saved before rebasing or rewriting branches with Codex.\n",
         ),
         (
             "settings_window_git_log_hidden_ref_preset_github-pull-requests",

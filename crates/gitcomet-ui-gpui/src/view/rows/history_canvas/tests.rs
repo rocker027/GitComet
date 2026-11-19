@@ -356,52 +356,7 @@ fn history_canvas_graph_origin_tracks_fractional_device_pixel_rounding(
 }
 
 #[gpui::test]
-fn chip_label_clipping_omits_the_ellipsis_and_reclaims_its_width(cx: &mut gpui::TestAppContext) {
-    let window_handle = cx.add_window(|_window, _cx| gpui::Empty);
-    cx.update_window(window_handle.into(), |_, window, _| {
-        let style = window.text_style();
-        let font_size = style.font_size.to_pixels(window.rem_size());
-        let text: SharedString = "origin/feature/a-very-long-branch-name".into();
-        let max_width = px(96.0);
-        let color = AppTheme::gitcomet_dark().colors.foreground.primary;
-
-        // Use identical layout inputs so this also proves the truncation
-        // affix participates in the shared layout-cache key.
-        let ellipsized = shape_truncated_line_cached_from(
-            window,
-            &style,
-            font_size,
-            &text,
-            fx_hash_str(text.as_ref()),
-            max_width,
-            color,
-            None,
-            LineCut::RefLeaf,
-        );
-        let clipped = shape_chip_label_cached(
-            window,
-            &style,
-            font_size,
-            &text,
-            fx_hash_str(text.as_ref()),
-            max_width,
-            color,
-            None,
-        );
-
-        assert!(ellipsized.text.ends_with('…'));
-        assert!(!clipped.text.contains('…'));
-        assert!(text.contains(clipped.text.as_ref()));
-        assert!(
-            clipped.text.chars().count() > ellipsized.text.trim_end_matches('…').chars().count(),
-            "removing the ellipsis should expose more of the branch name"
-        );
-    })
-    .expect("history canvas test window should stay open");
-}
-
-#[gpui::test]
-fn chip_labels_give_up_the_ref_path_before_the_name_after_the_last_slash(
+fn chip_labels_mark_truncation_and_keep_the_name_after_the_last_slash(
     cx: &mut gpui::TestAppContext,
 ) {
     let window_handle = cx.add_window(|_window, _cx| gpui::Empty);
@@ -421,7 +376,7 @@ fn chip_labels_give_up_the_ref_path_before_the_name_after_the_last_slash(
         };
         let label = |text: &str, max_width: Pixels, window: &mut Window| {
             let text: SharedString = text.to_owned().into();
-            shape_chip_label_cached(
+            let shaped = shape_truncated_line_cached_from(
                 window,
                 &style,
                 font_size,
@@ -430,39 +385,31 @@ fn chip_labels_give_up_the_ref_path_before_the_name_after_the_last_slash(
                 max_width,
                 color,
                 None,
-            )
-            .text
+                LineCut::RefLeaf,
+            );
+            assert!(shaped.width <= max_width);
+            shaped.text
         };
 
         // The path before the last `/` goes first, from the start; only then
         // does the name itself give way, from its end.
-        for (max_width, expected) in [
+        for (full, expected) in [
             ("feat/new-component", "feat/new-component"),
-            ("eat/new-component", "eat/new-component"),
-            ("/new-component", "/new-component"),
-            ("new-component", "new-component"),
-            ("new-componen", "new-componen"),
-            ("new-compone", "new-compone"),
+            ("feat/new-component", "…/new-component"),
+            ("feat/new-component", "…new-component"),
+            ("feat/new-component", "new-compone…"),
+            ("origin/feat/new-component", "…t/new-component"),
+            ("origin/feat/new-component", "new-comp…"),
+            ("refactor/gitkraken", "…r/gitkraken"),
+            ("v1.2.0", "v1.2…"),
         ] {
-            let max_width = width(max_width, window);
-            assert_eq!(label("feat/new-component", max_width, window), expected);
+            let max_width = width(expected, window);
+            assert_eq!(label(full, max_width, window), expected);
         }
-        // Only the last `/` separates the name, and remote prefixes are path.
-        let max_width = width("new-compo", window);
-        assert_eq!(
-            label("origin/feat/new-component", max_width, window),
-            "new-compo"
-        );
-        let max_width = width("t/new-component", window);
-        assert_eq!(
-            label("origin/feat/new-component", max_width, window),
-            "t/new-component"
-        );
-        // A name without a path is cut from its end, like any label.
-        let max_width = width("mai", window);
-        assert_eq!(label("main", max_width, window), "mai");
-        let max_width = width("v1.2", window);
-        assert_eq!(label("v1.2.0", max_width, window), "v1.2");
+
+        let leaf_width = width("gitkraken", window);
+        let clipped_path = label("refactor/gitkraken", leaf_width, window);
+        assert!(clipped_path.ends_with('…'), "{clipped_path}");
     })
     .expect("history canvas test window should stay open");
 }

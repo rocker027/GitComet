@@ -587,6 +587,60 @@ mod badges {
     const ALL_DENSITIES: [crate::appearance::UiDensity; 3] = crate::appearance::UiDensity::ALL;
 
     #[gpui::test]
+    fn git_toolbar_shows_seven_captions_in_a_split_screen_window(cx: &mut gpui::TestAppContext) {
+        cx.update(|app| {
+            crate::appearance::pin_density_for_test(app, ALL_DENSITIES[1]);
+        });
+        let repo_id = RepoId(1);
+        let (_view, cx) = draw_with_repo(cx, repo_with_upstream(repo_id), repo_id);
+        let buttons = [
+            ("git_undo", "git_undo_toolbar_caption"),
+            ("git_redo", "git_redo_toolbar_caption"),
+            ("pull_main", "pull_main_toolbar_caption"),
+            ("push_main", "push_main_toolbar_caption"),
+            ("create_branch", "create_branch_toolbar_caption"),
+            ("stash", "stash_toolbar_caption"),
+            ("stash_pop", "stash_pop_toolbar_caption"),
+        ];
+
+        cx.simulate_resize(gpui::size(px(960.0), px(560.0)));
+        for language in crate::localization::Language::ALL {
+            cx.update(|window, app| {
+                app.set_global(language);
+                let _ = window.draw(app);
+            });
+            redraw(cx);
+            for (button, caption) in buttons {
+                let button = cx.debug_bounds(button).expect(button);
+                let label = cx.debug_bounds(caption).expect(caption);
+                assert!(label.top() >= button.top() + px(14.0), "{caption}");
+                assert!(label.bottom() <= button.bottom(), "{caption}");
+                assert!(label.left() >= button.left(), "{caption}");
+                assert!(label.right() <= button.right(), "{caption}");
+            }
+            for (main, menu) in [
+                ("pull_main", "pull_menu"),
+                ("push_main", "push_menu"),
+                ("stash_pop", "stash_restore_menu"),
+            ] {
+                let main = cx.debug_bounds(main).expect(main);
+                let menu = cx.debug_bounds(menu).expect(menu);
+                assert_eq!(main.top(), menu.top());
+                assert_eq!(main.bottom(), menu.bottom());
+                assert!(menu.left() >= main.right());
+            }
+        }
+
+        cx.simulate_resize(gpui::size(px(820.0), px(560.0)));
+        redraw(cx);
+        for (button, caption) in buttons {
+            let bounds = cx.debug_bounds(button).expect(button);
+            assert!(bounds.left() >= px(0.0) && bounds.right() <= px(820.0));
+            assert!(cx.debug_bounds(caption).is_none(), "{caption}");
+        }
+    }
+
+    #[gpui::test]
     fn tracked_branch_actions_stay_reachable_at_supported_narrow_widths_compact(
         cx: &mut gpui::TestAppContext,
     ) {

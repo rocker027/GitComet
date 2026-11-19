@@ -13,6 +13,9 @@ pub const CONTROL_PAD_Y_PX: f32 = 3.0;
 /// Horizontal padding for icon-only buttons.
 pub const ICON_PAD_X_PX: f32 = 6.0;
 
+const TOOLBAR_TILE_ICON_SIZE_PX: f32 = 14.0;
+pub(super) const TOOLBAR_TILE_CONTENT_GAP_PX: f32 = 2.0;
+
 /// Horizontal inset applied to a list row's selection/hover highlight so the
 /// rounded background reads as an inset pill/card rather than a full-bleed band.
 pub const ROW_HIGHLIGHT_INSET_PX: f32 = 6.0;
@@ -38,6 +41,17 @@ pub fn control_height(scale: impl Into<UiScale>) -> gpui::Pixels {
 
 pub fn control_height_md(scale: impl Into<UiScale>) -> gpui::Pixels {
     scale.into().row_height(CONTROL_HEIGHT_MD_PX, 32.0)
+}
+
+pub(super) fn toolbar_tile_caption_height(scale: UiScale) -> gpui::Pixels {
+    scale.ui_text(14.0)
+}
+
+/// Room for the icon, one caption line, padding, and the control border.
+pub fn toolbar_tile_height(scale: UiScale) -> gpui::Pixels {
+    let content = scale.px(TOOLBAR_TILE_ICON_SIZE_PX + TOOLBAR_TILE_CONTENT_GAP_PX)
+        + toolbar_tile_caption_height(scale);
+    control_height(scale).max(content + control_pad_y(scale) * 2.0 + gpui::px(2.0))
 }
 
 /// Height of a content header bar: the tallest control it holds plus equal

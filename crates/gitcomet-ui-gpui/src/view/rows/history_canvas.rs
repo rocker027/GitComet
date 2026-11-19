@@ -176,8 +176,8 @@ enum LineCut {
     /// A ref name keeps its leaf, the part after the last `/`: the path
     /// before it gives way first, from the start, and only a leaf that
     /// overflows on its own is cut, from its end. `feat/new-component`
-    /// narrows through `eat/new-component` and `new-component` to
-    /// `new-compone`.
+    /// narrows through `…/new-component` and `…new-component` to
+    /// `new-compone…`.
     RefLeaf,
 }
 
@@ -216,7 +216,7 @@ fn shape_truncated_line_cached_from(
     font_family: Option<&'static str>,
     cut: LineCut,
 ) -> gpui::ShapedLine {
-    shape_truncated_line_cached_from_with_affix(
+    shape_history_line_cached(
         window,
         base_style,
         font_size,
@@ -226,7 +226,6 @@ fn shape_truncated_line_cached_from(
         color,
         font_family,
         cut,
-        "…",
         &[],
     )
 }
@@ -244,7 +243,7 @@ fn shape_highlighted_line_cached(
     font_family: Option<&'static str>,
     highlights: &[(std::ops::Range<usize>, gpui::HighlightStyle)],
 ) -> gpui::ShapedLine {
-    shape_truncated_line_cached_from_with_affix(
+    shape_history_line_cached(
         window,
         base_style,
         font_size,
@@ -254,42 +253,12 @@ fn shape_highlighted_line_cached(
         color,
         font_family,
         LineCut::End,
-        "…",
         highlights,
     )
 }
 
-/// A ref chip's label. It is clipped without an ellipsis so the chip spends
-/// its width on the name, and cut with [`LineCut::RefLeaf`] so the name after
-/// the last `/` is the part that stays readable.
 #[allow(clippy::too_many_arguments)]
-fn shape_chip_label_cached(
-    window: &mut Window,
-    base_style: &gpui::TextStyle,
-    font_size: Pixels,
-    text: &SharedString,
-    text_hash: u64,
-    max_width: Pixels,
-    color: gpui::Rgba,
-    font_family: Option<&'static str>,
-) -> gpui::ShapedLine {
-    shape_truncated_line_cached_from_with_affix(
-        window,
-        base_style,
-        font_size,
-        text,
-        text_hash,
-        max_width,
-        color,
-        font_family,
-        LineCut::RefLeaf,
-        "",
-        &[],
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn shape_truncated_line_cached_from_with_affix(
+fn shape_history_line_cached(
     window: &mut Window,
     base_style: &gpui::TextStyle,
     font_size: Pixels,
@@ -299,11 +268,11 @@ fn shape_truncated_line_cached_from_with_affix(
     color: gpui::Rgba,
     font_family: Option<&'static str>,
     cut: LineCut,
-    truncation_affix: &'static str,
     highlights: &[(std::ops::Range<usize>, gpui::HighlightStyle)],
 ) -> gpui::ShapedLine {
     use std::hash::{Hash, Hasher};
 
+    let truncation_affix = "…";
     let key = {
         let mut hasher = FxHasher::default();
         text_hash.hash(&mut hasher);
@@ -318,7 +287,6 @@ fn shape_truncated_line_cached_from_with_affix(
         color.blue.to_bits().hash(&mut hasher);
         color.alpha.to_bits().hash(&mut hasher);
         cut.hash(&mut hasher);
-        truncation_affix.hash(&mut hasher);
         highlights.len().hash(&mut hasher);
         for (range, style) in highlights {
             range.hash(&mut hasher);
@@ -447,7 +415,7 @@ fn truncate_ref_leaf<'runs>(
     }
 
     let mut skip = leaf_start;
-    let leaf_runs: Vec<gpui::TextRun> = runs
+    let mut leaf_runs: Vec<gpui::TextRun> = runs
         .iter()
         .filter_map(|run| {
             let len = run.len.saturating_sub(skip);
@@ -455,8 +423,12 @@ fn truncate_ref_leaf<'runs>(
             (len > 0).then(|| gpui::TextRun { len, ..run.clone() })
         })
         .collect();
+    // The path is already gone, so mark the cut even if the leaf alone fits.
+    if let Some(last) = leaf_runs.last_mut() {
+        last.len += affix.len();
+    }
     let (leaf, leaf_runs) = gpui::TextLayout::truncate_line(
-        SharedString::from(text[leaf_start..].to_owned()),
+        SharedString::from(format!("{}{affix}", &text[leaf_start..])),
         font_size,
         max_width,
         affix,
@@ -1492,7 +1464,7 @@ fn layout_history_ref_chips(
         });
         let visual = history_chip_visual(theme, row_visual, style_kind, context_menu_open);
         let shaped = match &entry {
-            ChipEntry::Tag(name) => shape_chip_label_cached(
+            ChipEntry::Tag(name) => shape_truncated_line_cached_from(
                 window,
                 base_style,
                 xxs_font,
@@ -1501,8 +1473,9 @@ fn layout_history_ref_chips(
                 max_text_w,
                 visual.text,
                 None,
+                LineCut::RefLeaf,
             ),
-            ChipEntry::Branch(chip) => shape_chip_label_cached(
+            ChipEntry::Branch(chip) => shape_truncated_line_cached_from(
                 window,
                 if matches!(style_kind, HistoryChipStyleKind::Head { .. }) {
                     head_style.get_or_insert_with(|| {
@@ -1519,6 +1492,7 @@ fn layout_history_ref_chips(
                 max_text_w,
                 visual.text,
                 None,
+                LineCut::RefLeaf,
             ),
         };
 

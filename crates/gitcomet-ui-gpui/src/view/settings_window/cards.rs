@@ -1943,8 +1943,20 @@ impl SettingsWindowView {
         // hides them, and the summary counts them.
         for preset in presets {
             let id = format!("settings_window_git_log_hidden_ref_preset_{}", preset.id);
-            let label = format!("{} ({})", preset.label, preset.prefixes.join(", "));
-            let tooltip = SharedString::from(preset.description);
+            let (label, description) = if preset.id == "codex-backups" {
+                (
+                    text(cx, preset.label, "Codex 備份參照"),
+                    text(
+                        cx,
+                        preset.description,
+                        "使用 Codex 變基或改寫分支前保留的參照。\n這些參照會讓舊提交與目前的分支同時出現在歷史圖。",
+                    ),
+                )
+            } else {
+                (preset.label, preset.description)
+            };
+            let label = format!("{label} ({})", preset.prefixes.join(", "));
+            let tooltip = SharedString::from(description);
             let hidden = match settings.preset_visibility(preset, &self.fixed_hidden_refs) {
                 PresetVisibility::Fixed => {
                     detail = detail.child(

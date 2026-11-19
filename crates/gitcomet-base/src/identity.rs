@@ -152,6 +152,13 @@ const GITCOMET_HISTORY_REF_PRESETS: &[HistoryRefPreset] = &[
     HistoryRefPreset::T3_CODE,
     HistoryRefPreset::CLAUDE_CODE,
     HistoryRefPreset::hidden(
+        "codex-backups",
+        "Codex backup refs",
+        &["refs/codex-backups"],
+        "Refs saved before rebasing or rewriting branches with Codex.\n\
+         They keep the earlier history visible alongside the current branches.",
+    ),
+    HistoryRefPreset::hidden(
         "gitcomet-pro",
         "GitComet Pro review refs",
         &["refs/gitcomet-pro"],

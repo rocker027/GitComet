@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 const ACTION_BAR_HEIGHT_PX: f32 = components::CONTROL_HEIGHT_PX + 12.0;
+const TOOLBAR_TILE_MIN_WIDTH_PX: f32 = 850.0;
 
 // The main window supports widths down to 820 design pixels. At that size the
 // branch/upstream run and the fixed actions on the right cannot all retain full
@@ -159,7 +160,10 @@ pub(in super::super) fn action_bar_height<C>(cx: &mut C) -> Pixels
 where
     C: std::borrow::BorrowMut<gpui::App>,
 {
-    crate::ui_scale::UiScale::current(cx).row_height(ACTION_BAR_HEIGHT_PX, 44.0)
+    let scale = crate::ui_scale::UiScale::current(cx);
+    scale
+        .row_height(ACTION_BAR_HEIGHT_PX, 44.0)
+        .max(components::toolbar_tile_height(scale) + scale.px(6.0))
 }
 
 /// Longest badge label offered to layout. Badges can shrink further when the
@@ -693,6 +697,23 @@ impl BarItemOwner for ActionBarView {
         );
         let ui_scale_percent = crate::ui_scale::current(cx).percent;
         let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
+        let scale =
+            crate::ui_scale::UiScale::from_percent(ui_scale_percent).with_appearance(theme.metrics);
+        let show_toolbar_tiles = action_bar
+            && action_bar_width_budget(window.viewport_size().width, theme.metrics)
+                >= scale.px(TOOLBAR_TILE_MIN_WIDTH_PX);
+        let tile_height = show_toolbar_tiles.then(|| components::toolbar_tile_height(scale));
+        let git_button = |id: &'static str, caption: &'static str, fallback: &'static str| {
+            components::Button::new(
+                id,
+                if show_toolbar_tiles {
+                    caption
+                } else {
+                    fallback
+                },
+            )
+            .toolbar_tile(show_toolbar_tiles)
+        };
         let density = action_bar_density(
             window.viewport_size().width,
             ui_scale_percent,
@@ -944,7 +965,7 @@ impl BarItemOwner for ActionBarView {
                 (None, None) => verb.into(),
             };
             div().debug_selector(move || id.to_string()).child(
-                components::Button::new(id, "")
+                git_button(id, verb, "")
                     .start_slot(icon(
                         icon_path,
                         if unavailable.is_none() {
@@ -1180,19 +1201,17 @@ impl BarItemOwner for ActionBarView {
         } else {
             icon_muted
         };
-        let mut pull_main = components::Button::new(
+        let pull_caption = language.text("Pull", "拉取");
+        let mut pull_main = git_button(
             "pull_main",
-            if tight {
-                ""
-            } else {
-                language.text("Pull", "拉取")
-            },
+            pull_caption,
+            if tight { "" } else { pull_caption },
         )
         .busy(pull_loading)
         .start_slot(if pull_loading {
             spinner(("pull_spinner", active_repo_key), pull_color)
         } else {
-            icon("icons/arrow_down.svg", pull_color).into()
+            icon("icons/arrow_down_to_line.svg", pull_color).into()
         })
         .style(components::ButtonStyle::Subtle);
         if pull_count > 0 {
@@ -1213,7 +1232,7 @@ impl BarItemOwner for ActionBarView {
         } else {
             icon_muted
         };
-        let pull_menu = components::Button::new("pull_menu", "")
+        let pull_menu = git_button("pull_menu", "", "")
             .start_slot(icon("icons/chevron_down.svg", pull_menu_icon_color))
             .style(components::ButtonStyle::Subtle)
             .open(pull_picker_active)
@@ -1252,7 +1271,8 @@ impl BarItemOwner for ActionBarView {
                     },
                 )
                 .style(components::SplitButtonStyle::Borderless)
-                .render(theme, ui_scale_percent),
+                .render(theme, ui_scale_percent)
+                .when_some(tile_height, |split, height| split.h(height)),
             )
             .gitcomet_tooltip(
                 theme,
@@ -1271,19 +1291,17 @@ impl BarItemOwner for ActionBarView {
         } else {
             icon_muted
         };
-        let mut push_main = components::Button::new(
+        let push_caption = language.text("Push", "推送");
+        let mut push_main = git_button(
             "push_main",
-            if tight {
-                ""
-            } else {
-                language.text("Push", "推送")
-            },
+            push_caption,
+            if tight { "" } else { push_caption },
         )
         .busy(push_loading)
         .start_slot(if push_loading {
             spinner(("push_spinner", active_repo_key), push_color)
         } else {
-            icon("icons/arrow_up.svg", push_color).into()
+            icon("icons/arrow_up_to_line.svg", push_color).into()
         })
         .style(components::ButtonStyle::Subtle);
         if push_count > 0 {
@@ -1304,7 +1322,7 @@ impl BarItemOwner for ActionBarView {
         } else {
             icon_muted
         };
-        let push_menu = components::Button::new("push_menu", "")
+        let push_menu = git_button("push_menu", "", "")
             .start_slot(icon("icons/chevron_down.svg", push_menu_icon_color))
             .style(components::ButtonStyle::Subtle)
             .open(push_picker_active)
@@ -1350,7 +1368,8 @@ impl BarItemOwner for ActionBarView {
                     },
                 )
                 .style(components::SplitButtonStyle::Borderless)
-                .render(theme, ui_scale_percent),
+                .render(theme, ui_scale_percent)
+                .when_some(tile_height, |split, height| split.h(height)),
             )
             .gitcomet_tooltip(
                 theme,
@@ -1416,24 +1435,24 @@ impl BarItemOwner for ActionBarView {
                 language.text("No changes to stash", "沒有可貯藏的變更")
             };
             let stash_invoker: SharedString = "stash_btn".into();
-            let stash_button =
-                components::Button::new("stash", action_label(language.text("Stash", "貯藏")))
-                    .start_slot(icon(crate::view::icons::STASH_ICON_PATH, icon_primary))
-                    .style(components::ButtonStyle::Subtle)
-                    .open(active_invoker.as_ref() == Some(&stash_invoker))
-                    .selected_bg(menu_selected_bg)
-                    .disabled(!can_stash)
-                    .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
-                        if this.selected_stash_worktree().is_none() {
-                            this.open_popover_for_bounds(
-                                PopoverKind::StashPrompt.invoked_by(stash_invoker.clone()),
-                                bounds,
-                                window,
-                                cx,
-                            );
-                        }
-                    })
-                    .gitcomet_tooltip(theme, target_tooltip(stash_help));
+            let stash_caption = language.text("Stash", "貯藏");
+            let stash_button = git_button("stash", stash_caption, action_label(stash_caption))
+                .start_slot(icon(crate::view::icons::STASH_ICON_PATH, icon_primary))
+                .style(components::ButtonStyle::Subtle)
+                .open(active_invoker.as_ref() == Some(&stash_invoker))
+                .selected_bg(menu_selected_bg)
+                .disabled(!can_stash)
+                .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
+                    if this.selected_stash_worktree().is_none() {
+                        this.open_popover_for_bounds(
+                            PopoverKind::StashPrompt.invoked_by(stash_invoker.clone()),
+                            bounds,
+                            window,
+                            cx,
+                        );
+                    }
+                })
+                .gitcomet_tooltip(theme, target_tooltip(stash_help));
 
             let (pop_index, pop_help) = match stash_pop_target(repo, language) {
                 StashPopTarget::Ready { index, tooltip } => (Some(index), tooltip),
@@ -1454,12 +1473,12 @@ impl BarItemOwner for ActionBarView {
                 pop_tooltip.clone()
             };
             let restore_invoker: SharedString = "stash_restore_menu".into();
-            let pop_button =
-                components::Button::new("stash_pop", action_label(language.text("Pop", "取出")))
-                    .start_slot(icon("icons/arrow_up.svg", icon_primary))
-                    .style(components::ButtonStyle::Subtle)
-                    .disabled(!can_pop);
-            let menu_button = components::Button::new("stash_restore_menu", "")
+            let pop_caption = language.text("Pop", "取出");
+            let pop_button = git_button("stash_pop", pop_caption, action_label(pop_caption))
+                .start_slot(icon("icons/stash_pop.svg", icon_primary))
+                .style(components::ButtonStyle::Subtle)
+                .disabled(!can_pop);
+            let menu_button = git_button("stash_restore_menu", "", "")
                 .start_slot(icon("icons/chevron_down.svg", icon_muted))
                 .style(components::ButtonStyle::Subtle)
                 .open(active_invoker.as_ref() == Some(&restore_invoker))
@@ -1510,7 +1529,8 @@ impl BarItemOwner for ActionBarView {
                 },
             )
             .style(components::SplitButtonStyle::Borderless)
-            .render(theme, ui_scale_percent);
+            .render(theme, ui_scale_percent)
+            .when_some(tile_height, |split, height| split.h(height));
 
             div()
                 .flex()
@@ -1526,10 +1546,12 @@ impl BarItemOwner for ActionBarView {
             .active_context_menu_invoker
             .as_ref()
             .is_some_and(|id| id.as_ref() == create_branch_invoker.as_ref());
+        let branch_caption = language.text("Branch", "分支");
         let create_branch = div().debug_selector(|| "create_branch".to_string()).child(
-            components::Button::new(
+            git_button(
                 "create_branch",
-                action_label(language.text("Branch", "分支")),
+                branch_caption,
+                action_label(branch_caption),
             )
             .start_slot(icon("icons/git_branch.svg", icon_primary))
             .style(components::ButtonStyle::Subtle)

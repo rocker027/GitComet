@@ -15,6 +15,7 @@ its own switch:
 |---|---|
 | `refs/t3` | T3 Code checkpoints, one per agent turn |
 | `refs/claude` | Claude Code checkpoints |
+| `refs/codex-backups` | Backups saved before rebasing or rewriting branches with Codex |
 | `refs/gitcomet-pro` | GitComet Pro review refs |
 | `refs/jj/keep` | Jujutsu, keeping hidden commits alive |
 | `refs/wip` | Magit work-in-progress snapshots |

@@ -1,4 +1,5 @@
 use super::shortcut_keys::{compact_keycap_plate, compact_keycaps};
+use super::tokens::{TOOLBAR_TILE_CONTENT_GAP_PX, toolbar_tile_caption_height};
 use crate::icons::svg_spinner;
 use crate::theme::{AppTheme, composite_over, mix_rgba};
 use crate::ui_scale::UiScale;
@@ -13,7 +14,7 @@ use std::rc::Rc;
 
 use super::{
     ControlActivation, ControlInteractionExt, InteractionState, InteractionStyle, control_height,
-    control_pad_x, control_pad_y, icon_pad_x,
+    control_pad_x, control_pad_y, icon_pad_x, toolbar_tile_height,
 };
 
 /// Gap between a button's icon and its label.
@@ -153,6 +154,7 @@ pub struct Button {
     end_slot: Option<ButtonSlot>,
     separate_end_slot: bool,
     truncate_label: bool,
+    toolbar_tile: bool,
     /// Set when the caller pins the button's geometry instead of taking the
     /// app's. See [`Button::unscaled`].
     scale: Option<UiScale>,
@@ -181,6 +183,7 @@ impl Button {
             end_slot: None,
             separate_end_slot: false,
             truncate_label: false,
+            toolbar_tile: false,
             scale: None,
         }
     }
@@ -231,6 +234,12 @@ impl Button {
     /// Icons and action targets retain their size.
     pub fn truncate_label(mut self) -> Self {
         self.truncate_label = true;
+        self
+    }
+
+    /// Use a toolbar-height target with the leading icon above its caption.
+    pub fn toolbar_tile(mut self, toolbar_tile: bool) -> Self {
+        self.toolbar_tile = toolbar_tile;
         self
     }
 
@@ -381,6 +390,7 @@ impl Button {
             end_slot,
             separate_end_slot,
             truncate_label,
+            toolbar_tile,
             scale,
         } = self;
         let ui_scale = scale.unwrap_or_else(|| ui_scale.into().with_appearance(theme.metrics));
@@ -543,6 +553,11 @@ impl Button {
         let end_slot = end_slot.map(|slot| slot.into_element(&interaction, state));
         let icon_only = looks_like_icon_button(label.as_ref());
         let control_height = control_height(ui_scale);
+        let height = if toolbar_tile {
+            toolbar_tile_height(ui_scale)
+        } else {
+            control_height
+        };
         let control_pad_x = control_pad_x(ui_scale);
         let control_pad_y = control_pad_y(ui_scale);
         let icon_pad_x = icon_pad_x(ui_scale);
@@ -555,12 +570,27 @@ impl Button {
             .flex()
             .items_center()
             .gap(content_gap)
+            .when(toolbar_tile, |d| {
+                d.flex_col()
+                    .justify_center()
+                    .gap(ui_scale.px(TOOLBAR_TILE_CONTENT_GAP_PX))
+            })
             .when(truncate_label, |d| d.min_w(px(0.0)).overflow_hidden());
         if let Some(start_slot) = start_slot {
             leading = leading.child(start_slot);
         }
         if !label.is_empty() {
-            leading = if truncate_label {
+            leading = if toolbar_tile {
+                let caption_id = id.clone();
+                leading.child(
+                    div()
+                        .debug_selector(move || format!("{caption_id}_toolbar_caption"))
+                        .text_size(ui_scale.ui_text(11.0))
+                        .line_height(toolbar_tile_caption_height(ui_scale))
+                        .when(truncate_label, |d| d.min_w(px(0.0)).truncate())
+                        .child(label),
+                )
+            } else if truncate_label {
                 leading.child(div().min_w(px(0.0)).truncate().child(label))
             } else {
                 leading.child(label)
@@ -586,6 +616,12 @@ impl Button {
                         .border_color(separator_color)
                         .child(end_slot),
                 ),
+            (_, Some(end_slot)) if toolbar_tile => div()
+                .flex()
+                .items_center()
+                .gap(content_gap)
+                .child(leading)
+                .child(end_slot),
             (_, Some(end_slot)) => leading.child(end_slot),
             (_, None) => leading,
         };
@@ -594,10 +630,14 @@ impl Button {
         let mut base = div()
             .id(id.clone())
             .debug_selector(move || id.to_string())
-            .h(control_height)
+            .h(height)
             .when(truncate_label, |d| d.min_w(px(0.0)))
             .when(icon_only, |d| d.min_w(control_height))
-            .px(if icon_only { icon_pad_x } else { control_pad_x })
+            .px(if icon_only || toolbar_tile {
+                icon_pad_x
+            } else {
+                control_pad_x
+            })
             .py(control_pad_y)
             .flex()
             .items_center()
