@@ -1350,6 +1350,7 @@ impl WindowHostImpl for HostWindow {
                         ErrorReport {
                             repo_id: root.active_repo_id(),
                             message: message.to_string(),
+                            display_message: None,
                             actions: actions.into_iter().map(ErrorAction::Hosted).collect(),
                         },
                         cx,

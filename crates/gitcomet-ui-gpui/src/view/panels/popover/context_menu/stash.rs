@@ -1,5 +1,5 @@
 use super::*;
-use crate::localization::text;
+use crate::localization::{Language, text};
 
 pub(super) fn restore_menu(repo_id: RepoId, cx: &gpui::App) -> ContextMenuModel {
     let item = |purpose, label: &'static str, icon: &'static str| ContextMenuItem::Entry {
@@ -44,7 +44,12 @@ pub(super) fn restore_menu(repo_id: RepoId, cx: &gpui::App) -> ContextMenuModel 
     ]))
 }
 
-pub(super) fn model(repo_id: RepoId, index: usize, message: &str) -> ContextMenuModel {
+pub(super) fn model(
+    repo_id: RepoId,
+    index: usize,
+    message: &str,
+    language: Language,
+) -> ContextMenuModel {
     let reference = format!("stash@{{{index}}}");
     let summary = if message.is_empty() {
         reference.clone()
@@ -53,18 +58,18 @@ pub(super) fn model(repo_id: RepoId, index: usize, message: &str) -> ContextMenu
     };
 
     let items = vec![
-        ContextMenuItem::Header("Stash".into()),
+        ContextMenuItem::Header(language.text("Stash", "貯藏").into()),
         ContextMenuItem::Label(summary.into()),
         ContextMenuItem::Separator,
         ContextMenuItem::Entry {
-            label: "Apply stash".into(),
+            label: language.text("Apply stash", "套用貯藏").into(),
             icon: Some("icons/refresh.svg".into()),
             shortcut: Some("A".into()),
             disabled: false,
             action: Box::new(ContextMenuAction::ApplyStash { repo_id, index }),
         },
         ContextMenuItem::Entry {
-            label: "Pop stash".into(),
+            label: language.text("Pop stash", "套用並移除貯藏").into(),
             icon: Some("icons/arrow_up.svg".into()),
             shortcut: Some("P".into()),
             disabled: false,
@@ -72,7 +77,7 @@ pub(super) fn model(repo_id: RepoId, index: usize, message: &str) -> ContextMenu
         },
         ContextMenuItem::Separator,
         ContextMenuItem::Entry {
-            label: "Drop stash…".into(),
+            label: language.text("Drop stash…", "捨棄貯藏…").into(),
             icon: Some("icons/trash.svg".into()),
             shortcut: None,
             disabled: false,
@@ -94,7 +99,7 @@ mod tests {
     #[test]
     fn model_includes_apply_pop_and_drop_entries() {
         let repo_id = RepoId(11);
-        let model = model(repo_id, 3, "WIP");
+        let model = model(repo_id, 3, "WIP", Language::English);
 
         let apply_action = model.items.iter().find_map(|item| match item {
             ContextMenuItem::Entry { label, action, .. } if label.as_ref() == "Apply stash" => {
@@ -137,6 +142,28 @@ mod tests {
                 index: 3,
                 message,
             }) if rid == repo_id && message == "WIP"
+        ));
+    }
+
+    #[test]
+    fn traditional_chinese_stash_menu_preserves_operation_targets() {
+        let repo_id = RepoId(11);
+        let model = model(repo_id, 3, "WIP", Language::TraditionalChinese);
+
+        assert_eq!(
+            model.entry_labels(),
+            ["套用貯藏", "套用並移除貯藏", "捨棄貯藏…"]
+        );
+        assert!(matches!(
+            &model.items[4],
+            ContextMenuItem::Entry { shortcut: Some(shortcut), action, .. }
+                if shortcut.as_ref() == "P"
+                    && matches!(**action, ContextMenuAction::PopStash { repo_id: id, index: 3 } if id == repo_id)
+        ));
+        assert!(matches!(
+            &model.items[6],
+            ContextMenuItem::Entry { action, .. }
+                if matches!(action.as_ref(), ContextMenuAction::DropStashConfirm { repo_id: id, index: 3, message } if *id == repo_id && message == "WIP")
         ));
     }
 }

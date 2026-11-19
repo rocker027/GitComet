@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::{Language, text};
 
 pub(super) fn merge_commit_destination_label(repo: Option<&RepoState>) -> SharedString {
     repo.and_then(|repo| match &repo.head_branch {
@@ -57,12 +58,23 @@ pub(super) fn panel(
         this.close_popover(cx);
     };
 
-    let mut dialog = ConfirmDialog::new("Merge commit?", DIALOG_380_WIDTH)
-        .text(theme, format!("Merge {short} into {destination}?"))
-        .note(
-            theme,
+    let message = match Language::current(cx) {
+        Language::English => format!("Merge {short} into {destination}?"),
+        Language::TraditionalChinese => format!("要將 {short} 合併到 {destination} 嗎？"),
+    };
+    let mut dialog = ConfirmDialog::new(
+        text(cx, "Merge commit?", "要合併提交嗎？"),
+        DIALOG_380_WIDTH,
+    )
+    .text(theme, message)
+    .note(
+        theme,
+        text(
+            cx,
             "Git resolves the merge with a merge commit when history diverges.",
-        );
+            "如果歷史已分岔，Git 會建立一筆合併提交。",
+        ),
+    );
     if !summary.is_empty() {
         dialog = dialog.note(theme, summary);
     }
@@ -71,7 +83,7 @@ pub(super) fn panel(
         theme,
         dialog_cancel_button("merge_commit_cancel", "merge_commit_cancel_hint", theme, cx),
         div().flex().items_center().gap_1().child(
-            components::Button::new("merge_commit_confirm", "Merge")
+            components::Button::new("merge_commit_confirm", text(cx, "Merge", "合併"))
                 .disabled(!merge_ready)
                 .style(components::ButtonStyle::Filled)
                 .on_click(theme, cx, move |this, _e, _w, cx| dispatch(this, cx)),

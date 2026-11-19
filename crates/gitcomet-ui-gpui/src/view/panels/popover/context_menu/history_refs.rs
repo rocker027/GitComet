@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 
 /// The row context, listing the commit's refs that `refs` admits.
 pub(super) fn model(
@@ -6,11 +7,17 @@ pub(super) fn model(
     repo_id: RepoId,
     commit_id: &CommitId,
     refs: &CommitMenuRefs,
+    language: Language,
 ) -> ContextMenuModel {
-    let commit = commit::model(this, repo_id, commit_id, refs);
+    let commit = commit::model(this, repo_id, commit_id, refs, language);
     let sha = commit_id.as_ref();
     let mut model = ContextMenuModel::new(vec![ContextMenuItem::Header(
-        format!("Commit {}", sha.get(..8).unwrap_or(sha)).into(),
+        format!(
+            "{} {}",
+            language.text("Commit", "提交"),
+            sha.get(..8).unwrap_or(sha)
+        )
+        .into(),
     )]);
     if let Some(ContextMenuItem::Label(summary)) = commit.items.get(1) {
         model.items.push(ContextMenuItem::Label(summary.clone()));
@@ -50,12 +57,15 @@ pub(super) fn model(
         let expanded = this.expanded_history_ref.as_ref() == Some(&target);
         let label = match &target {
             HistoryMenuRef::Branch(BranchMenuTarget::Local { name }) => {
-                format!("Local branch {name}")
+                format!("{} {name}", language.text("Local branch", "本機分支"))
             }
             HistoryMenuRef::Branch(BranchMenuTarget::Remote { remote, branch }) => {
-                format!("Remote branch {remote}/{branch}")
+                format!(
+                    "{} {remote}/{branch}",
+                    language.text("Remote branch", "遠端分支")
+                )
             }
-            HistoryMenuRef::Tag(name) => format!("Tag {name}"),
+            HistoryMenuRef::Tag(name) => format!("{} {name}", language.text("Tag", "標籤")),
         };
         let index = model.items.len();
         model
@@ -80,7 +90,7 @@ pub(super) fn model(
         });
         if expanded {
             let actions = match &target {
-                HistoryMenuRef::Branch(target) => branch::model(this, repo_id, target),
+                HistoryMenuRef::Branch(target) => branch::model(this, repo_id, target, language),
                 HistoryMenuRef::Tag(name) => tag::model_for_tag(this, repo_id, commit_id, name),
             };
             append_actions(&mut model, actions, true);
@@ -97,8 +107,12 @@ pub(super) fn model(
     );
     if tags_wanted && !matches!(&repo.tags, Loadable::Ready(_)) {
         model.items.push(ContextMenuItem::Label(match &repo.tags {
-            Loadable::Error(error) => format!("Tags unavailable: {error}").into(),
-            _ => "Loading tags…".into(),
+            Loadable::Error(error) => match language {
+                Language::English => format!("Tags unavailable: {error}"),
+                Language::TraditionalChinese => format!("無法載入標籤：{error}"),
+            }
+            .into(),
+            _ => language.text("Loading tags…", "正在載入標籤…").into(),
         }));
     }
     if model.items.len() > 3 {

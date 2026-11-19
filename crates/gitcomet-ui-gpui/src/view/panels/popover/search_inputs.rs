@@ -1,5 +1,6 @@
 use super::picker_nav::{PickerNavKeys, PickerNavOutcome, PickerNavRows, handle_picker_nav};
 use super::*;
+use crate::localization::Language;
 
 impl PopoverHost {
     fn ensure_search_input_entity(
@@ -281,13 +282,17 @@ impl PopoverHost {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Entity<components::TextInput> {
+        let placeholder = Language::current(cx).text("Filter branches", "篩選分支");
         let input = Self::ensure_search_input_entity(
             &mut self.branch_picker_search_input,
-            "Filter branches",
+            placeholder,
             window,
             cx,
         );
         input.update(cx, |input, cx| {
+            if input.placeholder() != placeholder {
+                input.set_placeholder(placeholder, cx);
+            }
             input.set_chromeless(false, cx);
             input.set_leading_icon(None, cx);
         });
@@ -317,7 +322,11 @@ impl PopoverHost {
                     // would make Enter check out a branch other than the
                     // highlighted one.
                     if branch_picker::is_checkout_picker(this) {
-                        return Some(branch_picker::nav_targets(this, query));
+                        return Some(branch_picker::localized_nav_targets(
+                            this,
+                            query,
+                            Language::current(cx),
+                        ));
                     }
 
                     Some(
@@ -349,7 +358,8 @@ impl PopoverHost {
                     // lists are laid out differently, so each scrolls by its own
                     // geometry — and each was built for its own viewport.
                     if branch_picker::is_checkout_picker(this) {
-                        let rows = branch_picker::cached(this, &query);
+                        let rows =
+                            branch_picker::localized_cached(this, &query, Language::current(cx));
                         this.scroll_picker_prompt_to_row(
                             &rows.geometry(super::popover_ui_scale(cx)),
                             sel,
@@ -382,9 +392,13 @@ impl PopoverHost {
                         let target = payload.or_else(|| {
                             (!query.trim().is_empty())
                                 .then(|| {
-                                    branch_picker::nav_targets(this, query.trim())
-                                        .into_iter()
-                                        .next()
+                                    branch_picker::localized_nav_targets(
+                                        this,
+                                        query.trim(),
+                                        Language::current(cx),
+                                    )
+                                    .into_iter()
+                                    .next()
                                 })
                                 .flatten()
                         });
@@ -441,9 +455,15 @@ impl PopoverHost {
                     cx,
                     |this| upstream_picker_state(this).is_some(),
                     |this| &mut this.upstream_picker_selected_index,
-                    |this, query, _cx| {
+                    |this, query, cx| {
                         let (repo_id, branch) = upstream_picker_state(this)?;
-                        let targets = upstream_picker::nav_targets(this, repo_id, &branch, query);
+                        let targets = upstream_picker::localized_nav_targets(
+                            this,
+                            repo_id,
+                            &branch,
+                            query,
+                            Language::current(cx),
+                        );
                         let leading = upstream_picker::leading_action_count(this, repo_id, &branch);
                         upstream_picker::clear_missing_branch_selection(
                             &mut this.upstream_picker_selected_index,
@@ -462,7 +482,13 @@ impl PopoverHost {
                             .as_ref()
                             .map(|input| input.read(cx).text().trim().to_string())
                             .unwrap_or_default();
-                        let rows = upstream_picker::cached(this, repo_id, &branch, &query);
+                        let rows = upstream_picker::localized_cached(
+                            this,
+                            repo_id,
+                            &branch,
+                            &query,
+                            Language::current(cx),
+                        );
                         // The fixed Create new / unlink action leads the branch
                         // list in the same navigation model and sits outside its
                         // scroll viewport. Translate global navigation indices to
@@ -721,7 +747,7 @@ impl PopoverHost {
     ) -> Entity<components::TextInput> {
         let input = Self::ensure_search_input_entity(
             &mut self.stash_picker_search_input,
-            "Filter stashes",
+            Language::current(cx).text("Filter stashes", "篩選貯藏"),
             window,
             cx,
         );

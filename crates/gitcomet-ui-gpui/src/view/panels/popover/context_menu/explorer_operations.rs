@@ -1,5 +1,6 @@
 use super::*;
 use crate::kit::components::{Shortcut, secondary_shortcut};
+use crate::localization::Language;
 use crate::view::panes::ExplorerAction;
 
 /// Appends one menu group, separated from the entries before it. A group that
@@ -23,6 +24,7 @@ pub(super) struct ExplorerOps<'a> {
     repo_id: RepoId,
     path: &'a std::path::Path,
     root: bool,
+    language: Language,
 }
 
 impl<'a> ExplorerOps<'a> {
@@ -33,12 +35,14 @@ impl<'a> ExplorerOps<'a> {
         repo_id: RepoId,
         path: &'a std::path::Path,
         source: &gitcomet_core::domain::FileSource,
+        language: Language,
     ) -> Option<Self> {
         (*source == gitcomet_core::domain::FileSource::WorkingDirectory).then_some(Self {
             host,
             repo_id,
             path,
             root: path.as_os_str().is_empty(),
+            language,
         })
     }
 
@@ -52,14 +56,14 @@ impl<'a> ExplorerOps<'a> {
 
     pub(super) fn push_create(&self, items: &mut Vec<ContextMenuItem>) {
         items.push(ContextMenuItem::Entry {
-            label: "New file".into(),
+            label: self.language.text("New file", "新增檔案").into(),
             icon: Some("icons/file_plus.svg".into()),
             shortcut: None,
             disabled: false,
             action: self.action(ExplorerAction::NewFile),
         });
         items.push(ContextMenuItem::Entry {
-            label: "New folder".into(),
+            label: self.language.text("New folder", "新增資料夾").into(),
             icon: Some("icons/folder_plus.svg".into()),
             shortcut: None,
             disabled: false,
@@ -71,14 +75,14 @@ impl<'a> ExplorerOps<'a> {
     pub(super) fn push_clipboard(&self, items: &mut Vec<ContextMenuItem>) {
         if !self.root {
             items.push(ContextMenuItem::Entry {
-                label: "Cut".into(),
+                label: self.language.text("Cut", "剪下").into(),
                 icon: Some("icons/scissors.svg".into()),
                 shortcut: Some(secondary_shortcut("X").into()),
                 disabled: false,
                 action: self.action(ExplorerAction::Cut),
             });
             items.push(ContextMenuItem::Entry {
-                label: "Copy".into(),
+                label: self.language.text("Copy", "複製").into(),
                 icon: Some("icons/copy.svg".into()),
                 shortcut: Some(secondary_shortcut("C").into()),
                 disabled: false,
@@ -86,7 +90,7 @@ impl<'a> ExplorerOps<'a> {
             });
         }
         items.push(ContextMenuItem::Entry {
-            label: "Paste".into(),
+            label: self.language.text("Paste", "貼上").into(),
             icon: Some("icons/clipboard_paste.svg".into()),
             shortcut: Some(secondary_shortcut("V").into()),
             disabled: false,
@@ -94,7 +98,7 @@ impl<'a> ExplorerOps<'a> {
         });
         if !self.root {
             items.push(ContextMenuItem::Entry {
-                label: "Duplicate".into(),
+                label: self.language.text("Duplicate", "製作副本").into(),
                 icon: Some("icons/copy_plus.svg".into()),
                 shortcut: Some(secondary_shortcut("D").into()),
                 disabled: false,
@@ -115,14 +119,17 @@ impl<'a> ExplorerOps<'a> {
             .find(|r| r.id == self.repo_id)
             .is_some_and(|r| r.file_browser.selection.paths.len() > 1);
         items.push(ContextMenuItem::Entry {
-            label: "Rename…".into(),
+            label: self.language.text("Rename…", "重新命名…").into(),
             icon: Some("icons/pencil.svg".into()),
             shortcut: Some("F2".into()),
             disabled: multi_selection,
             action: self.action(ExplorerAction::Rename),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Add to .gitignore".into(),
+            label: self
+                .language
+                .text("Add to .gitignore", "加入 .gitignore")
+                .into(),
             icon: Some("icons/eye_off.svg".into()),
             shortcut: None,
             disabled: self
@@ -141,14 +148,17 @@ impl<'a> ExplorerOps<'a> {
             return;
         }
         items.push(ContextMenuItem::Entry {
-            label: "Trash".into(),
+            label: self.language.text("Trash", "移至垃圾桶").into(),
             icon: Some("icons/trash.svg".into()),
             shortcut: Some("Delete".into()),
             disabled: false,
             action: self.action(ExplorerAction::Trash),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Delete permanently…".into(),
+            label: self
+                .language
+                .text("Delete permanently…", "永久刪除…")
+                .into(),
             icon: Some("icons/trash.svg".into()),
             shortcut: Some("Shift+Delete".into()),
             disabled: false,
@@ -159,7 +169,7 @@ impl<'a> ExplorerOps<'a> {
     pub(super) fn push_undo_redo(&self, items: &mut Vec<ContextMenuItem>) {
         let filesystem = &self.host.state.filesystem;
         items.push(ContextMenuItem::Entry {
-            label: "Undo".into(),
+            label: self.language.text("Undo", "復原").into(),
             icon: Some("icons/undo.svg".into()),
             shortcut: Some(secondary_shortcut("Z").into()),
             disabled: !filesystem.undo_available,
@@ -172,7 +182,7 @@ impl<'a> ExplorerOps<'a> {
             other: "Ctrl+Y",
         };
         items.push(ContextMenuItem::Entry {
-            label: "Redo".into(),
+            label: self.language.text("Redo", "重做").into(),
             icon: Some("icons/redo.svg".into()),
             shortcut: redo.label().map(Into::into),
             disabled: !filesystem.redo_available,

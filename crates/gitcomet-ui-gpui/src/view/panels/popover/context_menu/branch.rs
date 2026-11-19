@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 use gitcomet_core::domain::Upstream;
 use gitcomet_extension_api::RefMenuTarget;
 
@@ -6,12 +7,13 @@ pub(super) fn model(
     this: &PopoverHost,
     repo_id: RepoId,
     target: &BranchMenuTarget,
+    language: Language,
 ) -> ContextMenuModel {
     let section = target.section();
     let name = target.display_name();
     let branch_kind = match section {
-        BranchSection::Local => "Local branch",
-        BranchSection::Remote => "Remote branch",
+        BranchSection::Local => language.text("Local branch", "本機分支"),
+        BranchSection::Remote => language.text("Remote branch", "遠端分支"),
     };
     let header = components::ContextMenuText::new(format!("{branch_kind} · {name}"))
         .tooltip_mode(components::TruncatedTextTooltipMode::FullTextIfTruncated);
@@ -85,7 +87,7 @@ pub(super) fn model(
     };
 
     items.push(ContextMenuItem::Entry {
-        label: "Checkout".into(),
+        label: language.text("Checkout", "切換分支").into(),
         icon: Some("icons/git_branch.svg".into()),
         shortcut: None,
         disabled: false,
@@ -104,14 +106,14 @@ pub(super) fn model(
         }),
     });
     if let Some(repo) = repo {
-        items.extend(worktree_entries(repo, repo_id, target));
+        items.extend(worktree_entries(repo, repo_id, target, language));
     }
 
     if !is_current_branch {
         items.push(ContextMenuItem::Separator);
         let (remote, branch) = remote_parts.unwrap_or((".", &name));
         items.push(ContextMenuItem::Entry {
-            label: "Pull into current".into(),
+            label: language.text("Pull into current", "拉取至目前分支").into(),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: None,
             disabled: false,
@@ -127,7 +129,9 @@ pub(super) fn model(
                 && let Some(upstream) = exact_remote_branch
             {
                 items.push(ContextMenuItem::Entry {
-                    label: "Set as tracking upstream".into(),
+                    label: language
+                        .text("Set as tracking upstream", "設為追蹤的上游分支")
+                        .into(),
                     icon: Some("icons/link.svg".into()),
                     shortcut: None,
                     disabled: false,
@@ -140,7 +144,9 @@ pub(super) fn model(
             }
             if active_upstream.is_some() {
                 items.push(ContextMenuItem::Entry {
-                    label: "Unlink upstream branch".into(),
+                    label: language
+                        .text("Unlink upstream branch", "取消追蹤上游分支")
+                        .into(),
                     icon: Some("icons/unlink.svg".into()),
                     shortcut: None,
                     disabled: active_upstream != target_upstream.as_ref(),
@@ -153,7 +159,7 @@ pub(super) fn model(
         }
         items.push(ContextMenuItem::Separator);
         items.push(ContextMenuItem::Entry {
-            label: "Merge into current".into(),
+            label: language.text("Merge into current", "合併至目前分支").into(),
             icon: Some("icons/swap.svg".into()),
             shortcut: None,
             disabled: merge_disabled,
@@ -163,7 +169,9 @@ pub(super) fn model(
             }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Squash into current".into(),
+            label: language
+                .text("Squash into current", "壓縮合併至目前分支")
+                .into(),
             icon: Some("icons/arrow_right.svg".into()),
             shortcut: None,
             disabled: merge_disabled,
@@ -173,7 +181,11 @@ pub(super) fn model(
             }),
         });
         items.push(ContextMenuItem::Entry {
-            label: format!("Rebase {current_branch_label} onto {name}").into(),
+            label: match language {
+                Language::English => format!("Rebase {current_branch_label} onto {name}"),
+                Language::TraditionalChinese => format!("將 {current_branch_label} 變基至 {name}"),
+            }
+            .into(),
             icon: Some("icons/arrow_up.svg".into()),
             shortcut: None,
             disabled: history_rewrite_disabled,
@@ -188,7 +200,7 @@ pub(super) fn model(
 
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
-        label: "Create branch".into(),
+        label: language.text("Create branch", "建立分支").into(),
         icon: Some("icons/plus.svg".into()),
         shortcut: None,
         disabled: false,
@@ -207,11 +219,16 @@ pub(super) fn model(
         if tag_disabled {
             branch_entry_tooltips.insert(
                 items.len(),
-                "Enable “Show tags in history view” in Settings > Git log to add tags.".into(),
+                language
+                    .text(
+                        "Enable “Show tags in history view” in Settings > Git log to add tags.",
+                        "請先在「設定 → Git 歷史」啟用「在歷史檢視中顯示標籤」。",
+                    )
+                    .into(),
             );
         }
         items.push(ContextMenuItem::Entry {
-            label: "Create tag…".into(),
+            label: language.text("Create tag…", "建立標籤…").into(),
             icon: Some("icons/tag.svg".into()),
             shortcut: None,
             disabled: tag_disabled,
@@ -227,7 +244,7 @@ pub(super) fn model(
     items.push(ContextMenuItem::Separator);
     if section == BranchSection::Local {
         items.push(ContextMenuItem::Entry {
-            label: "Rename branch".into(),
+            label: language.text("Rename branch", "重新命名分支").into(),
             icon: Some("icons/pencil.svg".into()),
             shortcut: None,
             disabled: false,
@@ -240,7 +257,7 @@ pub(super) fn model(
             }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Delete branch".into(),
+            label: language.text("Delete branch", "刪除分支").into(),
             icon: Some("icons/trash.svg".into()),
             shortcut: None,
             disabled: is_current_branch,
@@ -251,7 +268,9 @@ pub(super) fn model(
         });
     } else if let Some((remote, branch)) = remote_parts {
         items.push(ContextMenuItem::Entry {
-            label: "Delete remote branch…".into(),
+            label: language
+                .text("Delete remote branch…", "刪除遠端分支…")
+                .into(),
             icon: Some("icons/trash.svg".into()),
             shortcut: None,
             disabled: false,
@@ -272,7 +291,11 @@ pub(super) fn model(
         items.push(ContextMenuItem::Separator);
         let comparison_mark = repo.and_then(|r| r.navigation.comparison_mark.clone());
         items.push(ContextMenuItem::Entry {
-            label: format!("Mark {name} for comparison").into(),
+            label: match language {
+                Language::English => format!("Mark {name} for comparison"),
+                Language::TraditionalChinese => format!("標記 {name} 以便比較"),
+            }
+            .into(),
             icon: Some("icons/git_branch.svg".into()),
             shortcut: None,
             disabled: false,
@@ -283,7 +306,9 @@ pub(super) fn model(
             }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Compare with working tree".into(),
+            label: language
+                .text("Compare with working tree", "與工作樹比較")
+                .into(),
             icon: Some("icons/open_external.svg".into()),
             shortcut: None,
             disabled: false,
@@ -336,9 +361,9 @@ pub(super) fn model(
     let pinned = this.is_branch_pinned(repo_id, section, &name);
     items.push(ContextMenuItem::Entry {
         label: if pinned {
-            "Unpin branch".into()
+            language.text("Unpin branch", "取消釘選分支").into()
         } else {
-            "Pin branch".into()
+            language.text("Pin branch", "釘選分支").into()
         },
         icon: Some("icons/pin.svg".into()),
         shortcut: None,
@@ -350,7 +375,7 @@ pub(super) fn model(
         }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Copy branch name".into(),
+        label: language.text("Copy branch name", "複製分支名稱").into(),
         icon: Some("icons/copy.svg".into()),
         shortcut: None,
         disabled: false,
@@ -360,21 +385,23 @@ pub(super) fn model(
     if section == BranchSection::Remote {
         items.push(ContextMenuItem::Separator);
         items.push(ContextMenuItem::Entry {
-            label: "Fetch all".into(),
+            label: language.text("Fetch all", "擷取全部").into(),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: None,
             disabled: false,
             action: Box::new(ContextMenuAction::FetchAll { repo_id }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Prune merged branches".into(),
+            label: language
+                .text("Prune merged branches", "清除已合併的分支")
+                .into(),
             icon: Some("icons/broom.svg".into()),
             shortcut: None,
             disabled: false,
             action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Prune local tags".into(),
+            label: language.text("Prune local tags", "清理本機標籤").into(),
             icon: Some("icons/tag.svg".into()),
             shortcut: None,
             disabled: false,
@@ -400,6 +427,7 @@ fn worktree_entries(
     repo: &RepoState,
     repo_id: RepoId,
     target: &BranchMenuTarget,
+    language: Language,
 ) -> Vec<ContextMenuItem> {
     let start = match target {
         BranchMenuTarget::Local { name } => WorktreeStart::Local(name.clone()),
@@ -426,7 +454,7 @@ fn worktree_entries(
         local.and_then(|local| crate::view::rows::branch_held_elsewhere(repo, local))
     {
         items.push(ContextMenuItem::Entry {
-            label: "Open worktree".into(),
+            label: language.text("Open worktree", "開啟工作樹").into(),
             icon: Some("icons/git_worktree.svg".into()),
             shortcut: None,
             disabled: false,
@@ -451,7 +479,9 @@ fn worktree_entries(
         },
     };
     items.push(ContextMenuItem::Entry {
-        label: "Open in new worktree".into(),
+        label: language
+            .text("Open in new worktree", "在新工作樹中開啟")
+            .into(),
         icon: Some("icons/git_worktree.svg".into()),
         shortcut: None,
         disabled: false,
@@ -529,7 +559,7 @@ mod tests {
         repo: &RepoState,
         target: BranchMenuTarget,
     ) -> Vec<(String, bool, ContextMenuAction)> {
-        worktree_entries(repo, RepoId(1), &target)
+        worktree_entries(repo, RepoId(1), &target, Language::English)
             .into_iter()
             .map(|item| match item {
                 ContextMenuItem::Entry {

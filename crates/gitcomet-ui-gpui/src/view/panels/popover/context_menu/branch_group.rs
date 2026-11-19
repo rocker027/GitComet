@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 use crate::view::branch_sidebar;
 
 /// Context menu for a `/`-prefix group row in the branch tree (`feat/`).
@@ -13,6 +14,7 @@ pub(super) fn model(
     section: BranchSection,
     remote: Option<&str>,
     path: &str,
+    language: Language,
 ) -> ContextMenuModel {
     let (member_count, deletable_count) = member_counts(this, repo_id, section, remote, path);
     let filtered = this.active_branch_filter().is_some();
@@ -34,10 +36,13 @@ pub(super) fn model(
     let mut items = vec![ContextMenuItem::Header(group_label.clone().into())];
     // A count, not a path: one line, cut at its end.
     items.push(ContextMenuItem::Label(
-        components::ContextMenuText::new(if filtered {
-            format!("{} matching the filter", branch_count_label(member_count))
-        } else {
-            branch_count_label(member_count)
+        components::ContextMenuText::new(match (language, filtered) {
+            (Language::English, true) => {
+                format!("{} matching the filter", branch_count_label(member_count))
+            }
+            (Language::English, false) => branch_count_label(member_count),
+            (Language::TraditionalChinese, true) => format!("{member_count} 個分支符合篩選條件"),
+            (Language::TraditionalChinese, false) => format!("{member_count} 個分支"),
         })
         .max_lines(1)
         .tooltip_mode(components::TruncatedTextTooltipMode::FullTextIfTruncated),
@@ -46,7 +51,12 @@ pub(super) fn model(
 
     let pinned = this.is_sidebar_item_pinned(repo_id, &collapse_key);
     items.push(ContextMenuItem::Entry {
-        label: if pinned { "Unpin group" } else { "Pin group" }.into(),
+        label: if pinned {
+            language.text("Unpin group", "取消釘選群組")
+        } else {
+            language.text("Pin group", "釘選群組")
+        }
+        .into(),
         icon: Some("icons/pin.svg".into()),
         shortcut: None,
         disabled: false,
@@ -57,7 +67,12 @@ pub(super) fn model(
     });
 
     items.push(ContextMenuItem::Entry {
-        label: if collapsed { "Expand" } else { "Collapse" }.into(),
+        label: if collapsed {
+            language.text("Expand", "展開")
+        } else {
+            language.text("Collapse", "收合")
+        }
+        .into(),
         icon: Some(
             if collapsed {
                 "icons/chevron_right.svg"
@@ -74,12 +89,12 @@ pub(super) fn model(
     });
     for (label, icon, collapsed) in [
         (
-            "Expand all under here",
+            language.text("Expand all under here", "展開此群組下的所有分支"),
             "icons/arrow_down_to_line.svg",
             false,
         ),
         (
-            "Collapse all under here",
+            language.text("Collapse all under here", "收合此群組下的所有分支"),
             "icons/arrow_up_to_line.svg",
             true,
         ),
@@ -113,13 +128,13 @@ pub(super) fn model(
         items.push(ContextMenuItem::Separator);
         for (label, icon, focused, offered) in [
             (
-                "Focus group",
+                language.text("Focus group", "聚焦此群組"),
                 "icons/eye.svg",
                 true,
                 focus_state.focused < focus_state.members,
             ),
             (
-                "Stop focusing group",
+                language.text("Stop focusing group", "取消聚焦此群組"),
                 "icons/eye_off.svg",
                 false,
                 focus_state.focused > 0,
@@ -151,7 +166,11 @@ pub(super) fn model(
     if section == BranchSection::Local {
         items.push(ContextMenuItem::Separator);
         items.push(ContextMenuItem::Entry {
-            label: format!("Create branch in {group_label}…").into(),
+            label: match language {
+                Language::English => format!("Create branch in {group_label}…"),
+                Language::TraditionalChinese => format!("在 {group_label} 建立分支…"),
+            }
+            .into(),
             icon: Some("icons/plus.svg".into()),
             shortcut: None,
             disabled: false,
@@ -168,15 +187,30 @@ pub(super) fn model(
 
     // While a filter is live the group shows only its matches, so the entry
     // says so rather than implying it covers the whole group.
-    let count_label = if filtered {
-        format!("{} matching", branch_count_label(deletable_count))
-    } else {
-        branch_count_label(deletable_count)
+    let delete_label = match (language, filtered) {
+        (Language::English, true) => {
+            format!(
+                "Delete {} matching in {group_label}…",
+                branch_count_label(deletable_count)
+            )
+        }
+        (Language::English, false) => {
+            format!(
+                "Delete {} in {group_label}…",
+                branch_count_label(deletable_count)
+            )
+        }
+        (Language::TraditionalChinese, true) => {
+            format!("刪除 {group_label} 中符合篩選條件的 {deletable_count} 個分支…")
+        }
+        (Language::TraditionalChinese, false) => {
+            format!("刪除 {group_label} 中的 {deletable_count} 個分支…")
+        }
     };
 
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
-        label: format!("Delete {count_label} in {group_label}…").into(),
+        label: delete_label.into(),
         icon: Some("icons/trash.svg".into()),
         shortcut: None,
         disabled: deletable_count == 0,

@@ -1,23 +1,30 @@
 use super::*;
+use crate::localization::Language;
 
 pub(super) fn model(
     this: &PopoverHost,
     repo_id: RepoId,
     section: BranchSection,
+    language: Language,
 ) -> ContextMenuModel {
     let pins = this.pinned_branch_count(repo_id, section);
-    model_for_section(repo_id, section, pins)
+    model_for_section(repo_id, section, pins, language)
 }
 
-fn model_for_section(repo_id: RepoId, section: BranchSection, pins: usize) -> ContextMenuModel {
+fn model_for_section(
+    repo_id: RepoId,
+    section: BranchSection,
+    pins: usize,
+    language: Language,
+) -> ContextMenuModel {
     let header: SharedString = match section {
-        BranchSection::Local => "Local".into(),
-        BranchSection::Remote => "Remote".into(),
+        BranchSection::Local => language.text("Local", "本機分支").into(),
+        BranchSection::Remote => language.text("Remote", "遠端分支").into(),
     };
     let mut items = vec![ContextMenuItem::Header(header.into())];
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
-        label: "Switch branch".into(),
+        label: language.text("Switch branch", "切換分支").into(),
         icon: Some("icons/git_branch.svg".into()),
         shortcut: None,
         disabled: false,
@@ -30,7 +37,7 @@ fn model_for_section(repo_id: RepoId, section: BranchSection, pins: usize) -> Co
 
     if section == BranchSection::Remote {
         items.push(ContextMenuItem::Entry {
-            label: "Add remote…".into(),
+            label: language.text("Add remote…", "新增遠端…").into(),
             icon: Some("icons/plus.svg".into()),
             shortcut: None,
             disabled: false,
@@ -39,21 +46,23 @@ fn model_for_section(repo_id: RepoId, section: BranchSection, pins: usize) -> Co
             }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Fetch all".into(),
+            label: language.text("Fetch all", "擷取全部").into(),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: Some("F".into()),
             disabled: false,
             action: Box::new(ContextMenuAction::FetchAll { repo_id }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Prune merged branches".into(),
+            label: language
+                .text("Prune merged branches", "清除已合併的分支")
+                .into(),
             icon: Some("icons/broom.svg".into()),
             shortcut: None,
             disabled: false,
             action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Prune local tags".into(),
+            label: language.text("Prune local tags", "清理本機標籤").into(),
             icon: Some("icons/tag.svg".into()),
             shortcut: None,
             disabled: false,
@@ -62,12 +71,16 @@ fn model_for_section(repo_id: RepoId, section: BranchSection, pins: usize) -> Co
     }
 
     items.push(ContextMenuItem::Separator);
-    let section_name = match section {
-        BranchSection::Local => "local",
-        BranchSection::Remote => "remote",
+    let (english_section, chinese_section) = match section {
+        BranchSection::Local => ("local", "本機分支"),
+        BranchSection::Remote => ("remote", "遠端分支"),
     };
     items.push(ContextMenuItem::Entry {
-        label: format!("Unpin all {section_name} ({pins})").into(),
+        label: match language {
+            Language::English => format!("Unpin all {english_section} ({pins})"),
+            Language::TraditionalChinese => format!("取消釘選所有{chinese_section}（{pins}）"),
+        }
+        .into(),
         icon: Some("icons/pin.svg".into()),
         shortcut: None,
         disabled: pins == 0,
@@ -83,7 +96,7 @@ mod tests {
     #[test]
     fn remote_section_header_omits_remote_specific_actions() {
         let repo_id = RepoId(7);
-        let model = super::model_for_section(repo_id, BranchSection::Remote, 0);
+        let model = model_for_section(repo_id, BranchSection::Remote, 0, Language::English);
 
         let labels: Vec<&str> = model.entry_labels().into_iter().collect();
 

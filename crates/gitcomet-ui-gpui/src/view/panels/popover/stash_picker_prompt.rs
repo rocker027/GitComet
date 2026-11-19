@@ -174,6 +174,10 @@ pub(super) fn panel(
             cx,
         ));
     } else if let Some(search) = this.stash_picker_search_input.clone() {
+        let placeholder = language.text("Filter stashes", "篩選貯藏");
+        if search.read(cx).placeholder() != placeholder {
+            search.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        }
         let query = search.read_with(cx, |i, _| i.text().trim().to_string());
         let built = cached(this, repo_id, &query);
         let rows = Rc::clone(&built.payloads);

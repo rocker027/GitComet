@@ -1,5 +1,6 @@
 use super::explorer_operations::push_group;
 use super::*;
+use crate::localization::Language;
 use gitcomet_core::domain::FileSource;
 
 /// Context menu for a file row in the sidebar file browser. The browsed source
@@ -10,6 +11,7 @@ pub(super) fn model(
     repo_id: RepoId,
     path: &std::path::Path,
     cx: &gpui::Context<PopoverHost>,
+    language: Language,
 ) -> ContextMenuModel {
     let source = this
         .state
@@ -58,11 +60,11 @@ pub(super) fn model(
             }
             crate::view::permalink::file_permalink(remotes, &reference, &path.display().to_string())
         });
-    let ops = super::explorer_operations::ExplorerOps::new(this, repo_id, path, &source);
+    let ops = super::explorer_operations::ExplorerOps::new(this, repo_id, path, &source, language);
     let mut items = Vec::new();
     push_group(&mut items, |items| {
         items.push(ContextMenuItem::Entry {
-            label: "Open".into(),
+            label: language.text("Open", "開啟").into(),
             icon: Some("icons/file.svg".into()),
             shortcut: None,
             disabled: false,
@@ -74,7 +76,7 @@ pub(super) fn model(
         });
 
         items.push(ContextMenuItem::Entry {
-            label: "Edit file".into(),
+            label: language.text("Edit file", "編輯檔案").into(),
             icon: Some("icons/pencil.svg".into()),
             shortcut: None,
             // The editor always opens the workspace copy, so browsing a commit is
@@ -98,7 +100,9 @@ pub(super) fn model(
             .file_edits_are_unsaved_for(repo_id, path)
         {
             items.push(ContextMenuItem::Entry {
-                label: "Discard unsaved edits".into(),
+                label: language
+                    .text("Discard unsaved edits", "捨棄未儲存的編輯")
+                    .into(),
                 icon: Some("icons/undo.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -119,7 +123,7 @@ pub(super) fn model(
         // The working-tree file is on disk, so these OS actions only apply there.
         if matches!(source, FileSource::WorkingDirectory) {
             items.push(ContextMenuItem::Entry {
-                label: "Open file".into(),
+                label: language.text("Open file", "開啟檔案").into(),
                 icon: Some("icons/open_external.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -129,7 +133,7 @@ pub(super) fn model(
                 }),
             });
             items.push(ContextMenuItem::Entry {
-                label: "Open file location".into(),
+                label: language.text("Open file location", "開啟檔案位置").into(),
                 icon: Some("icons/folder.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -141,7 +145,7 @@ pub(super) fn model(
         }
 
         items.push(ContextMenuItem::Entry {
-            label: "File history".into(),
+            label: language.text("File history", "檔案歷史").into(),
             icon: Some("icons/refresh.svg".into()),
             shortcut: None,
             disabled: false,
@@ -151,10 +155,12 @@ pub(super) fn model(
             }),
         });
 
-        push_copy_path_entries(items, this, repo_id, path, None);
+        push_copy_path_entries(items, this, repo_id, path, None, language);
         if let Some(permalink) = file_permalink {
             items.push(ContextMenuItem::Entry {
-                label: "Copy file permalink".into(),
+                label: language
+                    .text("Copy file permalink", "複製檔案的永久連結")
+                    .into(),
                 icon: Some("icons/copy.svg".into()),
                 shortcut: None,
                 disabled: false,

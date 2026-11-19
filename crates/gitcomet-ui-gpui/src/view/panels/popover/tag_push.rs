@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 use gitcomet_core::services::CancellationToken;
 use gitcomet_core::tag_push::{TagPushMode, TagPushPreview, TagPushRequest};
 use std::hash::{Hash, Hasher};
@@ -108,51 +109,95 @@ pub(super) fn preview<'a>(
         .map(|slot| &slot.result)
 }
 
-pub(super) fn summary(result: Option<&Loadable<Arc<TagPushPreview>>>) -> String {
+pub(super) fn label(mode: TagPushMode, language: Language) -> &'static str {
+    language.text(
+        mode.label(),
+        match mode {
+            TagPushMode::FollowAnnotated => "推送並附帶含註解的標籤",
+            TagPushMode::All => "推送並附帶所有標籤",
+        },
+    )
+}
+
+pub(super) fn summary(
+    result: Option<&Loadable<Arc<TagPushPreview>>>,
+    language: Language,
+) -> String {
     match result {
         Some(Loadable::Ready(preview)) => {
             let count = preview.new_tags.len();
-            let mut text = format!("{count} new {}", if count == 1 { "tag" } else { "tags" });
+            let mut text = match language {
+                Language::English => {
+                    format!("{count} new {}", if count == 1 { "tag" } else { "tags" })
+                }
+                Language::TraditionalChinese => format!("{count} 個新標籤"),
+            };
             if !preview.conflicting_tags.is_empty() {
-                text.push_str(&format!(", {} conflicts", preview.conflicting_tags.len()));
+                let count = preview.conflicting_tags.len();
+                text.push_str(&match language {
+                    Language::English => format!(", {count} conflicts"),
+                    Language::TraditionalChinese => format!("，{count} 個衝突"),
+                });
             }
             if !preview.rejected_branches.is_empty() {
-                text.push_str(" · branch rejected");
+                text.push_str(language.text(" · branch rejected", " · 分支遭拒"));
             }
             text
         }
-        Some(Loadable::Error(_)) => "Preview unavailable".into(),
-        _ => "Checking tags…".into(),
+        Some(Loadable::Error(_)) => language.text("Preview unavailable", "無法預覽").into(),
+        _ => language.text("Checking tags…", "正在檢查標籤…").into(),
     }
 }
 
 pub(super) fn tooltip(
     request: &TagPushRequest,
     result: Option<&Loadable<Arc<TagPushPreview>>>,
+    language: Language,
 ) -> String {
     let mut text = match request.mode {
-        TagPushMode::FollowAnnotated => "Push this branch and missing annotated tags reachable from it. Lightweight tags are excluded.".to_string(),
-        TagPushMode::All => "Push this branch and all local tags, including lightweight tags and tags outside this branch.".to_string(),
-    };
+        TagPushMode::FollowAnnotated => language.text(
+            "Push this branch and missing annotated tags reachable from it. Lightweight tags are excluded.",
+            "推送此分支，以及從此分支可到達、遠端尚未有的含註解標籤。不包含輕量標籤。",
+        ),
+        TagPushMode::All => language.text(
+            "Push this branch and all local tags, including lightweight tags and tags outside this branch.",
+            "推送此分支與所有本機標籤，包括輕量標籤及此分支以外的標籤。",
+        ),
+    }
+    .to_string();
     text.push_str(&format!(
-        "\nDestination: {}/{}\n{}",
+        "\n{}{}/{}\n{}",
+        language.text("Destination: ", "目的地："),
         request.remote,
         request.branch,
-        summary(result)
+        summary(result, language)
     ));
     if let Some(Loadable::Ready(preview)) = result {
         for name in preview.new_tags.iter().take(20) {
             text.push_str(&format!("\n{name}"));
         }
         if preview.new_tags.len() > 20 {
-            text.push_str(&format!("\n… and {} more.", preview.new_tags.len() - 20));
+            let remaining = preview.new_tags.len() - 20;
+            text.push_str(&match language {
+                Language::English => format!("\n… and {remaining} more."),
+                Language::TraditionalChinese => format!("\n…另有 {remaining} 個標籤。"),
+            });
         }
         for name in preview.conflicting_tags.iter().take(20) {
-            text.push_str(&format!("\nConflict: {name}"));
+            text.push_str(&format!(
+                "\n{}{name}",
+                language.text("Conflict: ", "衝突：")
+            ));
         }
-        text.push_str("\nPreview only. The remote may change before the push.");
+        text.push_str(language.text(
+            "\nPreview only. The remote may change before the push.",
+            "\n此處僅供預覽。遠端可能在推送前變更。",
+        ));
     } else if matches!(result, Some(Loadable::Error(_))) {
-        text.push_str("\nYou can still push; authentication will be requested if needed.");
+        text.push_str(language.text(
+            "\nYou can still push; authentication will be requested if needed.",
+            "\n仍可推送。需要時會要求驗證身分。",
+        ));
     }
     text
 }
@@ -252,6 +297,7 @@ pub(super) fn prompt_summary(
 ) -> gpui::Stateful<gpui::Div> {
     this.sync_tag_push_previews(cx);
     let theme = this.theme;
+    let language = Language::current(cx);
     let (text, tooltip_text) = this
         .tag_push_requests(cx)
         .and_then(|(repo_id, requests)| {
@@ -259,8 +305,12 @@ pub(super) fn prompt_summary(
             let repo = this.state.repos.iter().find(|repo| repo.id == repo_id)?;
             let result = preview(repo, request);
             Some((
-                format!("{} · {}", request.mode.label(), summary(result)),
-                SharedString::from(tooltip(request, result)),
+                format!(
+                    "{} · {}",
+                    label(request.mode, language),
+                    summary(result, language)
+                ),
+                SharedString::from(tooltip(request, result, language)),
             ))
         })
         .unwrap_or_default();

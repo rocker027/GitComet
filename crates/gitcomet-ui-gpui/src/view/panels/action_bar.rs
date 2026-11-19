@@ -124,7 +124,10 @@ fn stash_pop_target(repo: Option<&RepoState>, language: Language) -> StashPopTar
         return empty;
     };
     if repo.is_bare() {
-        return StashPopTarget::Unavailable(gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE);
+        return StashPopTarget::Unavailable(language.text(
+            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE,
+            "這項操作需要工作樹。",
+        ));
     }
     let Loadable::Ready(stashes) = &repo.stashes else {
         return StashPopTarget::Ready {
@@ -175,27 +178,30 @@ struct SequencerBanner {
     continue_tooltip: &'static str,
 }
 
-fn sequencer_banner(state: gitcomet_core::services::SequencerState) -> Option<SequencerBanner> {
+fn sequencer_banner(
+    state: gitcomet_core::services::SequencerState,
+    language: Language,
+) -> Option<SequencerBanner> {
     use gitcomet_core::services::SequencerState;
     let (label, abort_id, continue_id, continue_tooltip) = match state {
         SequencerState::None => return None,
         SequencerState::RebaseOrApply => (
-            "APPLY/REBASE",
+            language.text("APPLY/REBASE", "套用／變基中"),
             "abort_rebase_or_apply",
             "continue_rebase_or_apply",
-            "Continue the in-progress rebase or apply",
+            language.text("Continue the in-progress rebase or apply", "繼續變基或套用"),
         ),
         SequencerState::CherryPick => (
-            "CHERRY-PICKING",
+            language.text("CHERRY-PICKING", "揀選提交中"),
             "abort_cherry_pick",
             "continue_cherry_pick",
-            "Continue the in-progress cherry-pick",
+            language.text("Continue the in-progress cherry-pick", "繼續揀選提交"),
         ),
         SequencerState::Revert => (
-            "REVERTING",
+            language.text("REVERTING", "正在還原提交"),
             "abort_revert",
             "continue_revert",
-            "Continue the in-progress revert",
+            language.text("Continue the in-progress revert", "繼續還原提交"),
         ),
     };
     Some(SequencerBanner {
@@ -270,17 +276,33 @@ fn upstream_badge_state<'a>(
     ))
 }
 
-fn pull_tooltip_text(pull_count: usize, tracking_branch_name: Option<&str>) -> SharedString {
+fn pull_tooltip_text(
+    pull_count: usize,
+    tracking_branch_name: Option<&str>,
+    language: Language,
+) -> SharedString {
+    let summary = match language {
+        Language::English => format!("Pull {pull_count} behind"),
+        Language::TraditionalChinese => format!("拉取 · 落後 {pull_count} 筆提交"),
+    };
     match tracking_branch_name {
-        Some(name) => format!("Pull {pull_count} behind\n{name}").into(),
-        None => format!("Pull {pull_count} behind").into(),
+        Some(name) => format!("{summary}\n{name}").into(),
+        None => summary.into(),
     }
 }
 
-fn push_tooltip_text(push_count: usize, tracking_branch_name: Option<&str>) -> SharedString {
+fn push_tooltip_text(
+    push_count: usize,
+    tracking_branch_name: Option<&str>,
+    language: Language,
+) -> SharedString {
+    let summary = match language {
+        Language::English => format!("Push {push_count} ahead"),
+        Language::TraditionalChinese => format!("推送 · 領先 {push_count} 筆提交"),
+    };
     match tracking_branch_name {
-        Some(name) => format!("Push {push_count} ahead\n{name}").into(),
-        None => format!("Push {push_count} ahead").into(),
+        Some(name) => format!("{summary}\n{name}").into(),
+        None => summary.into(),
     }
 }
 
@@ -664,6 +686,11 @@ impl BarItemOwner for ActionBarView {
     ) -> BarItems {
         let mut items = BarItems::new(cx);
         let theme = self.theme;
+        let language = Language::current(cx);
+        let worktree_required = language.text(
+            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE,
+            "這項操作需要工作樹。",
+        );
         let ui_scale_percent = crate::ui_scale::current(cx).percent;
         let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
         let density = action_bar_density(
@@ -714,9 +741,9 @@ impl BarItemOwner for ActionBarView {
         // enough room for the icon and an ellipsis even at the narrowest size.
         let badge_min_width = scaled_px(theme.metrics.row_height(22.0, 32.0) + 28.0);
         let merge_abort_label = if dense_spacing {
-            "Abort"
+            language.text("Abort", "中止")
         } else {
-            "Abort merge"
+            language.text("Abort merge", "中止合併")
         };
         let icon_primary = theme.colors.accent.foreground;
         let icon_muted = with_alpha(
@@ -780,7 +807,7 @@ impl BarItemOwner for ActionBarView {
         let sequencer_banner = self
             .active_repo()
             .map(active_sequencer_state)
-            .and_then(sequencer_banner);
+            .and_then(|state| sequencer_banner(state, language));
         let rebase_has_unstaged_conflicts =
             self.active_repo().is_some_and(|r| r.has_unstaged_conflicts);
         // A revert shows REVERT_HEAD while its commit step still runs; the
@@ -789,7 +816,10 @@ impl BarItemOwner for ActionBarView {
         let sequencer_step_busy = self
             .active_repo()
             .is_some_and(|r| r.sequencer_actions_in_flight > 0);
-        const SEQUENCER_BUSY_TOOLTIP: &str = "Wait for the running Git operation to finish";
+        let sequencer_busy_tooltip = language.text(
+            "Wait for the running Git operation to finish",
+            "請等待目前的 Git 操作完成",
+        );
 
         let (pull_count, push_count) = self
             .active_repo()
@@ -893,15 +923,16 @@ impl BarItemOwner for ActionBarView {
                 gitcomet_state::model::GitUndoDirection::Redo => ("icons/redo.svg", "Shift+Z"),
             };
             let repo = self.active_repo();
-            let unavailable = repo.map_or(Some("Open a repository first"), |repo| {
-                crate::view::git_undo_unavailable(repo, direction)
-            });
+            let unavailable = repo.map_or(
+                Some(language.text("Open a repository first", "請先開啟儲存庫")),
+                |repo| crate::view::git_undo_unavailable(repo, direction),
+            );
             let label = repo
                 .and_then(|repo| repo.git_undo.next(direction))
                 .map(|entry| entry.label.clone());
             let verb = match direction {
-                gitcomet_state::model::GitUndoDirection::Undo => "Undo",
-                gitcomet_state::model::GitUndoDirection::Redo => "Redo",
+                gitcomet_state::model::GitUndoDirection::Undo => language.text("Undo", "復原"),
+                gitcomet_state::model::GitUndoDirection::Redo => language.text("Redo", "重做"),
             };
             let tooltip: SharedString = match (unavailable, label) {
                 (Some(reason), _) => reason.into(),
@@ -995,7 +1026,14 @@ impl BarItemOwner for ActionBarView {
                 })
                 .min_w(badge_min_width)
                 .debug_selector(|| "worktree_badge".to_string())
-                .gitcomet_tooltip(theme, format!("Switch worktree\n{workdir}").into())
+                .gitcomet_tooltip(
+                    theme,
+                    format!(
+                        "{}\n{workdir}",
+                        language.text("Switch worktree", "切換工作樹")
+                    )
+                    .into(),
+                )
         });
 
         let branch_badge = self.active_repo().and_then(|repo| {
@@ -1009,7 +1047,7 @@ impl BarItemOwner for ActionBarView {
             // commits made here propagate to the base via git-annex.
             let adjusted = gitcomet_core::annex::adjusted_branch(head);
             let label: SharedString = if detached {
-                "detached".into()
+                language.text("detached", "分離狀態").into()
             } else if let Some((base, mode)) = adjusted {
                 truncate_badge_label_to(&format!("{base} · adjusted ({mode})"), badge_label_max_chars)
             } else {
@@ -1020,13 +1058,16 @@ impl BarItemOwner for ActionBarView {
                 .as_ref()
                 .is_some_and(|id| id.as_ref() == invoker.as_ref());
             let tooltip: SharedString = if repo.is_bare() {
-                format!("HEAD: {head}\n{}", gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE).into()
+                format!("HEAD: {head}\n{}", worktree_required).into()
             } else if detached {
-                "Detached HEAD — click to check out a branch".into()
+                language.text("Detached HEAD — click to check out a branch", "HEAD 處於分離狀態。點選以切換分支。").into()
             } else if let Some((base, _)) = adjusted {
                 format!("On git-annex adjusted branch {head}; commits propagate to {base} through git-annex sync, pull and push").into()
             } else {
-                format!("On branch {head} — click to switch").into()
+                match language {
+                    Language::English => format!("On branch {head} — click to switch"),
+                    Language::TraditionalChinese => format!("目前分支為 {head}。點選以切換。"),
+                }.into()
             };
             Some(
                 components::Button::new("branch_badge", label)
@@ -1061,16 +1102,31 @@ impl BarItemOwner for ActionBarView {
             let label = upstream
                 .as_deref()
                 .map(|upstream| truncate_badge_label_to(upstream, badge_label_max_chars))
-                .unwrap_or_else(|| "No upstream".into());
+                .unwrap_or_else(|| language.text("No upstream", "無上游").into());
             let badge_color = if has_upstream {
                 icon_primary
             } else {
                 theme.colors.foreground.secondary
             };
             let tooltip: SharedString = upstream.as_deref().map_or_else(
-                || "No upstream branch configured\nClick to select one".into(),
+                || {
+                    language
+                        .text(
+                            "No upstream branch configured\nClick to select one",
+                            "尚未設定上游分支\n點選以指定上游",
+                        )
+                        .into()
+                },
                 |upstream| {
-                    format!("Tracking upstream {upstream}\nClick to change or unlink").into()
+                    match language {
+                        Language::English => {
+                            format!("Tracking upstream {upstream}\nClick to change or unlink")
+                        }
+                        Language::TraditionalChinese => {
+                            format!("正在追蹤上游 {upstream}\n點選以變更或取消追蹤")
+                        }
+                    }
+                    .into()
                 },
             );
             let invoker: SharedString = "upstream_badge".into();
@@ -1124,14 +1180,21 @@ impl BarItemOwner for ActionBarView {
         } else {
             icon_muted
         };
-        let mut pull_main = components::Button::new("pull_main", if tight { "" } else { "Pull" })
-            .busy(pull_loading)
-            .start_slot(if pull_loading {
-                spinner(("pull_spinner", active_repo_key), pull_color)
+        let mut pull_main = components::Button::new(
+            "pull_main",
+            if tight {
+                ""
             } else {
-                icon("icons/arrow_down.svg", pull_color).into()
-            })
-            .style(components::ButtonStyle::Subtle);
+                language.text("Pull", "拉取")
+            },
+        )
+        .busy(pull_loading)
+        .start_slot(if pull_loading {
+            spinner(("pull_spinner", active_repo_key), pull_color)
+        } else {
+            icon("icons/arrow_down.svg", pull_color).into()
+        })
+        .style(components::ButtonStyle::Subtle);
         if pull_count > 0 {
             pull_main = pull_main.end_slot(count_badge(pull_count, pull_color));
         }
@@ -1194,8 +1257,12 @@ impl BarItemOwner for ActionBarView {
             .gitcomet_tooltip(
                 theme,
                 match pull_unavailable {
-                    Some(reason) => reason.into(),
-                    None => pull_tooltip_text(pull_count, pull_tracking_branch_name.as_deref()),
+                    Some(reason) => localized_action_reason(reason, language).into(),
+                    None => pull_tooltip_text(
+                        pull_count,
+                        pull_tracking_branch_name.as_deref(),
+                        language,
+                    ),
                 },
             );
 
@@ -1204,14 +1271,21 @@ impl BarItemOwner for ActionBarView {
         } else {
             icon_muted
         };
-        let mut push_main = components::Button::new("push_main", if tight { "" } else { "Push" })
-            .busy(push_loading)
-            .start_slot(if push_loading {
-                spinner(("push_spinner", active_repo_key), push_color)
+        let mut push_main = components::Button::new(
+            "push_main",
+            if tight {
+                ""
             } else {
-                icon("icons/arrow_up.svg", push_color).into()
-            })
-            .style(components::ButtonStyle::Subtle);
+                language.text("Push", "推送")
+            },
+        )
+        .busy(push_loading)
+        .start_slot(if push_loading {
+            spinner(("push_spinner", active_repo_key), push_color)
+        } else {
+            icon("icons/arrow_up.svg", push_color).into()
+        })
+        .style(components::ButtonStyle::Subtle);
         if push_count > 0 {
             push_main = push_main.end_slot(count_badge(push_count, push_color));
         }
@@ -1281,12 +1355,15 @@ impl BarItemOwner for ActionBarView {
             .gitcomet_tooltip(
                 theme,
                 match push_unavailable {
-                    Some(reason) => reason.into(),
-                    None => push_tooltip_text(push_count, push_tracking_branch_name.as_deref()),
+                    Some(reason) => localized_action_reason(reason, language).into(),
+                    None => push_tooltip_text(
+                        push_count,
+                        push_tracking_branch_name.as_deref(),
+                        language,
+                    ),
                 },
             );
 
-        let language = Language::current(cx);
         let stash = if let Some(path) = self.selected_stash_worktree() {
             let path = path.to_path_buf();
             let label = language.text("Open worktree", "開啟工作樹");
@@ -1330,7 +1407,7 @@ impl BarItemOwner for ActionBarView {
             });
             let can_stash = has_changes && !is_bare && !busy;
             let stash_help = if is_bare {
-                gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE
+                worktree_required
             } else if busy {
                 busy_text
             } else if can_stash {
@@ -1450,38 +1527,41 @@ impl BarItemOwner for ActionBarView {
             .as_ref()
             .is_some_and(|id| id.as_ref() == create_branch_invoker.as_ref());
         let create_branch = div().debug_selector(|| "create_branch".to_string()).child(
-            components::Button::new("create_branch", action_label("Branch"))
-                .start_slot(icon("icons/git_branch.svg", icon_primary))
-                .style(components::ButtonStyle::Subtle)
-                .open(create_branch_active)
-                .selected_bg(menu_selected_bg)
-                .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
-                    if let Some(repo_id) = this.state.active_repo {
-                        let target = this
-                            .active_repo()
-                            .and_then(|repo| {
-                                if let Loadable::Ready(head) = &repo.head_branch {
-                                    Some(head.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_else(|| "HEAD".to_string());
-                        this.open_popover_for_bounds(
-                            (PopoverKind::CreateBranchFromRefPrompt {
-                                repo_id,
-                                target,
-                                source_selectable: true,
-                                name_prefix: String::new(),
-                            })
-                            .invoked_by(create_branch_invoker.clone()),
-                            bounds,
-                            window,
-                            cx,
-                        );
-                    }
-                })
-                .gitcomet_tooltip(theme, "Create branch".into()),
+            components::Button::new(
+                "create_branch",
+                action_label(language.text("Branch", "分支")),
+            )
+            .start_slot(icon("icons/git_branch.svg", icon_primary))
+            .style(components::ButtonStyle::Subtle)
+            .open(create_branch_active)
+            .selected_bg(menu_selected_bg)
+            .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
+                if let Some(repo_id) = this.state.active_repo {
+                    let target = this
+                        .active_repo()
+                        .and_then(|repo| {
+                            if let Loadable::Ready(head) = &repo.head_branch {
+                                Some(head.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| "HEAD".to_string());
+                    this.open_popover_for_bounds(
+                        (PopoverKind::CreateBranchFromRefPrompt {
+                            repo_id,
+                            target,
+                            source_selectable: true,
+                            name_prefix: String::new(),
+                        })
+                        .invoked_by(create_branch_invoker.clone()),
+                        bounds,
+                        window,
+                        cx,
+                    );
+                }
+            })
+            .gitcomet_tooltip(theme, language.text("Create branch", "建立分支").into()),
         );
 
         // Keep the branch, its tracking target, and the operations that use
@@ -1582,7 +1662,7 @@ impl BarItemOwner for ActionBarView {
                                     .text_size(theme.ui_text(12.0))
                                     .text_color(theme.colors.status.warning.foreground)
                                     .font_weight(FontWeight::BOLD)
-                                    .child("MERGING"),
+                                    .child(language.text("MERGING", "合併中")),
                             )
                             .child(
                                 components::Button::new("abort_merge", merge_abort_label)
@@ -1599,11 +1679,7 @@ impl BarItemOwner for ActionBarView {
                                         }
                                     })
                                     .when(is_bare, |button| {
-                                        button.gitcomet_tooltip(
-                                            theme,
-                                            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE
-                                                .into(),
-                                        )
+                                        button.gitcomet_tooltip(theme, worktree_required.into())
                                     }),
                             ),
                     )
@@ -1623,57 +1699,67 @@ impl BarItemOwner for ActionBarView {
                                     .child(banner.label),
                             )
                             .child(
-                                components::Button::new(banner.abort_id, "Abort")
-                                    .style(components::ButtonStyle::Danger)
-                                    .disabled(is_bare || sequencer_step_busy)
-                                    .on_click(theme, cx, |this, e: &ClickEvent, window, cx| {
-                                        if let Some(repo_id) = this.active_repo_id() {
-                                            this.open_popover_at(
-                                                PopoverKind::MergeAbortConfirm { repo_id },
-                                                e.position(),
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    })
-                                    .when(is_bare || sequencer_step_busy, |button| {
+                                components::Button::new(
+                                    banner.abort_id,
+                                    language.text("Abort", "中止"),
+                                )
+                                .style(components::ButtonStyle::Danger)
+                                .disabled(is_bare || sequencer_step_busy)
+                                .on_click(theme, cx, |this, e: &ClickEvent, window, cx| {
+                                    if let Some(repo_id) = this.active_repo_id() {
+                                        this.open_popover_at(
+                                            PopoverKind::MergeAbortConfirm { repo_id },
+                                            e.position(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                })
+                                .when(
+                                    is_bare || sequencer_step_busy,
+                                    |button| {
                                         button.gitcomet_tooltip(
                                             theme,
                                             if is_bare {
-                                                gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE
-                                                    .into()
+                                                worktree_required.into()
                                             } else {
-                                                SEQUENCER_BUSY_TOOLTIP.into()
+                                                sequencer_busy_tooltip.into()
                                             },
                                         )
-                                    }),
+                                    },
+                                ),
                             )
                             .child(
-                                components::Button::new(banner.continue_id, "Continue")
-                                    .style(components::ButtonStyle::Outlined)
-                                    .disabled(
-                                        is_bare
-                                            || rebase_has_unstaged_conflicts
-                                            || sequencer_step_busy,
-                                    )
-                                    .on_click(theme, cx, |this, _e, _w, _cx| {
-                                        if let Some(repo_id) = this.active_repo_id() {
-                                            this.store.dispatch(Msg::RebaseContinue { repo_id });
-                                        }
-                                    })
-                                    .gitcomet_tooltip(
-                                        theme,
-                                        if is_bare {
-                                            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE
-                                                .into()
-                                        } else if sequencer_step_busy {
-                                            SEQUENCER_BUSY_TOOLTIP.into()
-                                        } else if rebase_has_unstaged_conflicts {
-                                            "Resolve all conflicts before continuing".into()
-                                        } else {
-                                            banner.continue_tooltip.into()
-                                        },
-                                    ),
+                                components::Button::new(
+                                    banner.continue_id,
+                                    language.text("Continue", "繼續"),
+                                )
+                                .style(components::ButtonStyle::Outlined)
+                                .disabled(
+                                    is_bare || rebase_has_unstaged_conflicts || sequencer_step_busy,
+                                )
+                                .on_click(theme, cx, |this, _e, _w, _cx| {
+                                    if let Some(repo_id) = this.active_repo_id() {
+                                        this.store.dispatch(Msg::RebaseContinue { repo_id });
+                                    }
+                                })
+                                .gitcomet_tooltip(
+                                    theme,
+                                    if is_bare {
+                                        worktree_required.into()
+                                    } else if sequencer_step_busy {
+                                        sequencer_busy_tooltip.into()
+                                    } else if rebase_has_unstaged_conflicts {
+                                        language
+                                            .text(
+                                                "Resolve all conflicts before continuing",
+                                                "請先解決所有衝突再繼續",
+                                            )
+                                            .into()
+                                    } else {
+                                        banner.continue_tooltip.into()
+                                    },
+                                ),
                             ),
                     )
                 });
@@ -1711,27 +1797,32 @@ impl BarItemOwner for ActionBarView {
                 .active_repo_id()
                 .is_some_and(|repo| self.open_terminal_repo_ids.contains(&repo));
         let terminal = div().debug_selector(|| "terminal".to_string()).child(
-            components::Button::new("terminal", action_label("Terminal"))
-                .start_slot(icon("icons/terminal.svg", icon_primary))
-                .style(components::ButtonStyle::Subtle)
-                .selected(terminal_is_open)
-                .selected_bg(menu_selected_bg)
-                .disabled(self.active_repo_id().is_none())
-                .on_click(theme, cx, |this, _, window, cx| {
-                    let _ = this.root_view.update(cx, |root, cx| {
-                        root.activate_terminal_button_for_active_repo(window, cx);
-                    });
-                })
-                .gitcomet_tooltip(
-                    theme,
-                    if terminal_opens_external {
-                        "Open external terminal".into()
-                    } else if terminal_is_open {
-                        "Hide terminal".into()
-                    } else {
-                        "Show terminal".into()
-                    },
-                ),
+            components::Button::new(
+                "terminal",
+                action_label(language.text("Terminal", "終端機")),
+            )
+            .start_slot(icon("icons/terminal.svg", icon_primary))
+            .style(components::ButtonStyle::Subtle)
+            .selected(terminal_is_open)
+            .selected_bg(menu_selected_bg)
+            .disabled(self.active_repo_id().is_none())
+            .on_click(theme, cx, |this, _, window, cx| {
+                let _ = this.root_view.update(cx, |root, cx| {
+                    root.activate_terminal_button_for_active_repo(window, cx);
+                });
+            })
+            .gitcomet_tooltip(
+                theme,
+                if terminal_opens_external {
+                    language
+                        .text("Open external terminal", "開啟外部終端機")
+                        .into()
+                } else if terminal_is_open {
+                    language.text("Hide terminal", "隱藏終端機").into()
+                } else {
+                    language.text("Show terminal", "顯示終端機").into()
+                },
+            ),
         );
         items.push(BuiltinBarItem::Terminal, terminal);
         items.push(BuiltinBarItem::CreateBranch, create_branch);
@@ -1875,7 +1966,10 @@ mod tests {
     fn sequencer_banner_names_each_paused_operation() {
         use gitcomet_core::services::SequencerState;
 
-        assert_eq!(sequencer_banner(SequencerState::None), None);
+        assert_eq!(
+            sequencer_banner(SequencerState::None, Language::English),
+            None
+        );
         for (state, label, abort_id, continue_id) in [
             (
                 SequencerState::RebaseOrApply,
@@ -1896,7 +1990,8 @@ mod tests {
                 "continue_revert",
             ),
         ] {
-            let banner = sequencer_banner(state).expect("paused operation has a banner");
+            let banner =
+                sequencer_banner(state, Language::English).expect("paused operation has a banner");
             assert_eq!(
                 (banner.label, banner.abort_id, banner.continue_id),
                 (label, abort_id, continue_id)
@@ -2085,19 +2180,43 @@ mod tests {
     #[test]
     fn pull_tooltip_text_includes_tracking_branch_on_second_line() {
         assert_eq!(
-            pull_tooltip_text(3, Some("origin/main")).as_ref(),
+            pull_tooltip_text(3, Some("origin/main"), Language::English).as_ref(),
             "Pull 3 behind\norigin/main"
         );
-        assert_eq!(pull_tooltip_text(0, None).as_ref(), "Pull 0 behind");
+        assert_eq!(
+            pull_tooltip_text(0, None, Language::English).as_ref(),
+            "Pull 0 behind"
+        );
     }
 
     #[test]
     fn push_tooltip_text_includes_tracking_branch_on_second_line() {
         assert_eq!(
-            push_tooltip_text(2, Some("origin/main")).as_ref(),
+            push_tooltip_text(2, Some("origin/main"), Language::English).as_ref(),
             "Push 2 ahead\norigin/main"
         );
-        assert_eq!(push_tooltip_text(0, None).as_ref(), "Push 0 ahead");
+        assert_eq!(
+            push_tooltip_text(0, None, Language::English).as_ref(),
+            "Push 0 ahead"
+        );
+    }
+
+    #[test]
+    fn traditional_chinese_action_bar_preserves_upstream_and_sequencer_controls() {
+        let language = Language::TraditionalChinese;
+        let upstream = "origin/release/2026";
+        assert_eq!(
+            pull_tooltip_text(3, Some(upstream), language).as_ref(),
+            "拉取 · 落後 3 筆提交\norigin/release/2026"
+        );
+        let banner = sequencer_banner(
+            gitcomet_core::services::SequencerState::RebaseOrApply,
+            language,
+        )
+        .unwrap();
+        assert_eq!(banner.label, "套用／變基中");
+        assert_eq!(banner.abort_id, "abort_rebase_or_apply");
+        assert_eq!(banner.continue_id, "continue_rebase_or_apply");
     }
 
     #[test]

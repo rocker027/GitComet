@@ -1,59 +1,153 @@
 use super::*;
+use crate::localization::Language;
 
-fn hook_completion_notice(operation: &GitHookOperation) -> (components::ToastKind, String) {
+fn hook_completion_notice(
+    operation: &GitHookOperation,
+    language: Language,
+) -> (components::ToastKind, String) {
     let failed_hook = operation
         .hooks
         .iter()
         .rev()
         .find(|hook| hook.status == GitHookRunStatus::Failed)
         .map(|hook| hook.name.as_str());
+    let chinese = language == Language::TraditionalChinese;
+    let label = git_operation_label(&operation.label, language);
     match operation.status {
         GitHookOperationStatus::Succeeded => (
             components::ToastKind::Success,
-            if operation.has_hooks() {
-                format!("{}: Git hooks passed", operation.label)
-            } else {
-                format!("{} completed", operation.label)
+            match (chinese, operation.has_hooks()) {
+                (false, true) => format!("{label}: Git hooks passed"),
+                (false, false) => format!("{label} completed"),
+                (true, true) => format!("{label}：Git 掛鉤檢查通過"),
+                (true, false) => format!("{label}完成"),
             },
         ),
         GitHookOperationStatus::SucceededWithHookFailure => {
-            let hook = failed_hook.unwrap_or("post-operation");
-            let message = if operation.label == "Commit" && hook == "post-commit" {
-                "Commit created, but post-commit hook failed".to_string()
+            let hook = failed_hook.unwrap_or(language.text("post-operation", "操作後"));
+            let message = if chinese {
+                format!("{label}完成，但 {hook} 掛鉤執行失敗")
+            } else if operation.label == "Commit" && hook == "post-commit" {
+                "Commit created, but post-commit hook failed".to_owned()
             } else {
-                format!("{} completed, but {hook} hook failed", operation.label)
+                format!("{label} completed, but {hook} hook failed")
             };
             (components::ToastKind::Warning, message)
         }
         GitHookOperationStatus::Failed => {
-            let message = match failed_hook {
-                Some("pre-commit") if operation.label == "Commit" => {
-                    "Commit blocked by pre-commit hook".to_string()
+            let message = if operation.label == "Commit" && failed_hook == Some("pre-commit") {
+                language
+                    .text(
+                        "Commit blocked by pre-commit hook",
+                        "pre-commit 掛鉤阻擋了提交",
+                    )
+                    .to_owned()
+            } else {
+                match (chinese, failed_hook) {
+                    (false, Some(hook)) => format!("{label} failed in {hook} hook"),
+                    (false, None) => format!("{label} failed"),
+                    (true, Some(hook)) => format!("{label}在執行 {hook} 掛鉤時失敗"),
+                    (true, None) => format!("{label}失敗"),
                 }
-                Some(hook) => format!("{} failed in {hook} hook", operation.label),
-                None => format!("{} failed", operation.label),
             };
             (components::ToastKind::Error, message)
         }
         GitHookOperationStatus::Cancelled => (
             components::ToastKind::Warning,
-            format!(
-                "{} stopped; repository state was refreshed",
-                operation.label
-            ),
+            if chinese {
+                format!("{label}已停止，已重新整理儲存庫狀態")
+            } else {
+                format!("{label} stopped; repository state was refreshed")
+            },
         ),
         GitHookOperationStatus::TimedOut => (
             components::ToastKind::Error,
-            if operation.has_hooks() {
-                format!("{} timed out while running Git hooks", operation.label)
-            } else {
-                format!("{} timed out", operation.label)
+            match (chinese, operation.has_hooks()) {
+                (false, true) => format!("{label} timed out while running Git hooks"),
+                (false, false) => format!("{label} timed out"),
+                (true, true) => format!("{label}在執行 Git 掛鉤時逾時"),
+                (true, false) => format!("{label}逾時"),
             },
         ),
         GitHookOperationStatus::Running | GitHookOperationStatus::Cancelling => {
             (components::ToastKind::Success, String::new())
         }
     }
+}
+
+fn command_completion_notice(
+    entry: &gitcomet_state::model::CommandLogEntry,
+    language: Language,
+) -> String {
+    use gitcomet_state::model::CommandLogKind;
+
+    if language == Language::English {
+        return entry.summary.clone();
+    }
+    let Some((subject, outcome)) = entry.summary.rsplit_once(": ") else {
+        return entry.summary.clone();
+    };
+    let mut command = entry.command.split_ascii_whitespace();
+    let command = (command.next(), command.next());
+    if (command == (Some("git"), Some("branch")) || entry.command.starts_with("set upstream "))
+        && let Some(branch) = subject.strip_prefix("Branch ")
+    {
+        if let Some(upstream) = outcome.strip_prefix("Upstream set to ") {
+            return format!("分支 {branch}：已設定上游為 {upstream}");
+        }
+        if outcome == "Upstream unlinked" {
+            return format!("分支 {branch}：已取消追蹤上游");
+        }
+    }
+    let outcome = match outcome {
+        "Already up to date" | "Already up-to-date" | "Everything up-to-date" => "已是最新狀態",
+        "Synchronized" => "已同步",
+        "Fast-forwarded" => "已快轉",
+        "Merged" => "已合併",
+        "Rebasing complete" => "已完成變基",
+        "Completed" => "已完成",
+        "Staged" => "已暫存",
+        "Pushed" => "已推送",
+        "Paused at a conflict" => "遇到衝突，已暫停",
+        "Paused at the next conflict" => "遇到下一個衝突，已暫停",
+        "Continued" => "已繼續",
+        "Aborted" => "已中止",
+        "Pushed, but the upstream was not saved" => "已推送，但未儲存上游設定",
+        _ => return entry.summary.clone(),
+    };
+
+    // Translate GitComet's result template. Keep operands and Git output intact.
+    let prefixes: &[(&str, &str)] = if entry.kind == CommandLogKind::Pull {
+        &[("Pull", "拉取")]
+    } else {
+        match command {
+            (Some("git"), Some("fetch")) => &[("Fetch", "擷取")],
+            (Some("git"), Some("merge")) => &[("Merge", "合併"), ("Squash", "壓縮合併")],
+            (Some("git"), Some("rebase")) => &[
+                ("Interactive rebase onto", "互動式變基至"),
+                ("Rebase onto", "變基至"),
+                ("Rebase", "變基"),
+            ],
+            (Some("git"), Some("push")) => &[
+                ("Push with annotated tags to", "推送（附帶含註解的標籤）至"),
+                ("Push with all tags to", "推送（附帶所有標籤）至"),
+                ("Force push with lease", "附租約強制推送"),
+                ("Force push", "強制推送"),
+                ("Push after commit", "提交後推送"),
+                ("Push", "推送"),
+                ("Tag", "標籤"),
+            ],
+            _ => &[],
+        }
+    };
+    for &(prefix, translation) in prefixes {
+        if let Some(operand) = subject.strip_prefix(prefix)
+            && (operand.is_empty() || operand.starts_with(' '))
+        {
+            return format!("{translation}{operand}：{outcome}");
+        }
+    }
+    entry.summary.clone()
 }
 
 fn outer_failure_after_hooks(operation: &GitHookOperation) -> bool {
@@ -240,6 +334,7 @@ impl GitCometView {
         follow_up_msgs: &mut Vec<Msg>,
         cx: &mut gpui::Context<Self>,
     ) {
+        let language = Language::current(cx);
         let hook_activity_workflow_repo = self
             .hook_activity_workflow_repo_id(cx)
             .or_else(|| self.pending_hook_activity_open.map(|(repo_id, _)| repo_id));
@@ -320,17 +415,25 @@ impl GitCometView {
                             .find(|operation| operation.id == operation_id)
                             .is_some_and(outer_failure_after_hooks);
                     if outer_failure_after_hooks {
-                        error_reports.push(ErrorReport::command_failure(next_repo.id, entry));
+                        error_reports.push(ErrorReport::command_failure(
+                            next_repo.id,
+                            entry,
+                            language,
+                        ));
                     }
                     continue;
                 }
 
                 if entry.ok {
                     if entry.announce_success {
-                        self.push_toast(components::ToastKind::Success, entry.summary.clone(), cx);
+                        self.push_toast(
+                            components::ToastKind::Success,
+                            command_completion_notice(entry, language),
+                            cx,
+                        );
                     }
                 } else {
-                    error_reports.push(ErrorReport::command_failure(next_repo.id, entry));
+                    error_reports.push(ErrorReport::command_failure(next_repo.id, entry, language));
                 }
             }
 
@@ -369,7 +472,7 @@ impl GitCometView {
                     // duplicate the same result behind the dialog.
                     continue;
                 }
-                let (kind, message) = hook_completion_notice(operation);
+                let (kind, message) = hook_completion_notice(operation, language);
                 self.toast_host.update(cx, |host, cx| {
                     host.push_hook_activity_toast(kind, message, next_repo.id, operation.id, cx);
                 });
@@ -877,17 +980,20 @@ mod tests {
 
     #[test]
     fn hook_completion_notice_distinguishes_blocking_and_ignored_failures() {
-        let (kind, message) = hook_completion_notice(&completed_hook_operation(
-            GitHookOperationStatus::Failed,
-            "pre-commit",
-        ));
+        let (kind, message) = hook_completion_notice(
+            &completed_hook_operation(GitHookOperationStatus::Failed, "pre-commit"),
+            Language::English,
+        );
         assert!(matches!(kind, components::ToastKind::Error));
         assert_eq!(message, "Commit blocked by pre-commit hook");
 
-        let (kind, message) = hook_completion_notice(&completed_hook_operation(
-            GitHookOperationStatus::SucceededWithHookFailure,
-            "post-commit",
-        ));
+        let (kind, message) = hook_completion_notice(
+            &completed_hook_operation(
+                GitHookOperationStatus::SucceededWithHookFailure,
+                "post-commit",
+            ),
+            Language::English,
+        );
         assert!(matches!(kind, components::ToastKind::Warning));
         assert_eq!(message, "Commit created, but post-commit hook failed");
     }
@@ -898,9 +1004,20 @@ mod tests {
         operation.hooks.clear();
         operation.command_started = true;
         operation.label = "annex sync".into();
-        let (kind, message) = hook_completion_notice(&operation);
+        let (kind, message) = hook_completion_notice(&operation, Language::English);
         assert!(matches!(kind, components::ToastKind::Error));
         assert_eq!(message, "annex sync failed");
+    }
+
+    #[test]
+    fn git_operation_hook_warning_keeps_the_hook_name_and_warning_kind_in_traditional_chinese() {
+        let operation = completed_hook_operation(
+            GitHookOperationStatus::SucceededWithHookFailure,
+            "post-commit",
+        );
+        let (kind, message) = hook_completion_notice(&operation, Language::TraditionalChinese);
+        assert!(matches!(kind, components::ToastKind::Warning));
+        assert_eq!(message, "提交完成，但 post-commit 掛鉤執行失敗");
     }
 
     #[test]

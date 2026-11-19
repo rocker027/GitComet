@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::{Language, text};
 
 pub(super) fn panel(
     this: &mut PopoverHost,
@@ -20,17 +21,25 @@ pub(super) fn panel(
     // popover can outlive that check (an operation may start while it is
     // open); git would refuse the rebase, so hold the button too.
     let history_rewrite_busy = repo.is_some_and(|r| r.history_rewrite_busy());
+    let message = match Language::current(cx) {
+        Language::English => format!("Rebase {current_branch} onto {onto}"),
+        Language::TraditionalChinese => format!("將 {current_branch} 變基到 {onto}"),
+    };
 
-    ConfirmDialog::new("Rebase", DIALOG_380_WIDTH)
-        .text(theme, format!("Rebase {current_branch} onto {onto}"))
+    ConfirmDialog::new(text(cx, "Rebase", "變基"), DIALOG_380_WIDTH)
+        .text(theme, message)
         .note(
             theme,
-            "This rewrites commit history. Avoid rebasing commits already pushed to a shared branch.",
+            text(
+                cx,
+                "This rewrites commit history. Avoid rebasing commits already pushed to a shared branch.",
+                "這會改寫提交歷史。請避免對已推送到共用分支的提交進行變基。",
+            ),
         )
         .render(
             theme,
             dialog_cancel_button("rebase_onto_cancel", "rebase_onto_cancel_hint", theme, cx),
-            components::Button::new("rebase_onto_go", "Rebase")
+            components::Button::new("rebase_onto_go", text(cx, "Rebase", "變基"))
                 .disabled(history_rewrite_busy)
                 .focus_handle(this.rebase_onto_submit_focus_handle.clone())
                 .separated_end_slot(super::hotkey_hint(theme, "rebase_onto_go_hint", "Enter"))

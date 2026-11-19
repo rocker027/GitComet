@@ -1,6 +1,7 @@
 //! Picker opened by the action bar's upstream badge.
 
 use super::*;
+use crate::localization::Language;
 use gitcomet_core::domain::Upstream;
 use std::rc::Rc;
 
@@ -55,12 +56,13 @@ fn can_create_new(repo: &RepoState, branch: &str) -> bool {
     captured_branch_is_current(repo, branch) && current_upstream(repo, branch).is_none()
 }
 
-fn rows_signature(repo: &RepoState, branch: &str) -> u64 {
+fn rows_signature(repo: &RepoState, branch: &str, language: Language) -> u64 {
     use std::hash::Hash;
 
     super::rows_cache::signature(|hasher| {
         repo.id.hash(hasher);
         branch.hash(hasher);
+        language.key().hash(hasher);
         repo.branches_rev.hash(hasher);
         repo.remotes_rev.hash(hasher);
         repo.remote_branches_rev.hash(hasher);
@@ -72,18 +74,29 @@ fn rows_signature(repo: &RepoState, branch: &str) -> u64 {
     })
 }
 
+#[cfg(test)]
 pub(super) fn cached(
     this: &PopoverHost,
     repo_id: RepoId,
     branch: &str,
     query: &str,
 ) -> Rc<super::rows_cache::CachedRows<UpstreamTarget>> {
+    localized_cached(this, repo_id, branch, query, Language::English)
+}
+
+pub(super) fn localized_cached(
+    this: &PopoverHost,
+    repo_id: RepoId,
+    branch: &str,
+    query: &str,
+    language: Language,
+) -> Rc<super::rows_cache::CachedRows<UpstreamTarget>> {
     let Some(repo) = repo_for(this, repo_id) else {
         return super::rows_cache::CachedRows::empty();
     };
     let key = super::rows_cache::RowsCacheKey::new(
         super::rows_cache::RowsCacheOwner::Upstream,
-        rows_signature(repo, branch),
+        rows_signature(repo, branch, language),
         query,
     );
     super::rows_cache::get_or_build(&this.upstream_picker_rows_cache, key, |now| {
@@ -147,6 +160,7 @@ pub(super) fn cached(
                 display_name,
                 &lookup_name,
                 now,
+                language,
             ));
         }
 
@@ -154,11 +168,22 @@ pub(super) fn cached(
     })
 }
 
+#[cfg(test)]
 pub(super) fn nav_targets(
     this: &PopoverHost,
     repo_id: RepoId,
     branch: &str,
     query: &str,
+) -> Vec<UpstreamNavTarget> {
+    localized_nav_targets(this, repo_id, branch, query, Language::English)
+}
+
+pub(super) fn localized_nav_targets(
+    this: &PopoverHost,
+    repo_id: RepoId,
+    branch: &str,
+    query: &str,
+    language: Language,
 ) -> Vec<UpstreamNavTarget> {
     let mut targets = Vec::new();
     if repo_for(this, repo_id).is_some_and(|repo| can_unlink(repo, branch)) {
@@ -167,7 +192,7 @@ pub(super) fn nav_targets(
         targets.push(UpstreamNavTarget::CreateNew);
     }
     targets.extend(
-        cached(this, repo_id, branch, query)
+        localized_cached(this, repo_id, branch, query, language)
             .filtered_payloads()
             .into_iter()
             .map(UpstreamNavTarget::Branch),
@@ -202,9 +227,10 @@ pub(super) fn initial_selected_index(
     this: &PopoverHost,
     repo_id: RepoId,
     branch: &str,
+    language: Language,
 ) -> Option<usize> {
     let leading_actions = leading_action_count(this, repo_id, branch);
-    if !cached(this, repo_id, branch, "")
+    if !localized_cached(this, repo_id, branch, "", language)
         .layout
         .item_indices
         .is_empty()
@@ -325,6 +351,7 @@ pub(super) fn panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let ui_scale = super::popover_ui_scale(cx);
     let ui_scale_percent = ui_scale.percent();
     let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
@@ -341,9 +368,9 @@ pub(super) fn panel(
         .child(popover_title(
             theme,
             if can_unlink_branch {
-                "Change Upstream"
+                language.text("Change Upstream", "更換上游分支")
             } else {
-                "Set Upstream"
+                language.text("Set Upstream", "設定上游分支")
             },
         ))
         .child(super::popover_rule(theme))
@@ -353,7 +380,10 @@ pub(super) fn panel(
                 .pt_1()
                 .text_size(theme.ui_text(12.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child(format!("Local branch: {branch}")),
+                .child(format!(
+                    "{} {branch}",
+                    language.text("Local branch:", "本機分支："),
+                )),
         );
 
     let Some(search) = this.remote_picker_search_input.clone() else {
@@ -362,19 +392,23 @@ pub(super) fn panel(
             content.child(components::context_menu_label(
                 theme,
                 ui_scale,
-                "Search input not initialized",
+                language.text("Search input not initialized", "搜尋欄尚未初始化"),
                 Some(this.tooltip_host.clone()),
                 cx,
             )),
         )
         .w(width.preferred_px(ui_scale));
     };
+    let placeholder = language.text("Filter remote branches", "篩選遠端分支");
     search.update(cx, |input, cx| {
+        if input.placeholder() != placeholder {
+            input.set_placeholder(placeholder, cx);
+        }
         input.set_chromeless(false, cx);
         input.set_leading_icon(Some("icons/cloud.svg"), cx);
     });
     let query = search.read(cx).text().trim().to_string();
-    let built = cached(this, repo_id, &branch, &query);
+    let built = localized_cached(this, repo_id, &branch, &query, language);
     let leading_action_count = usize::from(can_unlink_branch || can_create_new_branch);
     if query.is_empty()
         && this.upstream_picker_selected_index.is_none()
@@ -409,23 +443,28 @@ pub(super) fn panel(
                     Loadable::Loading | Loadable::NotLoaded
                 ) =>
         {
-            "Loading remote branches"
+            language.text("Loading remote branches", "正在載入遠端分支")
         }
         Some(repo)
             if matches!(repo.remotes, Loadable::Error(_))
                 || matches!(repo.remote_branches, Loadable::Error(_)) =>
         {
-            "Could not list remote branches"
+            language.text("Could not list remote branches", "無法列出遠端分支")
         }
-        Some(_) if !query.is_empty() => "No matching remote branches",
-        Some(_) => "No remote branches",
-        None => "No repository",
+        Some(_) if !query.is_empty() => {
+            language.text("No matching remote branches", "沒有相符的遠端分支")
+        }
+        Some(_) => language.text("No remote branches", "沒有遠端分支"),
+        None => language.text("No repository", "沒有儲存庫"),
     };
     if can_unlink_branch {
         let unlink_branch = branch.clone();
         let unlink_entry = components::ContextMenuEntry::new(
             "upstream_unlink",
-            components::ContextMenuText::new("Unlink upstream branch").max_lines(1),
+            components::ContextMenuText::new(
+                language.text("Unlink upstream branch", "取消追蹤上游分支"),
+            )
+            .max_lines(1),
         )
         .icon(components::ContextMenuIconSlot::Icon(
             "icons/unlink.svg".into(),
@@ -442,7 +481,8 @@ pub(super) fn panel(
         let create_branch = branch.clone();
         let create_entry = components::ContextMenuEntry::new(
             "upstream_create_new",
-            components::ContextMenuText::new("Create new").max_lines(1),
+            components::ContextMenuText::new(language.text("Create new", "設定新的上游分支"))
+                .max_lines(1),
         )
         .icon(components::ContextMenuIconSlot::Icon(
             "icons/plus.svg".into(),

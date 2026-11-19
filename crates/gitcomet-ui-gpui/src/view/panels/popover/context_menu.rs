@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 use gitcomet_core::domain::Upstream;
 
 mod activate;
@@ -177,13 +178,14 @@ pub(super) fn push_copy_path_entries(
     repo_id: RepoId,
     path: &std::path::Path,
     relative_shortcut: Option<SharedString>,
+    language: Language,
 ) {
     // Offered only when the workdir join actually resolves. Falling back to the
     // repo-relative text would put identical content behind two entries whose
     // labels promise different things.
     if let Ok(absolute) = host.resolve_workdir_path(repo_id, path) {
         items.push(ContextMenuItem::Entry {
-            label: "Copy absolute path".into(),
+            label: language.text("Copy absolute path", "複製絕對路徑").into(),
             icon: Some("icons/copy.svg".into()),
             shortcut: None,
             disabled: false,
@@ -197,7 +199,7 @@ pub(super) fn push_copy_path_entries(
         return;
     }
     items.push(ContextMenuItem::Entry {
-        label: "Copy relative path".into(),
+        label: language.text("Copy relative path", "複製相對路徑").into(),
         icon: Some("icons/copy.svg".into()),
         shortcut: relative_shortcut,
         disabled: false,
@@ -205,6 +207,41 @@ pub(super) fn push_copy_path_entries(
             text: path_text_for_copy(path),
         }),
     });
+}
+
+fn localized_menu(cx: &App, build: impl Fn(Language) -> ContextMenuModel) -> ContextMenuModel {
+    let language = Language::current(cx);
+    let mut model = build(language);
+    if language != Language::English {
+        // Both passes use the same repository state and action order. The menu
+        // renderer still needs the source labels for its existing presentation rules.
+        let source = build(Language::English);
+        model.entry_source_labels = source
+            .items
+            .into_iter()
+            .zip(&model.items)
+            .enumerate()
+            .filter_map(
+                |(index, (original, translated))| match (original, translated) {
+                    (
+                        ContextMenuItem::Entry {
+                            label: source,
+                            action: source_action,
+                            ..
+                        },
+                        ContextMenuItem::Entry { label, action, .. },
+                    ) if &source != label
+                        && std::mem::discriminant(source_action.as_ref())
+                            == std::mem::discriminant(action.as_ref()) =>
+                    {
+                        Some((index, source))
+                    }
+                    _ => None,
+                },
+            )
+            .collect();
+    }
+    model
 }
 
 fn active_branch_tracking_upstream(host: &PopoverHost) -> Option<&Upstream> {
@@ -643,8 +680,12 @@ impl PopoverHost {
                 .and_then(|dialog| dialog.menu.clone()),
             PopoverKind::AppMenu => Some(app_menu::model(self)),
             PopoverKind::AddRepoMenu => Some(add_repo_menu::model()),
-            PopoverKind::PullPicker => Some(pull::model(self)),
-            PopoverKind::PushPicker => Some(push::model(self)),
+            PopoverKind::PullPicker => {
+                Some(localized_menu(cx, |language| pull::model(self, language)))
+            }
+            PopoverKind::PushPicker => {
+                Some(localized_menu(cx, |language| push::model(self, language)))
+            }
             PopoverKind::CommitOptionsMenu { repo_id } => {
                 Some(commit_options::model(self, *repo_id))
             }
@@ -656,12 +697,13 @@ impl PopoverHost {
                 repo_id,
                 commit_id,
                 refs,
-            } => Some(
+            } => Some(localized_menu(cx, |language| {
                 // A stash in the graph gets the stash menu, as in GitKraken:
                 // Apply, Pop, and Drop through its confirmation.
-                stash_menu_for_graph_node(self, *repo_id, commit_id, refs)
-                    .unwrap_or_else(|| history_refs::model(self, *repo_id, commit_id, refs)),
-            ),
+                stash_menu_for_graph_node(self, *repo_id, commit_id, refs, language).unwrap_or_else(
+                    || history_refs::model(self, *repo_id, commit_id, refs, language),
+                )
+            })),
             PopoverKind::ReflogEntryMenu {
                 repo_id,
                 target,
@@ -671,7 +713,9 @@ impl PopoverHost {
                 repo_id,
                 commit_id,
                 path,
-            } => Some(file_history_commit::model(self, *repo_id, commit_id, path)),
+            } => Some(localized_menu(cx, |language| {
+                file_history_commit::model(self, *repo_id, commit_id, path, language)
+            })),
             PopoverKind::TagMenu { repo_id, commit_id } => {
                 Some(tag::model(self, *repo_id, commit_id))
             }
@@ -679,25 +723,33 @@ impl PopoverHost {
                 repo_id,
                 area,
                 path,
-            } => Some(status_file::model(self, *repo_id, *area, path, cx)),
+            } => Some(localized_menu(cx, |language| {
+                status_file::model(self, *repo_id, *area, path, cx, language)
+            })),
             PopoverKind::StatusConflictMenu {
                 repo_id,
                 area,
                 path,
-            } => Some(status_file::conflict_model(self, *repo_id, *area, path, cx)),
-            PopoverKind::BranchMenu { repo_id, target } => {
-                Some(branch::model(self, *repo_id, target))
-            }
+            } => Some(localized_menu(cx, |language| {
+                status_file::conflict_model(self, *repo_id, *area, path, cx, language)
+            })),
+            PopoverKind::BranchMenu { repo_id, target } => Some(localized_menu(cx, |language| {
+                branch::model(self, *repo_id, target, language)
+            })),
             PopoverKind::BranchDropMenu {
                 repo_id,
                 source,
                 target,
-            } => Some(branch_drop::model(self, *repo_id, source, target)),
+            } => Some(localized_menu(cx, |language| {
+                branch_drop::model(self, *repo_id, source, target, language)
+            })),
             PopoverKind::RefPickerMenu { repo_id, purpose } => {
                 Some(ref_picker::model(self, *repo_id, *purpose))
             }
             PopoverKind::BranchSectionMenu { repo_id, section } => {
-                Some(branch_section::model(self, *repo_id, *section))
+                Some(localized_menu(cx, |language| {
+                    branch_section::model(self, *repo_id, *section, language)
+                }))
             }
             PopoverKind::Repo {
                 repo_id,
@@ -751,7 +803,9 @@ impl PopoverHost {
                 repo_id,
                 index,
                 message,
-            } => Some(stash::model(*repo_id, *index, message)),
+            } => Some(localized_menu(cx, |language| {
+                stash::model(*repo_id, *index, message, language)
+            })),
             PopoverKind::StashRestoreMenu { repo_id } => Some(stash::restore_menu(*repo_id, cx)),
             PopoverKind::Repo {
                 repo_id,
@@ -793,13 +847,16 @@ impl PopoverHost {
                 repo_id,
                 commit_id,
                 path,
-            } => Some(commit_file::model(
-                self,
-                *repo_id,
-                commit_file::FileMenuSource::Commit(commit_id),
-                path,
-                cx,
-            )),
+            } => Some(localized_menu(cx, |language| {
+                commit_file::model(
+                    self,
+                    *repo_id,
+                    commit_file::FileMenuSource::Commit(commit_id),
+                    path,
+                    cx,
+                    language,
+                )
+            })),
             PopoverKind::WorktreeFileMenu {
                 repo_id,
                 worktree_path,
@@ -810,16 +867,19 @@ impl PopoverHost {
                 from_commit_id,
                 to_commit_id,
                 path,
-            } => Some(commit_file::model(
-                self,
-                *repo_id,
-                commit_file::FileMenuSource::Range {
-                    from: from_commit_id,
-                    to: to_commit_id.as_ref(),
-                },
-                path,
-                cx,
-            )),
+            } => Some(localized_menu(cx, |language| {
+                commit_file::model(
+                    self,
+                    *repo_id,
+                    commit_file::FileMenuSource::Range {
+                        from: from_commit_id,
+                        to: to_commit_id.as_ref(),
+                    },
+                    path,
+                    cx,
+                    language,
+                )
+            })),
             PopoverKind::CommitFileSortMenu { list } => {
                 Some(commit_file_sort::model(self, *list, cx))
             }
@@ -827,10 +887,14 @@ impl PopoverHost {
                 Some(file_list_layout::model(self, *repo_id, *list, cx))
             }
             PopoverKind::FileBrowserFileMenu { repo_id, path } => {
-                Some(file_browser_file::model(self, *repo_id, path, cx))
+                Some(localized_menu(cx, |language| {
+                    file_browser_file::model(self, *repo_id, path, cx, language)
+                }))
             }
             PopoverKind::FileBrowserFolderMenu { repo_id, path } => {
-                Some(file_browser_folder::model(self, *repo_id, path))
+                Some(localized_menu(cx, |language| {
+                    file_browser_folder::model(self, *repo_id, path, language)
+                }))
             }
             PopoverKind::FileListFolderMenu {
                 repo_id,
@@ -839,30 +903,29 @@ impl PopoverHost {
                 chain,
                 collapsed,
                 apply_source,
-            } => Some(file_list_folder::model(
-                self,
-                file_list_folder::FolderMenu {
-                    repo_id: *repo_id,
-                    list: *list,
-                    key,
-                    chain,
-                    collapsed: *collapsed,
-                    apply_source: apply_source.as_ref(),
-                },
-                cx,
-            )),
+            } => Some(localized_menu(cx, |language| {
+                file_list_folder::model(
+                    self,
+                    file_list_folder::FolderMenu {
+                        repo_id: *repo_id,
+                        list: *list,
+                        key,
+                        chain,
+                        collapsed: *collapsed,
+                        apply_source: apply_source.as_ref(),
+                    },
+                    cx,
+                    language,
+                )
+            })),
             PopoverKind::BranchGroupMenu {
                 repo_id,
                 section,
                 remote,
                 path,
-            } => Some(branch_group::model(
-                self,
-                *repo_id,
-                *section,
-                remote.as_deref(),
-                path,
-            )),
+            } => Some(localized_menu(cx, |language| {
+                branch_group::model(self, *repo_id, *section, remote.as_deref(), path, language)
+            })),
             PopoverKind::SidebarAncestorMenu { section, .. } => {
                 let mut items = vec![ContextMenuItem::Header("Active branch groups".into())];
                 for (label, key) in self
@@ -895,9 +958,9 @@ impl PopoverHost {
                 submodule_repo_path,
                 target,
             )),
-            PopoverKind::DiffHunkMenu { repo_id, src_ix } => {
-                Some(diff_hunk::model(self, *repo_id, *src_ix, cx))
-            }
+            PopoverKind::DiffHunkMenu { repo_id, src_ix } => Some(localized_menu(cx, |language| {
+                diff_hunk::model(self, *repo_id, *src_ix, cx, language)
+            })),
             PopoverKind::DiffEditorMenu {
                 context_actions,
                 repo_id,
@@ -1386,6 +1449,7 @@ impl PopoverHost {
         let tooltip_host = self.tooltip_host.clone();
         let entry_tooltips = model.entry_tooltips.clone();
         let entry_debug_selectors = model.entry_debug_selectors.clone();
+        let entry_source_labels = model.entry_source_labels.clone();
         let slots = context_menu_slots(model.items.len(), &model.groups);
         let shortcut_keycaps = model.shortcut_keycaps;
 
@@ -1627,11 +1691,12 @@ impl PopoverHost {
                             action,
                         } => {
                             let selected = selected_for_render == Some(ix);
+                            let source_label = entry_source_labels.get(&ix).unwrap_or(&label);
                             let debug_selector = entry_debug_selectors
                                 .get(&ix)
                                 .map(|selector| selector.to_string())
                                 .unwrap_or_else(|| {
-                                    context_menu_entry_debug_selector(label.as_ref())
+                                    context_menu_entry_debug_selector(source_label.as_ref())
                                 });
                             let tooltip_text = entry_tooltips
                                 .get(&ix)
@@ -1643,7 +1708,7 @@ impl PopoverHost {
                             let activate_on_release = model_for_mouse.clone();
                             let (icon_slot, tone) =
                                 crate::view::menu_presentation::entry_presentation(
-                                    label.as_ref(),
+                                    source_label.as_ref(),
                                     icon,
                                     reserve_icon_column,
                                 );
@@ -1807,6 +1872,7 @@ fn stash_menu_for_graph_node(
     repo_id: RepoId,
     commit_id: &CommitId,
     refs: &CommitMenuRefs,
+    language: Language,
 ) -> Option<ContextMenuModel> {
     if !matches!(refs, CommitMenuRefs::All) {
         return None;
@@ -1820,7 +1886,7 @@ fn stash_menu_for_graph_node(
         .ready()?
         .iter()
         .find(|stash| stash.id == *commit_id)?;
-    Some(stash::model(repo_id, stash.index, &stash.message))
+    Some(stash::model(repo_id, stash.index, &stash.message, language))
 }
 
 fn interactive_rebase_action_menu_model(
@@ -1940,6 +2006,42 @@ mod tests {
             ]
         );
         assert!(marked_comparison_entries(RepoId(1), &marked, "c00", None).is_empty());
+    }
+
+    #[gpui::test]
+    fn traditional_chinese_menu_keeps_warning_tone_and_debug_selector(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|app| {
+            app.set_global(Language::TraditionalChinese);
+            let model = localized_menu(app, |language| stash::model(RepoId(1), 0, "WIP", language));
+            let (index, label) = model
+                .items
+                .iter()
+                .enumerate()
+                .find_map(|(index, item)| match item {
+                    ContextMenuItem::Entry { label, action, .. }
+                        if matches!(
+                            action.as_ref(),
+                            ContextMenuAction::DropStashConfirm { .. }
+                        ) =>
+                    {
+                        Some((index, label))
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            let source = model.entry_source_labels.get(&index).unwrap();
+            assert_eq!(label.as_ref(), "捨棄貯藏…");
+            assert_eq!(
+                context_menu_entry_debug_selector(source.as_ref()),
+                "context_menu_drop_stash"
+            );
+            assert_eq!(
+                crate::view::menu_presentation::context_menu_tone(source.as_ref(), None),
+                crate::kit::components::ContextMenuTone::Danger
+            );
+        });
     }
 
     #[test]

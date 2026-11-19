@@ -1,6 +1,7 @@
 use super::*;
+use crate::localization::Language;
 
-pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
+pub(super) fn model(this: &PopoverHost, language: Language) -> ContextMenuModel {
     let repo_id = this.active_repo_id();
     let repo = this.active_repo();
     let push_unavailable = repo
@@ -17,16 +18,21 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
         .and_then(|repo| repo.pending.force_push_lease.as_ref())
         .is_some()
     {
-        "Force push published amend with lease…"
+        language.text(
+            "Force push published amend with lease…",
+            "強制推送已發布的修訂（含租約檢查）…",
+        )
     } else {
-        "Force push (with lease)…"
+        language.text("Force push (with lease)…", "強制推送（含租約檢查）…")
     };
 
     let mut model = ContextMenuModel::new(vec![
-        ContextMenuItem::Header(super::action_menu_title("Push", upstream).into()),
+        ContextMenuItem::Header(
+            super::action_menu_title(language.text("Push", "推送"), upstream).into(),
+        ),
         ContextMenuItem::Separator,
         ContextMenuItem::Entry {
-            label: "Push".into(),
+            label: language.text("Push", "推送").into(),
             icon: Some("icons/arrow_up.svg".into()),
             shortcut: None,
             disabled: push_disabled,
@@ -34,9 +40,10 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
         },
     ]);
     if let Some(reason) = push_unavailable {
-        model
-            .entry_tooltips
-            .insert(model.items.len() - 1, reason.into());
+        model.entry_tooltips.insert(
+            model.items.len() - 1,
+            crate::view::localized_action_reason(reason, language).into(),
+        );
     }
     for mode in gitcomet_core::tag_push::TagPushMode::ALL {
         let request = repo.and_then(|repo| {
@@ -45,14 +52,14 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
         let preview = repo
             .zip(request.as_ref())
             .and_then(|(repo, request)| super::super::tag_push::preview(repo, request));
+        let mode_label = super::super::tag_push::label(mode, language);
         let label = if request.is_some() {
             format!(
-                "{} · {}",
-                mode.label(),
-                super::super::tag_push::summary(preview)
+                "{mode_label} · {}",
+                super::super::tag_push::summary(preview, language)
             )
         } else {
-            mode.label().to_string()
+            mode_label.to_string()
         };
         let ix = model.items.len();
         let unavailable = this.push_with_tags_unavailable(mode);
@@ -66,9 +73,10 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
         if let Some(reason) = unavailable {
             model.entry_tooltips.insert(ix, reason.into());
         } else if let Some(request) = request.as_ref() {
-            model
-                .entry_tooltips
-                .insert(ix, super::super::tag_push::tooltip(request, preview).into());
+            model.entry_tooltips.insert(
+                ix,
+                super::super::tag_push::tooltip(request, preview, language).into(),
+            );
         }
     }
     model.items.extend(super::large_file::push_items(

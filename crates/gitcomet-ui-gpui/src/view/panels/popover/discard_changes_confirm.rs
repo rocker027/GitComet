@@ -1,4 +1,8 @@
 use super::*;
+use crate::localization::{Language, text};
+
+pub(super) const CONFLICT_DISCARD_NOTE_ZH: &str =
+    "有衝突的檔案會保留你的版本（ours），捨棄傳入的變更。";
 
 /// Discarding a conflicted file keeps our side, so the dialogs say so.
 pub(super) fn conflict_discard_note<'a>(
@@ -43,18 +47,35 @@ pub(super) fn panel(
         _ => selection,
     };
     let (detail, can_discard) = match targets {
-        [] => ("No files selected.".to_string(), false),
+        [] => (
+            text(cx, "No files selected.", "未選取檔案。").to_string(),
+            false,
+        ),
         [single] => (single.display().to_string(), true),
-        many => (format!("{} files", many.len()), true),
+        many => {
+            let count = many.len();
+            let detail = match Language::current(cx) {
+                Language::English => format!("{count} files"),
+                Language::TraditionalChinese => format!("{count} 個檔案"),
+            };
+            (detail, true)
+        }
     };
     let note = conflict_discard_note(&this.state, repo_id, targets.iter().map(|p| p.as_path()));
 
-    let mut dialog = ConfirmDialog::new("Discard changes", DIALOG_420_WIDTH).text(
-        theme,
-        format!("This will discard working tree changes for {detail}."),
-    );
+    let mut dialog = ConfirmDialog::new(text(cx, "Discard changes", "捨棄變更"), DIALOG_420_WIDTH)
+        .text(
+            theme,
+            match Language::current(cx) {
+                Language::English => {
+                    format!("This will discard working tree changes for {detail}.")
+                }
+                Language::TraditionalChinese if !can_discard => detail,
+                Language::TraditionalChinese => format!("這會捨棄 {detail} 在工作樹中的變更。"),
+            },
+        );
     if let Some(note) = note {
-        dialog = dialog.note(theme, note);
+        dialog = dialog.note(theme, text(cx, note, CONFLICT_DISCARD_NOTE_ZH));
     }
     dialog.render(
         theme,
@@ -64,7 +85,7 @@ pub(super) fn panel(
             theme,
             cx,
         ),
-        components::Button::new("discard_changes_go", "Discard")
+        components::Button::new("discard_changes_go", text(cx, "Discard", "捨棄"))
             .style(components::ButtonStyle::Danger)
             .disabled(!can_discard)
             .on_click(theme, cx, move |this, _e, _w, cx| {

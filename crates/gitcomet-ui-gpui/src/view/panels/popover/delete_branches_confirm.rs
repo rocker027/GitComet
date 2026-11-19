@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 use gitcomet_state::name_summary::{LISTED_NAMES, branch_noun, elide_names, elision_suffix};
 
 /// Confirms emptying a branch group.
@@ -17,15 +18,26 @@ pub(super) fn panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let count = names.len();
     let noun = branch_noun(count);
 
     // `group_label` is `origin/feat/` for a remote group, so naming it says both
     // which remote and which scope — "on origin" alone would read as the whole
     // remote when several groups live under it.
-    let title = match section {
-        BranchSection::Remote => format!("Delete {count} {noun} in {group_label} on the remote?"),
-        BranchSection::Local => format!("Delete {count} {noun} in {group_label}?"),
+    let title = match (section, language) {
+        (BranchSection::Remote, Language::English) => {
+            format!("Delete {count} {noun} in {group_label} on the remote?")
+        }
+        (BranchSection::Local, Language::English) => {
+            format!("Delete {count} {noun} in {group_label}?")
+        }
+        (BranchSection::Remote, Language::TraditionalChinese) => {
+            format!("要從遠端刪除「{group_label}」中的 {count} 個分支嗎？")
+        }
+        (BranchSection::Local, Language::TraditionalChinese) => {
+            format!("要刪除「{group_label}」中的 {count} 個本機分支嗎？")
+        }
     };
 
     // Elided the same way the name list is. Spelling out 300 refs would wrap to
@@ -41,17 +53,19 @@ pub(super) fn panel(
     };
 
     let dialog = ConfirmDialog::new(title, DIALOG_420_WIDTH)
-        .section(name_list(theme, &names))
+        .section(name_list(theme, &names, language))
         .text(
             theme,
             match section {
-                BranchSection::Local => {
+                BranchSection::Local => language.text(
                     "The current branch is never included. Branches that are not fully merged \
-                     need Force delete."
-                }
-                BranchSection::Remote => {
-                    "This deletes the branches on the remote for everyone, not just here."
-                }
+                         need Force delete.",
+                    "目前的分支不會被刪除。尚未完全合併的分支須使用「強制刪除」。",
+                ),
+                BranchSection::Remote => language.text(
+                    "This deletes the branches on the remote for everyone, not just here.",
+                    "這會從遠端刪除這些分支，所有使用該遠端的人都會受到影響。",
+                ),
             },
         )
         .command(theme, command);
@@ -74,28 +88,34 @@ pub(super) fn panel(
                     .items_center()
                     .gap_2()
                     .child(
-                        components::Button::new("delete_branches_go", "Delete")
-                            .style(components::ButtonStyle::Danger)
-                            .on_click(theme, cx, move |this, _e, _w, cx| {
-                                this.store.dispatch(Msg::DeleteBranches {
-                                    repo_id,
-                                    names: names.clone(),
-                                    force: false,
-                                });
-                                this.close_popover(cx);
-                            }),
+                        components::Button::new(
+                            "delete_branches_go",
+                            language.text("Delete", "刪除"),
+                        )
+                        .style(components::ButtonStyle::Danger)
+                        .on_click(theme, cx, move |this, _e, _w, cx| {
+                            this.store.dispatch(Msg::DeleteBranches {
+                                repo_id,
+                                names: names.clone(),
+                                force: false,
+                            });
+                            this.close_popover(cx);
+                        }),
                     )
                     .child(
-                        components::Button::new("delete_branches_force", "Force delete")
-                            .style(components::ButtonStyle::Danger)
-                            .on_click(theme, cx, move |this, _e, _w, cx| {
-                                this.store.dispatch(Msg::DeleteBranches {
-                                    repo_id,
-                                    names: force_names.clone(),
-                                    force: true,
-                                });
-                                this.close_popover(cx);
-                            }),
+                        components::Button::new(
+                            "delete_branches_force",
+                            language.text("Force delete", "強制刪除"),
+                        )
+                        .style(components::ButtonStyle::Danger)
+                        .on_click(theme, cx, move |this, _e, _w, cx| {
+                            this.store.dispatch(Msg::DeleteBranches {
+                                repo_id,
+                                names: force_names.clone(),
+                                force: true,
+                            });
+                            this.close_popover(cx);
+                        }),
                     ),
                 cx,
             )
@@ -105,16 +125,19 @@ pub(super) fn panel(
             dialog.render(
                 theme,
                 cancel,
-                components::Button::new("delete_branches_go", "Delete on remote")
-                    .style(components::ButtonStyle::Danger)
-                    .on_click(theme, cx, move |this, _e, _w, cx| {
-                        this.store.dispatch(Msg::DeleteRemoteBranches {
-                            repo_id,
-                            remote: remote.clone(),
-                            branches: names.clone(),
-                        });
-                        this.close_popover(cx);
-                    }),
+                components::Button::new(
+                    "delete_branches_go",
+                    language.text("Delete on remote", "從遠端刪除"),
+                )
+                .style(components::ButtonStyle::Danger)
+                .on_click(theme, cx, move |this, _e, _w, cx| {
+                    this.store.dispatch(Msg::DeleteRemoteBranches {
+                        repo_id,
+                        remote: remote.clone(),
+                        branches: names.clone(),
+                    });
+                    this.close_popover(cx);
+                }),
                 cx,
             )
         }
@@ -124,7 +147,7 @@ pub(super) fn panel(
 /// The branches about to go, capped so a large group cannot push the buttons
 /// off screen. Shares its cap and its overflow wording with the command preview
 /// above and with the failure toast a partial delete produces.
-fn name_list(theme: AppTheme, names: &[String]) -> gpui::Div {
+fn name_list(theme: AppTheme, names: &[String], language: Language) -> gpui::Div {
     let mut list = div()
         .px_2()
         .py_1()
@@ -142,6 +165,10 @@ fn name_list(theme: AppTheme, names: &[String]) -> gpui::Div {
         );
     }
     if let Some(suffix) = elision_suffix(names.len()) {
+        let suffix = match language {
+            Language::English => suffix,
+            Language::TraditionalChinese => format!("…另有 {} 個分支", names.len() - LISTED_NAMES),
+        };
         list = list.child(div().child(suffix));
     }
     list

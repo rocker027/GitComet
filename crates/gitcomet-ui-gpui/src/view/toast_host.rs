@@ -1412,16 +1412,19 @@ impl ToastHost {
     ) -> gpui::Div {
         let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
         let summary: SharedString = if notice.text.summary.is_empty() {
-            "Error".into()
+            crate::localization::text(cx, "Error", "錯誤").into()
         } else {
             notice.text.summary.clone().into()
         };
-        let show = components::Button::new(format!("toast_error_show_{id}"), "Show")
-            .style(components::ButtonStyle::Outlined)
-            .on_click(theme, cx, move |this, _e, window, cx| {
-                this.open_error_details(id, window, cx);
-            })
-            .debug_selector(move || format!("toast_error_show_{id}"));
+        let show = components::Button::new(
+            format!("toast_error_show_{id}"),
+            crate::localization::text(cx, "Show", "查看"),
+        )
+        .style(components::ButtonStyle::Outlined)
+        .on_click(theme, cx, move |this, _e, window, cx| {
+            this.open_error_details(id, window, cx);
+        })
+        .debug_selector(move || format!("toast_error_show_{id}"));
         let review = notice
             .actions
             .iter()
@@ -1430,20 +1433,23 @@ impl ToastHost {
                 _ => None,
             })
             .map(|repo_id| {
-                components::Button::new(format!("toast_error_review_{id}"), "Review local changes")
-                    .style(components::ButtonStyle::Filled)
-                    .on_click(theme, cx, move |this, _e, window, cx| {
-                        let root = this.root_view.clone();
-                        let window_handle = window.window_handle();
-                        cx.defer(move |cx| {
-                            let _ = window_handle.update(cx, |_root, window, cx| {
-                                let _ = root.update(cx, |root, cx| {
-                                    root.review_local_changes(repo_id, window, cx);
-                                });
+                components::Button::new(
+                    format!("toast_error_review_{id}"),
+                    crate::localization::text(cx, "Review local changes", "查看本機變更"),
+                )
+                .style(components::ButtonStyle::Filled)
+                .on_click(theme, cx, move |this, _e, window, cx| {
+                    let root = this.root_view.clone();
+                    let window_handle = window.window_handle();
+                    cx.defer(move |cx| {
+                        let _ = window_handle.update(cx, |_root, window, cx| {
+                            let _ = root.update(cx, |root, cx| {
+                                root.review_local_changes(repo_id, window, cx);
                             });
                         });
-                    })
-                    .debug_selector(move || format!("toast_error_review_{id}"))
+                    });
+                })
+                .debug_selector(move || format!("toast_error_review_{id}"))
             });
         div()
             .flex()

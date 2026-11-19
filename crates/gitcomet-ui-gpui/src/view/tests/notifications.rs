@@ -840,6 +840,142 @@ fn all_toasts(
     cx.update(|_window, app| view.read(app).toast_host.read(app).toasts_for_tests(app))
 }
 
+#[gpui::test]
+fn traditional_chinese_operation_toasts_preserve_targets_and_partial_outcomes(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::localization::Language;
+    use gitcomet_state::model::{CommandLogEntry, CommandLogKind};
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    cx.update(|_, app| app.set_global(Language::TraditionalChinese));
+    let mut state = auth_pull_state(AuthPromptKind::Passphrase);
+    state.auth_prompt = None;
+    for (kind, command, summary) in [
+        (
+            CommandLogKind::Pull,
+            "git -c fetch.prune=false pull -- origin topic/繁中",
+            "Pull origin/topic/繁中: Fast-forwarded",
+        ),
+        (
+            CommandLogKind::Other,
+            "git rebase --interactive topic/繁中",
+            "Interactive rebase onto topic/繁中: Paused at a conflict",
+        ),
+        (
+            CommandLogKind::Other,
+            "git push -u origin topic/繁中",
+            "Push -u origin/topic/繁中: Pushed, but the upstream was not saved",
+        ),
+        (
+            CommandLogKind::Other,
+            "git push --tags origin topic/繁中",
+            "Push with all tags to origin/topic/繁中: Completed",
+        ),
+        (
+            CommandLogKind::Other,
+            "set upstream topic/繁中 -> origin / topic/繁中",
+            "Branch topic/繁中: Upstream set to origin/topic/繁中",
+        ),
+        (
+            CommandLogKind::Other,
+            "git branch --unset-upstream topic/繁中",
+            "Branch topic/繁中: Upstream unlinked",
+        ),
+    ] {
+        state.repos[0]
+            .feedback_mut()
+            .push_command_result(CommandLogEntry {
+                kind,
+                command: command.into(),
+                summary: summary.into(),
+                ..successful_pull_attempt()
+            });
+    }
+    apply_notification_snapshot(cx, &view, &state);
+
+    let toasts = all_toasts(cx, &view);
+    for expected in [
+        "拉取 origin/topic/繁中：已快轉",
+        "互動式變基至 topic/繁中：遇到衝突，已暫停",
+        "推送 -u origin/topic/繁中：已推送，但未儲存上游設定",
+        "推送（附帶所有標籤）至 origin/topic/繁中：已完成",
+        "分支 topic/繁中：已設定上游為 origin/topic/繁中",
+        "分支 topic/繁中：已取消追蹤上游",
+    ] {
+        assert!(toasts.iter().any(|(_, message)| message == expected));
+    }
+}
+
+#[test]
+fn traditional_chinese_command_failure_keeps_git_diagnostics() {
+    use crate::localization::Language;
+    use crate::view::error_notices::ErrorNotice;
+    use gitcomet_state::model::{CommandLogEntry, CommandLogKind};
+
+    let command = "git merge topic/繁中";
+    let git_output = "error: local changes in 資料.txt would be overwritten";
+    let entry = CommandLogEntry {
+        kind: CommandLogKind::Other,
+        command: command.into(),
+        summary: format!("Merge blocked by local changes:\n\n    {command}\n\n    {git_output}"),
+        ..auth_pull_attempt(AuthPromptKind::Passphrase)
+    };
+    let report = ErrorReport::command_failure(RepoId(1), &entry, Language::TraditionalChinese);
+    assert_eq!(report.message, entry.summary);
+
+    let notice = ErrorNotice::new(report);
+    assert_eq!(notice.text.summary, "合併因本機變更受阻");
+    assert_eq!(notice.text.command.as_deref(), Some(command));
+    assert_eq!(notice.text.details.as_deref(), Some(git_output));
+}
+
+#[gpui::test]
+fn traditional_chinese_pull_recovery_preserves_git_details_and_deduplication(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::localization::Language;
+    use crate::view::error_notices::ErrorAction;
+    use gitcomet_core::error::GitFailureId;
+
+    let mut entry = auth_pull_attempt(AuthPromptKind::Passphrase);
+    entry.failure_id = Some(GitFailureId::WorktreeWouldBeOverwritten);
+    entry.command = "git pull origin topic/繁中".into();
+    entry.stdout = "From origin\n* branch topic/繁中 -> FETCH_HEAD".into();
+    entry.stderr = "fatal: local changes in 資料.txt".into();
+
+    let repo_id = RepoId(1);
+    let english = ErrorReport::command_failure(repo_id, &entry, Language::English);
+    let chinese = ErrorReport::command_failure(repo_id, &entry, Language::TraditionalChinese);
+    assert_eq!(english.message, chinese.message);
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    cx.update(|_, app| {
+        let host = view.read(app).toast_host.clone();
+        host.update(app, |host, cx| {
+            host.push_error(english, cx);
+            host.push_error(chinese, cx);
+        });
+        let notices = host.read(app).error_notices();
+        assert_eq!(notices.len(), 1);
+        let notice = &notices[0].1;
+        assert_eq!(notice.count, 2);
+        assert_eq!(notice.text.summary, "本機變更阻擋了拉取");
+        assert_eq!(notice.text.command.as_deref(), Some(entry.command.as_str()));
+        let details = notice.text.details.as_deref().unwrap();
+        assert!(details.contains("* branch topic/繁中 -> FETCH_HEAD"));
+        assert!(details.contains("fatal: local changes in 資料.txt"));
+        assert_eq!(
+            notice.actions,
+            [ErrorAction::ReviewLocalChanges { repo_id }]
+        );
+    });
+}
+
 fn first_auth_input(view: &GitCometView, kind: AuthPromptKind) -> Entity<components::TextInput> {
     if kind == AuthPromptKind::UsernamePassword {
         view.auth_prompt_username_input.clone()
@@ -1408,7 +1544,7 @@ fn pull_recovery_ignores_other_commands_and_timeouts(cx: &mut gpui::TestAppConte
     entry.kind = CommandLogKind::Other;
     entry.failure_id = Some(GitFailureId::WorktreeWouldBeOverwritten);
     assert!(
-        ErrorReport::command_failure(RepoId(1), &entry)
+        ErrorReport::command_failure(RepoId(1), &entry, crate::localization::Language::English)
             .actions
             .is_empty()
     );

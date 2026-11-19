@@ -8,6 +8,7 @@
 //! involve neither side being checked out are listed greyed out with the
 //! reason instead of switching branches behind the user's back.
 use super::*;
+use crate::localization::Language;
 
 /// The repository facts the drop menu depends on.
 pub(super) struct BranchDropFacts<'a> {
@@ -54,21 +55,30 @@ pub(super) fn drop_items(
     source: &BranchDropEnd<'_>,
     target: &BranchDropEnd<'_>,
     facts: &BranchDropFacts<'_>,
+    language: Language,
 ) -> (Vec<ContextMenuItem>, FxHashMap<usize, SharedString>) {
     let source_name = source.target.display_name();
     let target_name = target.target.display_name();
     let mut items = vec![
-        ContextMenuItem::Header("Drop branch".into()),
+        ContextMenuItem::Header(language.text("Drop branch", "拖放分支").into()),
         ContextMenuItem::Label(format!("{source_name} → {target_name}").into()),
         ContextMenuItem::Separator,
     ];
     let mut tooltips: FxHashMap<usize, SharedString> = FxHashMap::default();
     let source_is_current = is_current(source.target, facts.current);
     let target_is_current = is_current(target.target, facts.current);
+    let merge_label = || match language {
+        Language::English => format!("Merge {source_name} into {target_name}"),
+        Language::TraditionalChinese => format!("將 {source_name} 合併至 {target_name}"),
+    };
+    let rebase_label = || match language {
+        Language::English => format!("Rebase {source_name} onto {target_name}"),
+        Language::TraditionalChinese => format!("將 {source_name} 變基至 {target_name}"),
+    };
 
     if target_is_current {
         items.push(entry(
-            format!("Merge {source_name} into {target_name}"),
+            merge_label(),
             "icons/swap.svg",
             !facts.merge_allowed,
             ContextMenuAction::MergeRef {
@@ -77,7 +87,12 @@ pub(super) fn drop_items(
             },
         ));
         items.push(entry(
-            format!("Squash {source_name} into {target_name}"),
+            match language {
+                Language::English => format!("Squash {source_name} into {target_name}"),
+                Language::TraditionalChinese => {
+                    format!("將 {source_name} 壓縮合併至 {target_name}")
+                }
+            },
             "icons/arrow_right.svg",
             !facts.merge_allowed,
             ContextMenuAction::SquashRef {
@@ -87,7 +102,7 @@ pub(super) fn drop_items(
         ));
     } else if source_is_current {
         items.push(entry(
-            format!("Rebase {source_name} onto {target_name}"),
+            rebase_label(),
             "icons/arrow_up.svg",
             facts.history_rewrite_busy,
             ContextMenuAction::OpenPopover {
@@ -98,7 +113,12 @@ pub(super) fn drop_items(
             },
         ));
         items.push(entry(
-            format!("Interactive rebase {source_name} onto {target_name}"),
+            match language {
+                Language::English => format!("Interactive rebase {source_name} onto {target_name}"),
+                Language::TraditionalChinese => {
+                    format!("將 {source_name} 互動式變基至 {target_name}")
+                }
+            },
             "icons/refresh.svg",
             facts.history_rewrite_busy,
             ContextMenuAction::LoadInteractiveRebaseSetup {
@@ -107,7 +127,10 @@ pub(super) fn drop_items(
             },
         ));
         if let BranchMenuTarget::Remote { remote, branch } = target.target {
-            let push_label = format!("Push {source_name} to {target_name}");
+            let push_label = match language {
+                Language::English => format!("Push {source_name} to {target_name}"),
+                Language::TraditionalChinese => format!("將 {source_name} 推送至 {target_name}"),
+            };
             let is_upstream = facts.current_upstream == Some((remote.as_str(), branch.as_str()));
             let first_push_to_namesake =
                 facts.current_upstream.is_none() && Some(branch.as_str()) == facts.current;
@@ -137,8 +160,11 @@ pub(super) fn drop_items(
             } else {
                 tooltips.insert(
                     items.len(),
-                    "Push goes to the branch's upstream; a branch without one can push to the remote branch of its own name"
-                        .into(),
+                    language.text(
+                        "Push goes to the branch's upstream; a branch without one can push to the remote branch of its own name",
+                        "推送目的地是上游分支。尚未設定上游的分支可推送至同名的遠端分支。",
+                    )
+                    .into(),
                 );
                 items.push(entry(
                     push_label,
@@ -151,17 +177,20 @@ pub(super) fn drop_items(
     } else {
         // Neither end is checked out: say which one needs to be.
         let merge_reason = match target.target {
-            BranchMenuTarget::Local { .. } => {
-                format!("Check out {target_name} first: merges go into the checked-out branch")
-            }
-            BranchMenuTarget::Remote { .. } => {
-                "Merges go into the checked-out branch, and a remote branch cannot be checked out"
-                    .to_string()
-            }
+            BranchMenuTarget::Local { .. } => match language {
+                Language::English => format!("Check out {target_name} first: merges go into the checked-out branch"),
+                Language::TraditionalChinese => format!("請先切換至 {target_name}。合併會套用至目前的分支。"),
+            },
+            BranchMenuTarget::Remote { .. } => language
+                .text(
+                    "Merges go into the checked-out branch, and a remote branch cannot be checked out",
+                    "合併會套用至目前的分支。遠端分支無法直接切換。",
+                )
+                .to_string(),
         };
         tooltips.insert(items.len(), merge_reason.into());
         items.push(entry(
-            format!("Merge {source_name} into {target_name}"),
+            merge_label(),
             "icons/swap.svg",
             true,
             ContextMenuAction::MergeRef {
@@ -170,17 +199,20 @@ pub(super) fn drop_items(
             },
         ));
         let rebase_reason = match source.target {
-            BranchMenuTarget::Local { .. } => {
-                format!("Check out {source_name} first: a rebase moves the checked-out branch")
-            }
-            BranchMenuTarget::Remote { .. } => {
-                "A rebase moves the checked-out branch, and a remote branch cannot be checked out"
-                    .to_string()
-            }
+            BranchMenuTarget::Local { .. } => match language {
+                Language::English => format!("Check out {source_name} first: a rebase moves the checked-out branch"),
+                Language::TraditionalChinese => format!("請先切換至 {source_name}。變基會移動目前的分支。"),
+            },
+            BranchMenuTarget::Remote { .. } => language
+                .text(
+                    "A rebase moves the checked-out branch, and a remote branch cannot be checked out",
+                    "變基會移動目前的分支。遠端分支無法直接切換。",
+                )
+                .to_string(),
         };
         tooltips.insert(items.len(), rebase_reason.into());
         items.push(entry(
-            format!("Rebase {source_name} onto {target_name}"),
+            rebase_label(),
             "icons/arrow_up.svg",
             true,
             ContextMenuAction::OpenPopover {
@@ -216,6 +248,7 @@ pub(super) fn model(
     repo_id: RepoId,
     source: &BranchMenuTarget,
     target: &BranchMenuTarget,
+    language: Language,
 ) -> ContextMenuModel {
     let repo = this.state.repos.iter().find(|r| r.id == repo_id);
     let current = repo
@@ -253,6 +286,7 @@ pub(super) fn model(
             reference: action_reference(repo, target),
         },
         &facts,
+        language,
     );
     ContextMenuModel::new(items).with_entry_tooltips(tooltips)
 }
@@ -303,6 +337,7 @@ mod tests {
             &end(&feature),
             &end(&main),
             &facts(Some("main"), None),
+            Language::English,
         );
         assert_eq!(
             entries(&items),
@@ -320,6 +355,30 @@ mod tests {
     }
 
     #[test]
+    fn traditional_chinese_branch_drop_preserves_direction_and_git_reference() {
+        let source = BranchMenuTarget::remote("origin", "feature");
+        let target = BranchMenuTarget::local("main");
+        let source = BranchDropEnd {
+            target: &source,
+            reference: "deadbeef".to_owned(),
+        };
+        let (items, tooltips) = drop_items(
+            RepoId(1),
+            &source,
+            &end(&target),
+            &facts(Some("main"), None),
+            Language::TraditionalChinese,
+        );
+        assert!(tooltips.is_empty());
+        assert!(items.iter().any(|item| matches!(
+            item,
+            ContextMenuItem::Entry { label, action, disabled: false, .. }
+                if label.as_ref() == "將 origin/feature 合併至 main"
+                    && matches!(action.as_ref(), ContextMenuAction::MergeRef { reference, .. } if reference == "deadbeef")
+        )));
+    }
+
+    #[test]
     fn dropping_the_current_branch_rebases_it_and_pushes_to_its_upstream() {
         let main = BranchMenuTarget::local("main");
         let origin_main = BranchMenuTarget::remote("origin", "main");
@@ -328,6 +387,7 @@ mod tests {
             &end(&main),
             &end(&origin_main),
             &facts(Some("main"), Some(("origin", "main"))),
+            Language::English,
         );
         assert_eq!(
             entries(&items),
@@ -356,6 +416,7 @@ mod tests {
             &end(&feature),
             &end(&origin_feature),
             &facts(Some("feature"), None),
+            Language::English,
         );
         assert!(items.iter().any(|item| matches!(
             item,
@@ -378,6 +439,7 @@ mod tests {
             &end(&feature),
             &end(&origin_main),
             &facts(Some("feature"), Some(("origin", "feature"))),
+            Language::English,
         );
         let push_ix = items
             .iter()
@@ -394,8 +456,13 @@ mod tests {
     fn branches_that_are_not_checked_out_are_explained_not_switched() {
         let a = BranchMenuTarget::local("a");
         let b = BranchMenuTarget::local("b");
-        let (items, tooltips) =
-            drop_items(RepoId(1), &end(&a), &end(&b), &facts(Some("main"), None));
+        let (items, tooltips) = drop_items(
+            RepoId(1),
+            &end(&a),
+            &end(&b),
+            &facts(Some("main"), None),
+            Language::English,
+        );
         assert_eq!(
             entries(&items),
             vec![
@@ -417,9 +484,21 @@ mod tests {
             history_rewrite_busy: true,
             annex_pushes: false,
         };
-        let (items, _) = drop_items(RepoId(1), &end(&feature), &end(&main), &busy);
+        let (items, _) = drop_items(
+            RepoId(1),
+            &end(&feature),
+            &end(&main),
+            &busy,
+            Language::English,
+        );
         assert!(entries(&items).iter().all(|(_, disabled)| *disabled));
-        let (items, _) = drop_items(RepoId(1), &end(&main), &end(&feature), &busy);
+        let (items, _) = drop_items(
+            RepoId(1),
+            &end(&main),
+            &end(&feature),
+            &busy,
+            Language::English,
+        );
         assert!(entries(&items).iter().all(|(_, disabled)| *disabled));
     }
 
@@ -431,7 +510,13 @@ mod tests {
             annex_pushes: true,
             ..facts(Some("feature"), None)
         };
-        let (items, _) = drop_items(RepoId(1), &end(&feature), &end(&origin_feature), &annex);
+        let (items, _) = drop_items(
+            RepoId(1),
+            &end(&feature),
+            &end(&origin_feature),
+            &annex,
+            Language::English,
+        );
         assert!(items.iter().any(|item| matches!(
             item,
             ContextMenuItem::Entry { action, disabled: false, .. }
@@ -448,6 +533,7 @@ mod tests {
             &end(&a),
             &end(&origin_b),
             &facts(Some("main"), None),
+            Language::English,
         );
         assert!(
             tooltips

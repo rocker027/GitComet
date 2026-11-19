@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::text;
 
 pub(super) fn remote_names(repo: &RepoState) -> Vec<String> {
     let mut names: Vec<String> = repo
@@ -111,6 +112,11 @@ pub(super) fn panel(
     let theme = this.theme;
     let can_submit = this.can_submit_push_set_upstream(cx);
     let configure_only = configure_only_for.is_some();
+    let placeholder = text(cx, "branch-name", "分支名稱");
+    if this.push_upstream_branch_input.read(cx).placeholder() != placeholder {
+        this.push_upstream_branch_input
+            .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+    }
     let remotes = this
         .state
         .repos
@@ -129,7 +135,7 @@ pub(super) fn panel(
     let remote_control = if remotes.len() > 1 {
         let selected_label: SharedString = selected_remote
             .clone()
-            .unwrap_or_else(|| "No remotes".to_string())
+            .unwrap_or_else(|| text(cx, "No remotes", "沒有遠端").to_string())
             .into();
         let picker_open = this.push_upstream_remote_menu_open;
         let mut selector = div().flex().flex_col().gap_1().child(
@@ -237,7 +243,8 @@ pub(super) fn panel(
         }
         div().px_2().pb_1().w_full().min_w(px(0.0)).child(selector)
     } else {
-        let label = selected_remote.unwrap_or_else(|| "No remotes configured".to_string());
+        let label = selected_remote
+            .unwrap_or_else(|| text(cx, "No remotes configured", "尚未設定遠端").to_string());
         div()
             .debug_selector(|| "push_upstream_remote_static".to_string())
             .px_2()
@@ -262,15 +269,15 @@ pub(super) fn panel(
         .child(popover_title(
             theme,
             if configure_only {
-                "Set new upstream"
+                text(cx, "Set new upstream", "設定新的上游分支")
             } else {
-                "Set upstream and push"
+                text(cx, "Set upstream and push", "設定上游並推送")
             },
         ))
         .child(super::popover_rule(theme))
-        .child(input_label(theme, "Remote"))
+        .child(input_label(theme, text(cx, "Remote", "遠端")))
         .child(remote_control)
-        .child(input_label(theme, "Remote branch"))
+        .child(input_label(theme, text(cx, "Remote branch", "遠端分支")))
         .child(
             div()
                 .px_2()
@@ -283,19 +290,24 @@ pub(super) fn panel(
         .child(
             super::prompt_footer_row()
                 .child(
-                    cancel_button("push_upstream_cancel", "push_upstream_cancel_hint", theme)
-                        .focus_handle(this.push_upstream_focus.cancel.clone())
-                        .on_click(theme, cx, |this, _e, window, cx| {
-                            this.dismiss_prompt_popover(window, cx);
-                        }),
+                    cancel_button_labeled(
+                        "push_upstream_cancel",
+                        "push_upstream_cancel_hint",
+                        text(cx, "Cancel", "取消"),
+                        theme,
+                    )
+                    .focus_handle(this.push_upstream_focus.cancel.clone())
+                    .on_click(theme, cx, |this, _e, window, cx| {
+                        this.dismiss_prompt_popover(window, cx);
+                    }),
                 )
                 .child(
                     components::Button::new(
                         "push_upstream_go",
                         if configure_only {
-                            "Set upstream"
+                            text(cx, "Set upstream", "設定上游")
                         } else {
-                            "Push"
+                            text(cx, "Push", "推送")
                         },
                     )
                     .focus_handle(this.push_upstream_focus.submit.clone())

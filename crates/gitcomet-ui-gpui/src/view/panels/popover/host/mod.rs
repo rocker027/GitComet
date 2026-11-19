@@ -2055,8 +2055,12 @@ impl PopoverHost {
                 }
                 PopoverKind::UpstreamPicker { repo_id, branch } => {
                     let _ = self.ensure_upstream_picker_search_input(window, cx);
-                    self.upstream_picker_selected_index =
-                        upstream_picker::initial_selected_index(self, *repo_id, branch);
+                    self.upstream_picker_selected_index = upstream_picker::initial_selected_index(
+                        self,
+                        *repo_id,
+                        branch,
+                        crate::localization::Language::current(cx),
+                    );
                 }
                 PopoverKind::CreateBranchFromRefPrompt {
                     repo_id,
