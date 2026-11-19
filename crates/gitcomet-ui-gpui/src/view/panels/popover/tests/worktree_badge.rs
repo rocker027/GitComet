@@ -443,20 +443,25 @@ mod badges {
     use super::*;
 
     fn repo_with_upstream(repo_id: RepoId) -> RepoState {
+        repo_tracking_branch(repo_id, "main")
+    }
+
+    fn repo_tracking_branch(repo_id: RepoId, branch: &str) -> RepoState {
         let mut repo = repo_with_worktrees(repo_id);
         let target = CommitId(Arc::from("1111111111111111111111111111111111111111"));
+        repo.head_branch = Loadable::Ready(branch.to_string());
         repo.branches = Loadable::Ready(Arc::new(vec![Branch {
-            name: "main".to_string(),
+            name: branch.to_string(),
             target: target.clone(),
             upstream: Some(Upstream {
                 remote: "origin".to_string(),
-                branch: "main".to_string(),
+                branch: branch.to_string(),
             }),
             divergence: None,
         }]));
         repo.remote_branches = Loadable::Ready(Arc::new(vec![RemoteBranch {
             remote: "origin".to_string(),
-            name: "main".to_string(),
+            name: branch.to_string(),
             target,
         }]));
         repo
@@ -535,6 +540,55 @@ mod badges {
         assert!(upstream.origin.x >= arrow.origin.x + arrow.size.width);
         assert!(pull.origin.x >= upstream.origin.x + upstream.size.width);
         assert!(push.origin.x >= pull.origin.x + pull.size.width);
+    }
+
+    #[gpui::test]
+    fn branch_badges_use_available_width_for_the_name_suffix(cx: &mut gpui::TestAppContext) {
+        let widths_for = |cx: &mut gpui::TestAppContext, name: &str| {
+            let repo_id = RepoId(1);
+            let (_, cx) = draw_with_repo(cx, repo_tracking_branch(repo_id, name), repo_id);
+            cx.simulate_resize(gpui::size(px(1800.0), px(560.0)));
+            redraw(cx);
+            ["branch_badge", "upstream_badge"]
+                .map(|selector| cx.debug_bounds(selector).expect(selector).size.width)
+        };
+        // The prefix is already longer than the previous 28-character limit.
+        let prefix = "release/mobile-worktree-update";
+        let short = widths_for(cx, prefix);
+        let long = widths_for(cx, &format!("{prefix}-signing-and-provisioning"));
+        for (short, long) in short.into_iter().zip(long) {
+            assert!(
+                long > short + px(100.0),
+                "a longer branch should show its suffix when space is available: {short:?}, {long:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn create_branch_and_stash_actions_sit_beside_push(cx: &mut gpui::TestAppContext) {
+        let repo_id = RepoId(1);
+        let (_, cx) = draw_with_repo(cx, repo_with_upstream(repo_id), repo_id);
+        cx.simulate_resize(gpui::size(px(1280.0), px(560.0)));
+        redraw(cx);
+
+        let push = cx.debug_bounds("push").expect("push button");
+        let branch = cx
+            .debug_bounds("create_branch")
+            .expect("create branch button");
+        let stash = cx
+            .debug_bounds("stash_toolbar_caption")
+            .expect("stash caption");
+        let pop = cx.debug_bounds("stash_pop").expect("pop button");
+        let restore = cx
+            .debug_bounds("stash_restore_menu")
+            .expect("stash restore menu");
+        let terminal = cx.debug_bounds("terminal").expect("terminal button");
+
+        assert!(branch.left() >= push.right() && branch.left() - push.right() <= px(12.0));
+        assert!(stash.left() >= branch.right());
+        assert!(pop.left() >= stash.right());
+        assert!(restore.left() >= pop.right());
+        assert!(terminal.left() >= restore.right());
     }
 
     #[gpui::test]
@@ -667,18 +721,7 @@ mod badges {
     ) {
         cx.update(|app| crate::appearance::pin_density_for_test(app, density));
         let repo_id = RepoId(1);
-        let mut repo = repo_with_upstream(repo_id);
-        let branch = "feature/current-with-a-representative-name".to_string();
-        repo.head_branch = Loadable::Ready(branch.clone());
-        repo.branches = Loadable::Ready(Arc::new(vec![Branch {
-            name: branch.clone(),
-            target: CommitId(Arc::from("1111111111111111111111111111111111111111")),
-            upstream: Some(Upstream {
-                remote: "origin".to_string(),
-                branch,
-            }),
-            divergence: None,
-        }]));
+        let mut repo = repo_tracking_branch(repo_id, "feature/current-with-a-representative-name");
         repo.upstream_divergence = Loadable::Ready(Some(UpstreamDivergence {
             ahead: 999,
             behind: 999,
@@ -717,6 +760,9 @@ mod badges {
                 "push",
                 "create_branch",
                 "stash",
+                "stash_pop",
+                "stash_restore_menu",
+                "terminal",
             ] {
                 let bounds = cx
                     .debug_bounds(selector)
@@ -725,18 +771,10 @@ mod badges {
                     bounds.left() >= gpui::px(0.0) && bounds.right() <= viewport.width,
                     "{selector} must remain inside the {viewport:?} viewport at {width}px, got {bounds:?}"
                 );
-                let containing_group = if matches!(
-                    selector,
-                    "global_nav"
-                        | "worktree_badge"
-                        | "branch_badge"
-                        | "upstream_badge"
-                        | "pull"
-                        | "push"
-                ) {
-                    left_group
-                } else {
+                let containing_group = if selector == "terminal" {
                     right_group
+                } else {
+                    left_group
                 };
                 assert!(
                     bounds.left() >= containing_group.left()

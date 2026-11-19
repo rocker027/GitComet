@@ -29,10 +29,20 @@ impl BarItems {
     }
 
     pub(super) fn location(&self, item: BuiltinBarItem) -> BarItemLocation {
-        self.registry.as_ref().map_or_else(
-            || item.default_location(),
-            |registry| registry.bar_item_location(item),
-        )
+        self.registry
+            .as_ref()
+            .and_then(|registry| {
+                registry
+                    .bar_item_locations()
+                    .iter()
+                    .find_map(|(placed, location)| (*placed == item).then_some(*location))
+            })
+            .unwrap_or_else(|| match item {
+                BuiltinBarItem::CreateBranch | BuiltinBarItem::Stash => {
+                    BarItemLocation::ActionBarStart
+                }
+                _ => item.default_location(),
+            })
     }
 
     pub(super) fn extensions(

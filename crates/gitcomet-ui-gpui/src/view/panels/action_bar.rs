@@ -14,7 +14,7 @@ const ACTION_BAR_HEIGHT_PX: f32 = components::CONTROL_HEIGHT_PX + 12.0;
 const TOOLBAR_TILE_MIN_WIDTH_PX: f32 = 850.0;
 
 // The main window supports widths down to 820 design pixels. At that size the
-// branch/upstream run and the fixed actions on the right cannot all retain full
+// branch/upstream run and the fixed actions cannot all retain full
 // text. Pull/Push retain their labels because they describe the remote
 // operation beside the upstream badge, except in compact mode at Comfortable or
 // Spacious density, where every control is wider and only icons still fit.
@@ -723,7 +723,7 @@ impl BarItemOwner for ActionBarView {
         // Comfortable and Spacious widen every control, so the narrowest
         // tier, which just fits at Compact, has to shed more.
         let tight = tight_action_bar(density, theme.metrics.density);
-        let badge_label_max_chars = match density {
+        let worktree_label_max_chars = match density {
             ActionBarDensity::Compact if tight => {
                 tight_badge_label_max_chars(theme.metrics.density)
             }
@@ -758,8 +758,8 @@ impl BarItemOwner for ActionBarView {
         };
         let action_group_gap = gap(4.0, 8.0, 6.0);
         let tracking_action_gap = gap(2.0, 4.0, 6.0);
-        // Text in the three picker badges gives way before actions do. Keep
-        // enough room for the icon and an ellipsis even at the narrowest size.
+        // Let the picker labels take the available width, down to room for
+        // an icon and ellipsis in a narrow window.
         let badge_min_width = scaled_px(theme.metrics.row_height(22.0, 32.0) + 28.0);
         let merge_abort_label = if dense_spacing {
             language.text("Abort", "中止")
@@ -1023,7 +1023,7 @@ impl BarItemOwner for ActionBarView {
             let repo_id = repo.id;
             let label = truncate_badge_label_to(
                 &crate::view::path_display::repo_path_name(&repo.spec.workdir),
-                badge_label_max_chars,
+                worktree_label_max_chars,
             );
             let workdir = repo.spec.workdir.display().to_string();
             let invoker: SharedString = "worktree_badge".into();
@@ -1070,9 +1070,9 @@ impl BarItemOwner for ActionBarView {
             let label: SharedString = if detached {
                 language.text("detached", "分離狀態").into()
             } else if let Some((base, mode)) = adjusted {
-                truncate_badge_label_to(&format!("{base} · adjusted ({mode})"), badge_label_max_chars)
+                format!("{base} · adjusted ({mode})").into()
             } else {
-                truncate_badge_label_to(head, badge_label_max_chars)
+                head.as_str().into()
             };
             let invoker: SharedString = "branch_badge".into();
             let is_active = active_invoker
@@ -1122,7 +1122,7 @@ impl BarItemOwner for ActionBarView {
             let local_branch = branch.to_string();
             let label = upstream
                 .as_deref()
-                .map(|upstream| truncate_badge_label_to(upstream, badge_label_max_chars))
+                .map(SharedString::from)
                 .unwrap_or_else(|| language.text("No upstream", "無上游").into());
             let badge_color = if has_upstream {
                 icon_primary
@@ -1539,6 +1539,7 @@ impl BarItemOwner for ActionBarView {
                 .child(stash_button)
                 .child(restore_buttons)
         }
+        .flex_none()
         .debug_selector(|| "stash".to_string());
 
         let create_branch_invoker: SharedString = "create_branch_btn".into();
@@ -1664,6 +1665,10 @@ impl BarItemOwner for ActionBarView {
             }
         } else {
             items.push(BuiltinBarItem::Tracking, tracking_actions);
+        }
+        items.push(BuiltinBarItem::CreateBranch, create_branch.flex_none());
+        items.push(BuiltinBarItem::Stash, stash);
+        if self.extension_navigation.is_none() {
             if let Some(badge) = historical_badge {
                 items.push(BuiltinBarItem::HistoricalBrowse, badge);
             }
@@ -1847,8 +1852,6 @@ impl BarItemOwner for ActionBarView {
             ),
         );
         items.push(BuiltinBarItem::Terminal, terminal);
-        items.push(BuiltinBarItem::CreateBranch, create_branch);
-        items.push(BuiltinBarItem::Stash, stash);
         items.extensions(&self.extension_items, &self.active_view);
         items
     }
