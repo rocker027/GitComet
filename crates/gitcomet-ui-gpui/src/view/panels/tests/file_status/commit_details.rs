@@ -1993,6 +1993,56 @@ fn commit_reword_availability_reports_published_commits() {
 }
 
 #[gpui::test]
+fn commit_details_copy_button_copies_only_the_title_even_when_editing_is_blocked(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    let repo_id = gitcomet_state::model::RepoId(62);
+    let title = "修正提交詳情 · 保留完整標題";
+    let message = format!("{title}\r\n\r\nA body that stays out of the clipboard.");
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_OLDER_SHA, &message, true),
+    );
+
+    let copy = cx
+        .debug_bounds("commit_details_copy_title")
+        .expect("copy button");
+    let edit = cx
+        .debug_bounds("commit_details_edit_message")
+        .expect("edit button");
+    assert!(copy.right() <= edit.left());
+    click_selector(cx, "commit_details_edit_message");
+    assert!(cx.debug_bounds("commit_reword_editor").is_none());
+    click_selector(cx, "commit_details_copy_title");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some(title),
+    );
+
+    let retained_text = "keep existing clipboard text";
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(retained_text.to_string()));
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_HEAD_SHA, "\nMessage with no title", true),
+    );
+    click_selector(cx, "commit_details_copy_title");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some(retained_text),
+    );
+}
+
+#[gpui::test]
 fn editing_a_commit_message_prefills_it_and_cancel_restores_the_view(
     cx: &mut gpui::TestAppContext,
 ) {

@@ -1,8 +1,117 @@
 use super::*;
 use crate::localization::Language;
-use gitcomet_core::services::{InteractiveRebaseAction, InteractiveRebaseEntry};
+use gitcomet_core::services::{GitRepository, InteractiveRebaseAction, InteractiveRebaseEntry};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
+use std::sync::Arc;
+
+struct CommitTitleCopyTask {
+    _task: gpui::Task<()>,
+}
+
+impl gpui::Global for CommitTitleCopyTask {}
+
+fn read_titles(repo: &dyn GitRepository, commit_ids: &[CommitId]) -> Result<String, String> {
+    let mut titles = String::new();
+    // Keep peak memory bounded even if a large selection has long message bodies.
+    for batch in commit_ids.chunks(128) {
+        let messages = repo
+            .commit_messages(batch)
+            .map_err(|error| error.to_string())?;
+        for title in messages
+            .iter()
+            .filter_map(|message| message.lines().next())
+            .filter(|title| !title.trim().is_empty())
+        {
+            if !titles.is_empty() {
+                titles.push('\n');
+            }
+            titles.push_str(title);
+        }
+    }
+    Ok(titles)
+}
+
+pub(super) fn copy_titles(
+    this: &mut PopoverHost,
+    repo_id: RepoId,
+    mut commit_ids: Arc<Vec<CommitId>>,
+    cx: &mut gpui::Context<PopoverHost>,
+) {
+    let Some(repo) = this.state.repos.iter().find(|repo| repo.id == repo_id) else {
+        return;
+    };
+    let page = crate::view::panes::history::HistoryView::display_log_page_for_repo(repo);
+    let indexed = &repo.history_state.indexed;
+    let index = indexed.displayed_index.clone().or_else(|| {
+        if page.is_none() {
+            indexed.range_index.clone()
+        } else {
+            None
+        }
+    });
+    let lifetime = repo.lifetime();
+    let store = this.store.clone();
+    let language = Language::current(cx);
+    let clipboard_rev = crate::clipboard::files_revision();
+    let read = cx.background_executor().spawn(async move {
+        if commit_ids.len() > 1 {
+            let ids = Arc::make_mut(&mut commit_ids);
+            if let Some(index) = index {
+                ids.sort_by_cached_key(|id| index.position(id.as_ref()).unwrap_or(usize::MAX));
+            } else if let Some(page) = page {
+                let positions: FxHashMap<_, _> = page
+                    .commits
+                    .iter()
+                    .enumerate()
+                    .map(|(row, commit)| (&commit.id, row))
+                    .collect();
+                ids.sort_by_cached_key(|id| positions.get(id).copied().unwrap_or(usize::MAX));
+            }
+        }
+        let repository = store.repository(repo_id, lifetime).ok_or_else(|| {
+            language
+                .text("The repository is unavailable.", "無法存取儲存庫。")
+                .to_owned()
+        })?;
+        read_titles(repository.as_ref(), &commit_ids)
+    });
+    let task = cx.spawn(async move |this, cx| {
+        let result = read.await;
+        let _ = this.update(cx, |this, cx| {
+            // A copy made while the objects were loading takes precedence.
+            if crate::clipboard::files_revision() != clipboard_rev {
+                return;
+            }
+            match result {
+                Ok(titles) if !titles.is_empty() => {
+                    crate::clipboard::write_text(
+                        cx,
+                        titles,
+                        crate::clipboard::CopySource::CommitTitle,
+                    );
+                }
+                Ok(_) => this.push_toast(
+                    components::ToastKind::Warning,
+                    language
+                        .text("No commit titles to copy.", "沒有可複製的提交標題。")
+                        .to_owned(),
+                    cx,
+                ),
+                Err(error) => this.push_toast(
+                    components::ToastKind::Error,
+                    format!(
+                        "{} {error}",
+                        language.text("Could not copy commit titles.", "無法複製提交標題。")
+                    ),
+                    cx,
+                ),
+            }
+        });
+    });
+    // A newer title copy replaces the pending one, including across windows.
+    cx.set_global(CommitTitleCopyTask { _task: task });
+}
 
 type InteractiveRebaseSourceColor = (String, u8);
 type MultiCherryPickPlan = (
@@ -398,6 +507,30 @@ fn model_with_header(
                 action: Box::new(ContextMenuAction::CopyText { text: name }),
             });
         }
+        let commit_ids = this
+            .active_repo()
+            .filter(|repo| repo.id == repo_id && *refs == CommitMenuRefs::All)
+            .map(|repo| &repo.history_state.multi_selection)
+            .filter(|selection| selection.is_multi() && selection.contains(commit_id))
+            .map_or_else(
+                || Arc::new(vec![commit_id.clone()]),
+                |selection| Arc::clone(&selection.commits),
+            );
+        let label = if commit_ids.len() > 1 {
+            language.text("Copy selected commit titles", "複製所選提交標題")
+        } else {
+            language.text("Copy commit title", "複製提交標題")
+        };
+        items.push(ContextMenuItem::Entry {
+            label: label.into(),
+            icon: Some("icons/copy.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::CopyCommitTitles {
+                repo_id,
+                commit_ids,
+            }),
+        });
     }
     if let Some(permalink) = this
         .state

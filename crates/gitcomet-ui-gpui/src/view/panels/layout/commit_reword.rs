@@ -479,6 +479,31 @@ impl DetailsPaneView {
         }
         let ui_scale = self.ui_scale();
         let commit_id = details.id.clone();
+        let title = details
+            .message
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        let copy_label = crate::localization::text(cx, "Copy commit title", "複製提交標題");
+        let copy = components::Button::new("commit_details_copy_title", "")
+            .start_slot(svg_icon(
+                "icons/copy.svg",
+                theme.colors.foreground.secondary,
+                ui_scale.px(12.0),
+            ))
+            .style(components::ButtonStyle::Transparent)
+            .disabled(title.trim().is_empty())
+            .on_click(theme, cx, move |_, _, window, cx| {
+                window.activate();
+                crate::clipboard::write_text(
+                    cx,
+                    title.clone(),
+                    crate::clipboard::CopySource::CommitTitle,
+                );
+            })
+            .debug_selector(|| "commit_details_copy_title".to_string())
+            .gitcomet_tooltip(theme, copy_label.into());
         let edit = components::Button::new("commit_details_edit_message", "")
             .start_slot(
                 svg_icon(
@@ -508,7 +533,7 @@ impl DetailsPaneView {
                     .min_w(px(0.0))
                     .child(self.commit_details_message_view(theme, repo_id)),
             )
-            .child(div().flex_none().child(edit))
+            .child(div().flex().flex_none().child(copy).child(edit))
             .into_any_element()
     }
 

@@ -1330,6 +1330,13 @@ impl PopoverHost {
                 window.activate();
                 crate::clipboard::write_text(cx, text, crate::clipboard::CopySource::ContextMenu);
             }
+            ContextMenuAction::CopyCommitTitles {
+                repo_id,
+                commit_ids,
+            } => {
+                window.activate();
+                super::commit::copy_titles(self, repo_id, commit_ids, cx);
+            }
             ContextMenuAction::CopyLinkAddress { url } => {
                 window.activate();
                 crate::clipboard::write_text(cx, url, crate::clipboard::CopySource::ContextMenu);

@@ -665,6 +665,10 @@ pub(in crate::view) enum ContextMenuAction {
     CopyCommitSha {
         commit_id: CommitId,
     },
+    CopyCommitTitles {
+        repo_id: RepoId,
+        commit_ids: std::sync::Arc<Vec<CommitId>>,
+    },
     /// Approve one repository-controlled remote image in the current Markdown
     /// preview. The pane re-checks that Ask mode is still active when invoked.
     LoadRemoteMarkdownImage {
