@@ -192,6 +192,9 @@ pub(crate) enum PopoverKind {
         repo_id: RepoId,
         purpose: StashPickerPurpose,
     },
+    StashRestoreMenu {
+        repo_id: RepoId,
+    },
     FileHistoryFilePicker {
         repo_id: RepoId,
     },

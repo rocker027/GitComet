@@ -1,4 +1,48 @@
 use super::*;
+use crate::localization::text;
+
+pub(super) fn restore_menu(repo_id: RepoId, cx: &gpui::App) -> ContextMenuModel {
+    let item = |purpose, label: &'static str, icon: &'static str| ContextMenuItem::Entry {
+        label: label.into(),
+        icon: Some(icon.into()),
+        shortcut: None,
+        disabled: false,
+        action: Box::new(ContextMenuAction::OpenPopover {
+            kind: PopoverKind::StashPickerPrompt { repo_id, purpose },
+        }),
+    };
+    ContextMenuModel::new(vec![
+        item(
+            StashPickerPurpose::Apply,
+            text(cx, "Apply stash…", "套用貯藏…"),
+            "icons/refresh.svg",
+        ),
+        item(
+            StashPickerPurpose::Pop,
+            text(cx, "Pop stash…", "取出貯藏…"),
+            "icons/arrow_up.svg",
+        ),
+    ])
+    .with_entry_debug_selectors(FxHashMap::from_iter([
+        (0, "stash_restore_apply".into()),
+        (1, "stash_restore_pop".into()),
+    ]))
+    .with_entry_tooltips(FxHashMap::from_iter([
+        (
+            0,
+            text(cx, "Apply changes and keep the stash", "套用變更並保留貯藏").into(),
+        ),
+        (
+            1,
+            text(
+                cx,
+                "Remove the stash after a successful apply",
+                "成功套用後移除貯藏",
+            )
+            .into(),
+        ),
+    ]))
+}
 
 pub(super) fn model(repo_id: RepoId, index: usize, message: &str) -> ContextMenuModel {
     let reference = format!("stash@{{{index}}}");

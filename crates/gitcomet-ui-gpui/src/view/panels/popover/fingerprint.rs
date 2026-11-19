@@ -241,6 +241,7 @@ fn repo_for_popover<'a>(
         // Popovers that carry an explicit repo id.
         PopoverKind::CommitPrompt { repo_id }
         | PopoverKind::StashPickerPrompt { repo_id, .. }
+        | PopoverKind::StashRestoreMenu { repo_id }
         | PopoverKind::FileHistoryFilePicker { repo_id }
         | PopoverKind::UpstreamPicker { repo_id, .. }
         | PopoverKind::CreateBranchFromRefPrompt { repo_id, .. }
@@ -637,6 +638,7 @@ fn hash_repo_for_popover<H: Hasher>(
         | PopoverKind::MergetoolSettingsMenu
         | PopoverKind::ChangeTrackingSettings
         | PopoverKind::UiScalePicker
+        | PopoverKind::StashRestoreMenu { .. }
         | PopoverKind::ConflictResolverInputRowMenu { .. }
         | PopoverKind::ConflictResolverChunkMenu { .. }
         | PopoverKind::ConflictResolverOutputMenu { .. }
@@ -755,6 +757,9 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
         PopoverKind::RefPickerMenu { repo_id, purpose } => {
             repo_id.hash(hasher);
             purpose.hash(hasher);
+        }
+        PopoverKind::StashRestoreMenu { repo_id } => {
+            repo_id.hash(hasher);
         }
         PopoverKind::StashMenu {
             repo_id,

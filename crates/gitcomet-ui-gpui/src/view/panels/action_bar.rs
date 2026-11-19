@@ -1,6 +1,7 @@
 use super::bar_items::{self, BarItemOwner, BarItems, ExtensionBarItem, RelocatedBarItems};
 use super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
+use crate::localization::Language;
 use crate::view::repository_views::{MORE_VIEWS_INVOKER, RoutedArea, ViewTabs};
 use gitcomet_extension_api::{BarItemLocation, BuiltinBarItem};
 use rustc_hash::FxHasher;
@@ -117,9 +118,10 @@ enum StashPopTarget {
     Unavailable(&'static str),
 }
 
-fn stash_pop_target(repo: Option<&RepoState>) -> StashPopTarget {
+fn stash_pop_target(repo: Option<&RepoState>, language: Language) -> StashPopTarget {
+    let empty = StashPopTarget::Unavailable(language.text("No stashes to pop", "沒有可取出的貯藏"));
     let Some(repo) = repo else {
-        return StashPopTarget::Unavailable("No stashes to pop");
+        return empty;
     };
     if repo.is_bare() {
         return StashPopTarget::Unavailable(gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE);
@@ -127,23 +129,26 @@ fn stash_pop_target(repo: Option<&RepoState>) -> StashPopTarget {
     let Loadable::Ready(stashes) = &repo.stashes else {
         return StashPopTarget::Ready {
             index: 0,
-            tooltip: "Pop the newest stash".to_string(),
+            tooltip: language
+                .text("Pop the newest stash", "取出最新一筆貯藏")
+                .to_string(),
         };
     };
     match stashes.iter().min_by_key(|entry| entry.index) {
         Some(entry) => {
             let reference = format!("stash@{{{}}}", entry.index);
+            let pop = language.text("Pop", "取出");
             let tooltip = if entry.message.is_empty() {
-                format!("Pop {reference}")
+                format!("{pop} {reference}")
             } else {
-                format!("Pop {reference}: {}", entry.message)
+                format!("{pop} {reference}: {}", entry.message)
             };
             StashPopTarget::Ready {
                 index: entry.index,
                 tooltip,
             }
         }
-        None => StashPopTarget::Unavailable("No stashes to pop"),
+        None => empty,
     }
 }
 
@@ -328,8 +333,10 @@ impl ActionBarView {
             repo.ops_rev.hash(&mut hasher);
             // Undo / Redo follow the operation journal.
             repo.git_undo.summary().hash(&mut hasher);
-            // Pop's availability and tooltip follow the stash list.
+            // Stash controls follow the selected worktree, list and local operations.
+            repo.history_state.worktree_selection.hash(&mut hasher);
             repo.stashes_rev.hash(&mut hasher);
+            (repo.local_actions_in_flight > 0).hash(&mut hasher);
             repo.status_cache_rev().hash(&mut hasher);
             // The historical-browse badge keys off the file browser source. Not
             // `file_browser_rev`: that moves on every sidebar search keystroke.
@@ -610,6 +617,17 @@ impl ActionBarView {
         self.state.repos.iter().find(|r| r.id == repo_id)
     }
 
+    fn selected_stash_worktree(&self) -> Option<&std::path::Path> {
+        if self.active_view != gitcomet_extension_api::ViewTarget::History {
+            return None;
+        }
+        let repo = self.active_repo()?;
+        repo.history_state
+            .worktree_selection
+            .as_deref()
+            .filter(|path| *path != repo.spec.workdir.as_path())
+    }
+
     fn open_popover_at(
         &mut self,
         kind: impl Into<PopoverRequest>,
@@ -789,18 +807,6 @@ impl BarItemOwner for ActionBarView {
             .and_then(|repo| head_branch_tracking_upstream_name(&repo.head_branch, &repo.branches));
         let active_repo_key = self.active_repo_id().map(|id| id.0).unwrap_or(0);
         let is_bare = self.active_repo().is_some_and(RepoState::is_bare);
-        let can_stash = self
-            .active_repo()
-            .map(|repo| {
-                !repo.is_bare()
-                    && (repo
-                        .worktree_status_entries()
-                        .is_some_and(|entries| !entries.is_empty())
-                        || repo
-                            .staged_status_entries()
-                            .is_some_and(|entries| !entries.is_empty()))
-            })
-            .unwrap_or(false);
 
         // Global back/forward navigation, mirroring the mouse side-buttons and
         // Alt+Left / Alt+Right (Option on macOS). Sits at the very start of the action bar.
@@ -1280,77 +1286,163 @@ impl BarItemOwner for ActionBarView {
                 },
             );
 
-        let stash_prompt_invoker: SharedString = "stash_btn".into();
-        let stash_prompt_active = self
-            .active_context_menu_invoker
-            .as_ref()
-            .is_some_and(|id| id.as_ref() == stash_prompt_invoker.as_ref());
-        // Pop restores the newest stash in one click, beside Stash, so saving
-        // and restoring work in progress use the same toolbar group.
-        let pop_target = stash_pop_target(self.active_repo());
-        let pop_repo_id = self.active_repo_id();
-        // Like the status panel's buttons, wait for the running local action.
-        let pop_busy = self
-            .active_repo()
-            .is_some_and(|repo| repo.local_actions_in_flight > 0);
-        let pop_index = match &pop_target {
-            StashPopTarget::Ready { index, .. } => Some(*index),
-            StashPopTarget::Unavailable(_) => None,
-        };
-        let pop_tooltip: SharedString = match pop_target {
-            StashPopTarget::Ready { tooltip, .. } => tooltip.into(),
-            StashPopTarget::Unavailable(reason) => reason.into(),
-        };
-        let stash_pop = div().debug_selector(|| "stash_pop".to_string()).child(
-            components::Button::new("stash_pop", action_label("Pop"))
-                .start_slot(icon("icons/arrow_up.svg", icon_primary))
-                .style(components::ButtonStyle::Subtle)
-                .disabled(pop_index.is_none() || pop_repo_id.is_none() || pop_busy)
-                .on_click(theme, cx, move |this, e, _window, cx| {
-                    // A double click must not pop twice before the list reloads.
-                    if e.click_count() > 1 {
-                        return;
-                    }
-                    if let (Some(repo_id), Some(index)) = (pop_repo_id, pop_index) {
-                        this.store.dispatch(Msg::PopStash { repo_id, index });
-                        this.store.dispatch(Msg::LoadStashes { repo_id });
-                        cx.notify();
-                    }
-                })
-                .gitcomet_tooltip(theme, pop_tooltip),
-        );
-        let stash = div()
-            .debug_selector(|| "stash".to_string())
-            .flex()
-            .items_center()
-            .gap(tracking_action_gap)
-            .child(
-                components::Button::new("stash", action_label("Stash"))
+        let language = Language::current(cx);
+        let stash = if let Some(path) = self.selected_stash_worktree() {
+            let path = path.to_path_buf();
+            let label = language.text("Open worktree", "開啟工作樹");
+            let tooltip = format!("{label}\n{}", path.display());
+            div().child(
+                components::Button::new("stash_open_worktree", if action_bar { label } else { "" })
+                    .start_slot(icon("icons/git_worktree.svg", icon_primary))
+                    .style(components::ButtonStyle::Subtle)
+                    .on_click(theme, cx, move |this, _, window, cx| {
+                        if this.selected_stash_worktree() == Some(path.as_path()) {
+                            crate::app::open_repository_from_view(
+                                cx,
+                                window.window_handle().window_id(),
+                                path.clone(),
+                            );
+                        }
+                    })
+                    .debug_selector(|| "stash_open_worktree".to_string())
+                    .gitcomet_tooltip(theme, tooltip.into()),
+            )
+        } else {
+            let repo = self.active_repo();
+            let workdir = repo.map(|repo| repo.spec.workdir.display().to_string());
+            let target_tooltip = |label: &str| -> SharedString {
+                match &workdir {
+                    Some(workdir) => format!("{label}\n{workdir}").into(),
+                    None => label.to_owned().into(),
+                }
+            };
+            let busy = repo.is_some_and(|repo| repo.local_actions_in_flight > 0);
+            let busy_text = language.text(
+                "Wait for the running Git operation to finish",
+                "請等待目前的 Git 操作完成",
+            );
+            let has_changes = repo.is_some_and(|repo| {
+                repo.worktree_status_entries()
+                    .is_some_and(|entries| !entries.is_empty())
+                    || repo
+                        .staged_status_entries()
+                        .is_some_and(|entries| !entries.is_empty())
+            });
+            let can_stash = has_changes && !is_bare && !busy;
+            let stash_help = if is_bare {
+                gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE
+            } else if busy {
+                busy_text
+            } else if can_stash {
+                language.text("Create stash", "新增貯藏")
+            } else {
+                language.text("No changes to stash", "沒有可貯藏的變更")
+            };
+            let stash_invoker: SharedString = "stash_btn".into();
+            let stash_button =
+                components::Button::new("stash", action_label(language.text("Stash", "貯藏")))
                     .start_slot(icon(crate::view::icons::STASH_ICON_PATH, icon_primary))
                     .style(components::ButtonStyle::Subtle)
-                    .open(stash_prompt_active)
+                    .open(active_invoker.as_ref() == Some(&stash_invoker))
                     .selected_bg(menu_selected_bg)
                     .disabled(!can_stash)
                     .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
-                        this.open_popover_for_bounds(
-                            PopoverKind::StashPrompt.invoked_by(stash_prompt_invoker.clone()),
-                            bounds,
-                            window,
-                            cx,
-                        );
+                        if this.selected_stash_worktree().is_none() {
+                            this.open_popover_for_bounds(
+                                PopoverKind::StashPrompt.invoked_by(stash_invoker.clone()),
+                                bounds,
+                                window,
+                                cx,
+                            );
+                        }
                     })
-                    .gitcomet_tooltip(
-                        theme,
-                        if is_bare {
-                            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE.into()
-                        } else if can_stash {
-                            "Create stash".into()
-                        } else {
-                            "No changes to stash".into()
-                        },
-                    ),
+                    .gitcomet_tooltip(theme, target_tooltip(stash_help));
+
+            let (pop_index, pop_help) = match stash_pop_target(repo, language) {
+                StashPopTarget::Ready { index, tooltip } => (Some(index), tooltip),
+                StashPopTarget::Unavailable(reason) => (None, reason.to_owned()),
+            };
+            let repo_id = self.active_repo_id();
+            let can_pop = pop_index.is_some() && repo_id.is_some() && !busy;
+            // A linked worktree can add a stash after this tab last read the list.
+            let can_choose_stash = !is_bare
+                && !busy
+                && repo.is_some_and(|repo| matches!(repo.open, Loadable::Ready(())));
+            let pop_tooltip = target_tooltip(if busy { busy_text } else { &pop_help });
+            let menu_tooltip = if can_choose_stash {
+                target_tooltip(
+                    language.text("Choose a stash to apply or pop", "選擇要套用或取出的貯藏"),
+                )
+            } else {
+                pop_tooltip.clone()
+            };
+            let restore_invoker: SharedString = "stash_restore_menu".into();
+            let pop_button =
+                components::Button::new("stash_pop", action_label(language.text("Pop", "取出")))
+                    .start_slot(icon("icons/arrow_up.svg", icon_primary))
+                    .style(components::ButtonStyle::Subtle)
+                    .disabled(!can_pop);
+            let menu_button = components::Button::new("stash_restore_menu", "")
+                .start_slot(icon("icons/chevron_down.svg", icon_muted))
+                .style(components::ButtonStyle::Subtle)
+                .open(active_invoker.as_ref() == Some(&restore_invoker))
+                .selected_bg(menu_selected_bg)
+                .disabled(!can_choose_stash);
+            let restore_buttons = components::SplitButton::from_buttons(
+                pop_button,
+                menu_button,
+                cx,
+                |button, cx| {
+                    button
+                        .on_click(theme, cx, move |this, e, _window, cx| {
+                            // A double click must not pop twice before the list reloads.
+                            if e.click_count() > 1 || this.selected_stash_worktree().is_some() {
+                                return;
+                            }
+                            if let (Some(repo_id), Some(index)) = (repo_id, pop_index)
+                                && this.active_repo().is_some_and(|repo| {
+                                    repo.id == repo_id && repo.local_actions_in_flight == 0
+                                })
+                            {
+                                this.store.dispatch(Msg::PopStash { repo_id, index });
+                                this.store.dispatch(Msg::LoadStashes { repo_id });
+                                cx.notify();
+                            }
+                        })
+                        .debug_selector(|| "stash_pop".to_string())
+                        .gitcomet_tooltip(theme, pop_tooltip)
+                },
+                |button, cx| {
+                    button
+                        .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
+                            if let Some(repo_id) = repo_id
+                                && this.active_repo_id() == Some(repo_id)
+                                && this.selected_stash_worktree().is_none()
+                            {
+                                this.open_popover_for_bounds(
+                                    (PopoverKind::StashRestoreMenu { repo_id })
+                                        .invoked_by(restore_invoker.clone()),
+                                    bounds,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .debug_selector(|| "stash_restore_menu".to_string())
+                        .gitcomet_tooltip(theme, menu_tooltip)
+                },
             )
-            .child(stash_pop);
+            .style(components::SplitButtonStyle::Borderless)
+            .render(theme, ui_scale_percent);
+
+            div()
+                .flex()
+                .items_center()
+                .gap(tracking_action_gap)
+                .child(stash_button)
+                .child(restore_buttons)
+        }
+        .debug_selector(|| "stash".to_string());
 
         let create_branch_invoker: SharedString = "create_branch_btn".into();
         let create_branch_active = self
@@ -1741,7 +1833,7 @@ mod tests {
             stash_entry(0, "WIP on main"),
         ])));
         assert_eq!(
-            stash_pop_target(Some(&repo)),
+            stash_pop_target(Some(&repo), Language::English),
             StashPopTarget::Ready {
                 index: 0,
                 tooltip: "Pop stash@{0}: WIP on main".to_string(),
@@ -1752,19 +1844,19 @@ mod tests {
     #[test]
     fn stash_pop_is_unavailable_without_stashes_or_a_working_tree() {
         assert_eq!(
-            stash_pop_target(None),
+            stash_pop_target(None, Language::English),
             StashPopTarget::Unavailable("No stashes to pop")
         );
         let empty = repo_with_stashes(Loadable::Ready(Arc::new(Vec::new())));
         assert_eq!(
-            stash_pop_target(Some(&empty)),
+            stash_pop_target(Some(&empty), Language::English),
             StashPopTarget::Unavailable("No stashes to pop")
         );
         // An unloaded list (the sidebar loads it) still pops stash@{0}.
         for unloaded in [Loadable::Loading, Loadable::NotLoaded] {
             let repo = repo_with_stashes(unloaded);
             assert_eq!(
-                stash_pop_target(Some(&repo)),
+                stash_pop_target(Some(&repo), Language::English),
                 StashPopTarget::Ready {
                     index: 0,
                     tooltip: "Pop the newest stash".to_string(),
@@ -1774,7 +1866,7 @@ mod tests {
         let mut bare = repo_with_stashes(Loadable::Ready(Arc::new(vec![stash_entry(0, "WIP")])));
         bare.repository_mode = Some(gitcomet_core::domain::RepositoryMode::Bare);
         assert_eq!(
-            stash_pop_target(Some(&bare)),
+            stash_pop_target(Some(&bare), Language::English),
             StashPopTarget::Unavailable(gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE)
         );
     }

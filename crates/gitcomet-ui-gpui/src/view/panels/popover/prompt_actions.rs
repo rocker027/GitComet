@@ -549,6 +549,9 @@ impl PopoverHost {
             PopoverKind::BranchSectionMenu { repo_id, section } => {
                 self.context_menu_view(PopoverKind::BranchSectionMenu { repo_id, section }, cx)
             }
+            PopoverKind::StashRestoreMenu { repo_id } => {
+                self.context_menu_view(PopoverKind::StashRestoreMenu { repo_id }, cx)
+            }
             PopoverKind::StashMenu {
                 repo_id,
                 index,

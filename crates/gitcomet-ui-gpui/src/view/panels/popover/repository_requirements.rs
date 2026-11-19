@@ -12,6 +12,7 @@ impl PopoverKind {
             | Self::StashDropConfirm { repo_id, .. }
             | Self::DiscardAllConfirm { repo_id }
             | Self::StashPickerPrompt { repo_id, .. }
+            | Self::StashRestoreMenu { repo_id }
             | Self::CherryPickCommitConfirm { repo_id, .. }
             | Self::InteractiveCherryPickConfirm { repo_id, .. }
             | Self::RevertCommitConfirm { repo_id, .. }

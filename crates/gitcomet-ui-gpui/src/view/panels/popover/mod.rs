@@ -682,6 +682,7 @@ fn popover_is_context_menu(kind: &PopoverKind) -> bool {
                 ..
             }
             | PopoverKind::StashMenu { .. }
+            | PopoverKind::StashRestoreMenu { .. }
             | PopoverKind::Repo {
                 kind: RepoPopoverKind::Worktree(
                     WorktreePopoverKind::SectionMenu
@@ -1038,6 +1039,7 @@ fn popover_anchor_corner(kind: &PopoverKind) -> Anchor {
         | PopoverKind::HookActivity { .. }
         | PopoverKind::ErrorDetails { .. }
         | PopoverKind::PushPicker
+        | PopoverKind::StashRestoreMenu { .. }
         | PopoverKind::CreateBranchFromRefPrompt { .. }
         | PopoverKind::RenameBranchPrompt { .. }
         | PopoverKind::StashPrompt
@@ -1328,7 +1330,9 @@ pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<Popover
         PopoverKind::ConflictResolverInputRowMenu { .. } => Some(CONFLICT_INPUT_MENU_WIDTH),
         PopoverKind::ConflictResolverChunkMenu { .. } => Some(CONFLICT_CHUNK_MENU_WIDTH),
         PopoverKind::ConflictResolverOutputMenu { .. } => Some(CONFLICT_OUTPUT_MENU_WIDTH),
-        PopoverKind::StashMenu { .. } => Some(STASH_MENU_WIDTH),
+        PopoverKind::StashMenu { .. } | PopoverKind::StashRestoreMenu { .. } => {
+            Some(STASH_MENU_WIDTH)
+        }
         // A hosted menu is a context menu; a hosted dialog frames its content.
         PopoverKind::Hosted { menu: true, .. } => Some(DEFAULT_CONTEXT_MENU_WIDTH),
         PopoverKind::RebaseReword { .. } | PopoverKind::Hosted { .. } => Some(DIALOG_440_WIDTH),

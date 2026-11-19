@@ -30,6 +30,7 @@ pub(super) struct TrackingRepo {
     branches: Arc<Mutex<Vec<String>>>,
     current_branch: Arc<Mutex<String>>,
     worktrees: Arc<Mutex<Vec<gitcomet_core::domain::Worktree>>>,
+    stashes: Arc<Mutex<Vec<StashEntry>>>,
     create_attempts: Arc<Mutex<Vec<String>>>,
     actions: Arc<Mutex<Vec<String>>>,
     unmerged_branches: Arc<Mutex<BTreeSet<String>>>,
@@ -43,6 +44,7 @@ impl TrackingRepo {
             branches: Arc::new(Mutex::new(vec!["main".to_string()])),
             current_branch: Arc::new(Mutex::new("main".to_string())),
             worktrees: Arc::new(Mutex::new(Vec::new())),
+            stashes: Arc::new(Mutex::new(Vec::new())),
             create_attempts: Arc::new(Mutex::new(Vec::new())),
             actions: Arc::new(Mutex::new(Vec::new())),
             unmerged_branches: Arc::new(Mutex::new(BTreeSet::new())),
@@ -96,6 +98,13 @@ impl TrackingRepo {
             .worktrees
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = worktrees;
+    }
+
+    pub(super) fn set_stashes_externally(&self, stashes: Vec<StashEntry>) {
+        *self
+            .stashes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = stashes;
     }
 
     fn create_attempts(&self) -> Vec<String> {
@@ -508,10 +517,13 @@ impl GitRepository for TrackingRepo {
         cancellation: &gitcomet_core::services::CancellationToken,
     ) -> Result<Vec<StashEntry>> {
         cancellation.check_cancelled()?;
-        let result: Result<Vec<StashEntry>> = { Ok(Vec::new()) };
-        let result = result?;
+        let stashes = self
+            .stashes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         cancellation.check_cancelled()?;
-        Ok(result)
+        Ok(stashes)
     }
 
     fn stash_apply(&self, index: usize) -> Result<()> {

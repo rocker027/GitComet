@@ -752,6 +752,7 @@ impl PopoverHost {
                 index,
                 message,
             } => Some(stash::model(*repo_id, *index, message)),
+            PopoverKind::StashRestoreMenu { repo_id } => Some(stash::restore_menu(*repo_id, cx)),
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::SectionMenu),

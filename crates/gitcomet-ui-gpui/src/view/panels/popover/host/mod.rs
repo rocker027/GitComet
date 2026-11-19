@@ -1730,6 +1730,7 @@ impl PopoverHost {
             PopoverKind::CommitOptionsMenu { repo_id } => Some(*repo_id),
             PopoverKind::BranchPicker { .. } => self.state.active_repo,
             PopoverKind::UpstreamPicker { repo_id, .. } => Some(*repo_id),
+            PopoverKind::StashPickerPrompt { repo_id, .. } => Some(*repo_id),
             _ => None,
         };
         let Some(repo_id) = repo_id else {
@@ -1738,6 +1739,14 @@ impl PopoverHost {
         let Some(repo) = self.state.repos.iter().find(|repo| repo.id == repo_id) else {
             return;
         };
+
+        if matches!(kind, PopoverKind::StashPickerPrompt { .. }) {
+            // Git shares this list across worktrees, so a Ready list can be stale.
+            if !repo.stashes.is_loading() {
+                self.store.dispatch(Msg::LoadStashes { repo_id });
+            }
+            return;
+        }
 
         if matches!(
             kind,

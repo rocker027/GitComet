@@ -15,12 +15,16 @@ pub(super) struct StashRow {
     pub(super) message: String,
 }
 
+fn repo_for(this: &PopoverHost, repo_id: RepoId) -> Option<&RepoState> {
+    this.state.repos.iter().find(|repo| repo.id == repo_id)
+}
+
 /// Everything the rows below read.
-fn rows_signature(this: &PopoverHost) -> u64 {
+fn rows_signature(this: &PopoverHost, repo_id: RepoId) -> u64 {
     use std::hash::Hash;
 
     super::rows_cache::signature(|hasher| {
-        let Some(repo) = this.active_repo() else {
+        let Some(repo) = repo_for(this, repo_id) else {
             return;
         };
         repo.id.hash(hasher);
@@ -34,15 +38,17 @@ fn rows_signature(this: &PopoverHost) -> u64 {
 /// that is highlighted.
 pub(super) fn cached(
     this: &PopoverHost,
+    repo_id: RepoId,
     query: &str,
 ) -> Rc<super::rows_cache::CachedRows<StashRow>> {
     let key = super::rows_cache::RowsCacheKey::new(
         super::rows_cache::RowsCacheOwner::Stash,
-        rows_signature(this),
+        rows_signature(this, repo_id),
         query,
     );
     super::rows_cache::get_or_build(&this.stash_picker_rows_cache, key, |_now| {
-        let Some(Loadable::Ready(stashes)) = this.active_repo().map(|repo| &repo.stashes) else {
+        let Some(Loadable::Ready(stashes)) = repo_for(this, repo_id).map(|repo| &repo.stashes)
+        else {
             return (Vec::new(), Vec::new(), None);
         };
         let (items, payloads) = stashes
@@ -50,7 +56,10 @@ pub(super) fn cached(
             .map(|stash| {
                 let message = stash.message.to_string();
                 (
-                    components::PickerPromptItem::plain(message.clone()),
+                    components::PickerPromptItem::plain(format!(
+                        "stash@{{{}}} {message}",
+                        stash.index
+                    )),
                     StashRow {
                         index: stash.index,
                         message,
@@ -62,8 +71,8 @@ pub(super) fn cached(
     })
 }
 
-pub(super) fn nav_targets(this: &PopoverHost, query: &str) -> Vec<StashRow> {
-    cached(this, query).filtered_payloads()
+pub(super) fn nav_targets(this: &PopoverHost, repo_id: RepoId, query: &str) -> Vec<StashRow> {
+    cached(this, repo_id, query).filtered_payloads()
 }
 
 /// Runs the picker's purpose against one row. Shared by the click handler and by
@@ -117,10 +126,11 @@ pub(super) fn panel(
     let ui_scale_percent = super::popover_ui_scale_percent(cx);
     let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
 
+    let language = crate::localization::Language::current(cx);
     let title = match purpose {
-        StashPickerPurpose::Pop => "Pop Stash",
-        StashPickerPurpose::Apply => "Apply Stash",
-        StashPickerPurpose::Drop => "Drop Stash",
+        StashPickerPurpose::Pop => language.text("Pop Stash", "取出貯藏"),
+        StashPickerPurpose::Apply => language.text("Apply Stash", "套用貯藏"),
+        StashPickerPurpose::Drop => language.text("Drop Stash", "刪除貯藏"),
     };
 
     let mut menu = div()
@@ -130,54 +140,62 @@ pub(super) fn panel(
         .child(popover_title(theme, title))
         .child(super::popover_rule(theme));
 
-    if let Some(search) = this.stash_picker_search_input.clone() {
-        match this
-            .active_repo()
-            .map(|r| matches!(&r.stashes, Loadable::Ready(_)))
-        {
-            Some(true) => {
-                let query = search.read_with(cx, |i, _| i.text().trim().to_string());
-                let built = cached(this, &query);
-                let rows = Rc::clone(&built.payloads);
+    let repo = repo_for(this, repo_id);
+    if !matches!(purpose, StashPickerPurpose::Drop)
+        && let Some(repo) = repo
+    {
+        menu = menu.child(components::context_menu_label(
+            theme,
+            ui_scale_percent,
+            format!(
+                "{} {}",
+                language.text("Apply to", "套用至"),
+                repo.spec.workdir.display()
+            ),
+            Some(this.tooltip_host.clone()),
+            cx,
+        ));
+    }
 
-                menu = menu.child(
-                    components::PickerPrompt::new(search, this.picker_prompt_scroll.clone())
-                        .prebuilt_items(Rc::clone(&built.items), Rc::clone(&built.layout))
-                        .tooltip_host(this.tooltip_host.clone())
-                        .empty_text("No stashes")
-                        .max_height(scaled_px(STASH_PICKER_LIST_MAX_HEIGHT_PX))
-                        .selected_index(this.stash_picker_prompt_selected_index)
-                        .render(
-                            theme,
-                            ui_scale_percent,
-                            cx,
-                            move |this, ix, _e, window, cx| {
-                                if let Some(row) = rows.get(ix).cloned() {
-                                    activate(this, repo_id, purpose, row, window, cx);
-                                }
-                            },
-                        ),
-                );
-            }
-            _ => {
-                let is_loading = this
-                    .active_repo()
-                    .map(|r| matches!(&r.stashes, Loadable::Loading))
-                    .unwrap_or(false);
-                let text = if is_loading {
-                    "Loading…"
-                } else {
-                    "No stashes"
-                };
-                menu = menu.child(components::context_menu_label(
+    let status: Option<SharedString> = match repo.map(|repo| &repo.stashes) {
+        Some(Loadable::Ready(_)) => None,
+        Some(Loadable::Loading | Loadable::NotLoaded) => {
+            Some(language.text("Loading…", "載入中…").into())
+        }
+        Some(Loadable::Error(error)) => Some(error.clone().into()),
+        None => Some(language.text("No repository", "沒有儲存庫").into()),
+    };
+    if let Some(text) = status {
+        menu = menu.child(components::context_menu_label(
+            theme,
+            ui_scale_percent,
+            text,
+            Some(this.tooltip_host.clone()),
+            cx,
+        ));
+    } else if let Some(search) = this.stash_picker_search_input.clone() {
+        let query = search.read_with(cx, |i, _| i.text().trim().to_string());
+        let built = cached(this, repo_id, &query);
+        let rows = Rc::clone(&built.payloads);
+
+        menu = menu.child(
+            components::PickerPrompt::new(search, this.picker_prompt_scroll.clone())
+                .prebuilt_items(Rc::clone(&built.items), Rc::clone(&built.layout))
+                .tooltip_host(this.tooltip_host.clone())
+                .empty_text(language.text("No stashes", "沒有貯藏"))
+                .max_height(scaled_px(STASH_PICKER_LIST_MAX_HEIGHT_PX))
+                .selected_index(this.stash_picker_prompt_selected_index)
+                .render(
                     theme,
                     ui_scale_percent,
-                    text,
-                    Some(this.tooltip_host.clone()),
                     cx,
-                ));
-            }
-        }
+                    move |this, ix, _e, window, cx| {
+                        if let Some(row) = rows.get(ix).cloned() {
+                            activate(this, repo_id, purpose, row, window, cx);
+                        }
+                    },
+                ),
+        );
     }
 
     components::context_menu(theme, menu).w(scaled_px(420.0))

@@ -436,6 +436,160 @@ fn the_toolbar_pop_button_pops_the_newest_stash(cx: &mut gpui::TestAppContext) {
     });
 }
 
+fn click_toolbar_stash_control(cx: &mut gpui::VisualTestContext, selector: &'static str) {
+    let center = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("expected {selector} to render"))
+        .center();
+    cx.simulate_click(center, gpui::Modifiers::default());
+    crate::view::test_support::redraw(cx);
+}
+
+fn open_toolbar_stash_picker<'a>(
+    cx: &'a mut gpui::TestAppContext,
+    purpose: StashPickerPurpose,
+    menu_selector: &'static str,
+) -> (
+    &'a mut gpui::VisualTestContext,
+    AppStore,
+    RepoId,
+    Arc<TrackingRepo>,
+) {
+    let (store, events, repo, _workdir) = create_tracking_store(menu_selector);
+    let repo_id = store
+        .snapshot()
+        .active_repo
+        .expect("active test repository");
+    store.dispatch(Msg::LoadStashes { repo_id });
+    wait_until("empty stash cache", || {
+        store.snapshot().repos.iter().any(|repo| {
+            repo.id == repo_id && matches!(&repo.stashes, Loadable::Ready(list) if list.is_empty())
+        })
+    });
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store.clone(), events, None, window, cx));
+    crate::view::test_support::redraw(cx);
+
+    // Another worktree can add entries to the shared stash without changing
+    // the current checkout's cached list.
+    let stashes = [(0, 'a', "Newest"), (1, 'b', "Older")].map(|(index, hex, message)| {
+        gitcomet_core::domain::StashEntry {
+            index,
+            id: CommitId(hex.to_string().repeat(40).into()),
+            message: message.into(),
+            created_at: None,
+        }
+    });
+    repo.set_stashes_externally(stashes.into());
+
+    click_toolbar_stash_control(cx, "stash_restore_menu");
+    click_toolbar_stash_control(cx, menu_selector);
+    cx.update(|_window, app| {
+        assert_eq!(
+            view.read(app).popover_host.read(app).popover,
+            Some(PopoverKind::StashPickerPrompt { repo_id, purpose })
+        );
+    });
+
+    wait_until("both stashes listed", || {
+        store.snapshot().repos.iter().any(|repo| {
+            repo.id == repo_id && matches!(&repo.stashes, Loadable::Ready(list) if list.len() == 2)
+        })
+    });
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            crate::view::test_support::sync_store_snapshot(this, cx);
+        });
+    });
+    crate::view::test_support::redraw(cx);
+    assert!(
+        repo.actions().is_empty(),
+        "opening the picker should not restore a stash"
+    );
+
+    (cx, store, repo_id, repo)
+}
+
+#[gpui::test]
+fn toolbar_apply_restores_the_selected_stash_and_keeps_it(cx: &mut gpui::TestAppContext) {
+    let (cx, store, repo_id, repo) =
+        open_toolbar_stash_picker(cx, StashPickerPurpose::Apply, "stash_restore_apply");
+
+    click_toolbar_stash_control(cx, "picker_prompt_item_1");
+
+    wait_until("stash apply completed", || {
+        !repo.actions().is_empty()
+            && store
+                .snapshot()
+                .repos
+                .iter()
+                .any(|repo| repo.id == repo_id && repo.local_actions_in_flight == 0)
+    });
+    assert_eq!(repo.actions(), ["stash-apply:1"]);
+}
+
+#[gpui::test]
+fn toolbar_pop_picker_restores_and_drops_the_selected_older_stash(cx: &mut gpui::TestAppContext) {
+    let (cx, _store, _repo_id, repo) =
+        open_toolbar_stash_picker(cx, StashPickerPurpose::Pop, "stash_restore_pop");
+
+    click_toolbar_stash_control(cx, "picker_prompt_item_1");
+
+    wait_until("older stash popped", || {
+        repo.actions() == ["stash-apply:1", "stash-drop:1"]
+    });
+}
+
+#[gpui::test]
+fn toolbar_stash_actions_switch_to_open_worktree_for_a_linked_worktree_selection(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::view::panels::tests::{app_state_with_repo, push_test_state};
+    use gitcomet_core::domain::{RepoSpec, RepositoryMode, WorktreeDirtySummary};
+    use gitcomet_state::model::RepoState;
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(20);
+    let linked = std::env::temp_dir().join("stash-toolbar-linked");
+    let mut repo = RepoState::new_opening(
+        repo_id,
+        RepoSpec {
+            workdir: std::env::temp_dir().join("stash-toolbar-main"),
+        },
+    );
+    repo.open = Loadable::Ready(());
+    repo.repository_mode = Some(RepositoryMode::WorkingTree);
+    repo.worktree_dirty = Loadable::Ready(Arc::new(vec![WorktreeDirtySummary {
+        path: linked.clone(),
+        branch: Some("side".into()),
+        modified: 1,
+        ..WorktreeDirtySummary::default()
+    }]));
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            push_test_state(this, app_state_with_repo(repo.clone(), repo_id), cx);
+        });
+    });
+    crate::view::test_support::redraw(cx);
+    assert!(cx.debug_bounds("stash_pop").is_some());
+    assert!(cx.debug_bounds("stash_restore_menu").is_some());
+    assert!(cx.debug_bounds("stash_open_worktree").is_none());
+
+    repo.history_state.worktree_selection = Some(linked);
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            push_test_state(this, app_state_with_repo(repo, repo_id), cx);
+        });
+    });
+    crate::view::test_support::redraw(cx);
+
+    assert!(cx.debug_bounds("stash_open_worktree").is_some());
+    assert!(cx.debug_bounds("stash_pop").is_none());
+    assert!(cx.debug_bounds("stash_restore_menu").is_none());
+}
+
 /// A stash's node in the history graph opens the stash menu, whose Drop goes
 /// through the existing confirmation.
 #[gpui::test]

@@ -732,15 +732,23 @@ impl PopoverHost {
                 cx,
                 |this| matches!(this.popover, Some(PopoverKind::StashPickerPrompt { .. })),
                 |this| &mut this.stash_picker_prompt_selected_index,
-                |this, query, _cx| Some(stash_picker_prompt::nav_targets(this, query)),
+                |this, query, _cx| {
+                    let Some(PopoverKind::StashPickerPrompt { repo_id, .. }) = this.popover else {
+                        return None;
+                    };
+                    Some(stash_picker_prompt::nav_targets(this, repo_id, query))
+                },
                 |this, cx| this.close_popover(cx),
                 |this, sel, cx| {
+                    let Some(PopoverKind::StashPickerPrompt { repo_id, .. }) = this.popover else {
+                        return;
+                    };
                     let query = this
                         .stash_picker_search_input
                         .as_ref()
                         .map(|input| input.read(cx).text().trim().to_string())
                         .unwrap_or_default();
-                    let rows = stash_picker_prompt::cached(this, &query);
+                    let rows = stash_picker_prompt::cached(this, repo_id, &query);
                     this.scroll_picker_prompt_to_row(
                         &rows.geometry(super::popover_ui_scale(cx)),
                         sel,

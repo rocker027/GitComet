@@ -1,5 +1,6 @@
 use super::branch::{create_tracking_store, wait_until};
 use super::*;
+use crate::view::panels::tests::{app_state_with_repo, push_test_state};
 
 fn click_debug_selector(cx: &mut gpui::VisualTestContext, selector: &'static str) {
     let center = cx
@@ -1221,6 +1222,131 @@ fn open_in_browser_picker_shows_an_empty_state(cx: &mut gpui::TestAppContext) {
         item,
         ContextMenuItem::Label(text) if text.as_ref() == "No remote has a web page to open"
     )));
+}
+
+fn branch_menu_groups(items: &[ContextMenuItem]) -> Vec<Vec<&str>> {
+    items
+        .split(|item| matches!(item, ContextMenuItem::Separator))
+        .map(|group| {
+            assert!(!group.is_empty(), "unexpected empty menu group");
+            group
+                .iter()
+                .map(|item| match item {
+                    ContextMenuItem::Entry { label, .. } => label.as_ref(),
+                    _ => panic!("expected a menu action"),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[gpui::test]
+fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(1);
+    let tip = CommitId("0123456789abcdef".into());
+    let mut repo = RepoState::new_opening(
+        repo_id,
+        gitcomet_core::domain::RepoSpec {
+            workdir: std::path::PathBuf::from("/tmp/branch-menu-groups"),
+        },
+    );
+    repo.head_branch = Loadable::Ready("main".into());
+    repo.branches = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Branch {
+        name: "main".into(),
+        target: tip.clone(),
+        upstream: None,
+        divergence: None,
+    }]));
+    repo.remote_branches = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::RemoteBranch {
+        remote: "origin".into(),
+        name: "feature/topic".into(),
+        target: tip.clone(),
+    }]));
+    let mut state = app_state_with_repo(repo, repo_id);
+    Arc::make_mut(&mut state).git_log_settings.show_history_tags = false;
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| push_test_state(this, state, cx));
+    });
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                let local = host
+                    .context_menu_model(
+                        &PopoverKind::BranchMenu {
+                            repo_id,
+                            target: BranchMenuTarget::local("main"),
+                        },
+                        cx,
+                    )
+                    .expect("local branch menu");
+                assert!(matches!(
+                    local.items.as_slice(),
+                    [ContextMenuItem::Header(heading), ContextMenuItem::Separator, ..]
+                        if heading.as_ref() == "Local branch · main"
+                ));
+                assert_eq!(
+                    branch_menu_groups(&local.items[2..]),
+                    [
+                        vec!["Checkout", "Open in new worktree"],
+                        vec!["Create branch", "Create tag…"],
+                        vec!["Rename branch", "Delete branch"],
+                        vec!["Mark main for comparison", "Compare with working tree"],
+                        vec!["Focus", "Pin branch", "Copy branch name"],
+                    ]
+                );
+                assert_eq!(local.first_selectable(), Some(2));
+
+                let target = BranchMenuTarget::remote("origin", "feature/topic");
+                let remote = host
+                    .context_menu_model(
+                        &PopoverKind::BranchMenu { repo_id, target: target.clone() },
+                        cx,
+                    )
+                    .expect("remote branch menu");
+                let remote_groups = branch_menu_groups(&remote.items[2..]);
+                assert_eq!(
+                    remote_groups,
+                    [
+                        vec!["Checkout", "Open in new worktree"],
+                        vec!["Pull into current", "Set as tracking upstream"],
+                        vec!["Merge into current", "Squash into current", "Rebase main onto origin/feature/topic"],
+                        vec!["Create branch", "Create tag…"],
+                        vec!["Delete remote branch…"],
+                        vec!["Mark origin/feature/topic for comparison", "Compare with working tree"],
+                        vec!["Focus", "Pin branch", "Copy branch name"],
+                        vec!["Fetch all", "Prune merged branches", "Prune local tags"],
+                    ]
+                );
+
+                let history_ref = HistoryMenuRef::Branch(target);
+                host.expanded_history_ref = Some(history_ref.clone());
+                let history = host
+                    .context_menu_model(
+                        &PopoverKind::CommitMenu {
+                            repo_id,
+                            commit_id: tip,
+                            refs: CommitMenuRefs::Only(history_ref),
+                        },
+                        cx,
+                    )
+                    .expect("expanded history branch menu");
+                let range = &history.groups[0];
+                assert_eq!(branch_menu_groups(&history.items[range.start + 1..range.end]), remote_groups);
+
+                for model in [&remote, &history] {
+                    let tag_index = model.items.iter().position(|item| matches!(
+                        item,
+                        ContextMenuItem::Entry { label, disabled: true, .. } if label.as_ref() == "Create tag…"
+                    )).expect("disabled Create tag action");
+                    assert!(model.entry_tooltips[&tag_index].contains("Show tags in history view"));
+                }
+            });
+        });
+    });
 }
 
 #[gpui::test]
