@@ -281,8 +281,8 @@ fn command_keeps_git_undo(command: &RepoCommandKind) -> bool {
             | RepoCommandKind::AppendGitattributesRule { .. }
             | RepoCommandKind::ExportPatch { .. }
             | RepoCommandKind::ApplyPatch { .. }
-            | RepoCommandKind::StageHunk { .. }
-            | RepoCommandKind::UnstageHunk { .. }
+            | RepoCommandKind::StageHunk
+            | RepoCommandKind::UnstageHunk
             | RepoCommandKind::ApplyWorktreePatch { .. }
     )
 }
