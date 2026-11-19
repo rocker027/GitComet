@@ -1,4 +1,5 @@
 use super::color::with_alpha;
+use crate::localization::Language;
 use crate::theme::AppTheme;
 use gitcomet_state::model::{CloneOpState, CloneOpStatus, CloneProgressStage};
 use std::path::Path;
@@ -10,19 +11,19 @@ pub(crate) fn clone_progress_loading_color(theme: AppTheme) -> gpui::Rgba {
     )
 }
 
-pub(crate) fn clone_progress_title(op: &CloneOpState) -> &'static str {
+pub(crate) fn clone_progress_title(op: &CloneOpState, language: Language) -> &'static str {
     match op.status {
-        CloneOpStatus::Cancelling => "Aborting clone…",
-        _ => "Cloning repository…",
+        CloneOpStatus::Cancelling => language.text("Aborting clone…", "正在中止複製…"),
+        _ => language.text("Cloning repository…", "正在複製儲存庫…"),
     }
 }
 
-pub(crate) fn clone_progress_phase_label(op: &CloneOpState) -> &'static str {
+pub(crate) fn clone_progress_phase_label(op: &CloneOpState, language: Language) -> &'static str {
     match op.status {
-        CloneOpStatus::Cancelling => "Stopping clone",
+        CloneOpStatus::Cancelling => language.text("Stopping clone", "正在停止複製"),
         _ => match op.progress.stage {
-            CloneProgressStage::Loading => "Loading",
-            CloneProgressStage::RemoteObjects => "Remote objects",
+            CloneProgressStage::Loading => language.text("Loading", "正在載入"),
+            CloneProgressStage::RemoteObjects => language.text("Remote objects", "遠端物件"),
         },
     }
 }
@@ -99,9 +100,22 @@ mod tests {
             82,
         );
 
-        assert_eq!(clone_progress_title(&loading), "Cloning repository…");
-        assert_eq!(clone_progress_phase_label(&loading), "Loading");
-        assert_eq!(clone_progress_phase_label(&remote), "Remote objects");
+        assert_eq!(
+            clone_progress_title(&loading, Language::English),
+            "Cloning repository…"
+        );
+        assert_eq!(
+            clone_progress_phase_label(&loading, Language::English),
+            "Loading"
+        );
+        assert_eq!(
+            clone_progress_phase_label(&remote, Language::English),
+            "Remote objects"
+        );
+        assert_eq!(
+            clone_progress_phase_label(&remote, Language::TraditionalChinese),
+            "遠端物件"
+        );
     }
 
     #[test]
@@ -112,8 +126,18 @@ mod tests {
             64,
         );
 
-        assert_eq!(clone_progress_title(&op), "Aborting clone…");
-        assert_eq!(clone_progress_phase_label(&op), "Stopping clone");
+        assert_eq!(
+            clone_progress_title(&op, Language::English),
+            "Aborting clone…"
+        );
+        assert_eq!(
+            clone_progress_phase_label(&op, Language::English),
+            "Stopping clone"
+        );
+        assert_eq!(
+            clone_progress_title(&op, Language::TraditionalChinese),
+            "正在中止複製…"
+        );
     }
 
     #[test]

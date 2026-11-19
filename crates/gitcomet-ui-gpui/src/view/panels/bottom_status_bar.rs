@@ -1,6 +1,7 @@
 use super::bar_items::{self, BarItemOwner, BarItems, ExtensionBarItem, RelocatedBarItems};
 use super::*;
 use crate::kit::interaction as controls;
+use crate::localization::Language;
 use crate::view::components::{ControlInteractionExt, InteractionState, InteractionStyle};
 use gitcomet_extension_api::{BarItemLocation, BuiltinBarItem};
 
@@ -260,6 +261,7 @@ impl BarItemOwner for BottomStatusBarView {
         cx: &mut gpui::Context<Self>,
     ) -> BarItems {
         let theme = self.theme;
+        let language = Language::current(cx);
         let filesystem_pending = self
             .root_view
             .upgrade()
@@ -307,7 +309,10 @@ impl BarItemOwner for BottomStatusBarView {
                     cx,
                 );
             })
-            .gitcomet_tooltip(theme, "Zoom this window".into())
+            .gitcomet_tooltip(
+                theme,
+                language.text("Zoom this window", "調整視窗縮放").into(),
+            )
             .debug_selector(|| "bottom_status_bar_zoom".to_string());
 
         // Pane collapse toggles live here (not floating inside the panes) so
@@ -341,10 +346,11 @@ impl BarItemOwner for BottomStatusBarView {
             .gitcomet_tooltip(
                 theme,
                 if sidebar_collapsed {
-                    "Show sidebar".into()
+                    language.text("Show sidebar", "顯示側邊欄")
                 } else {
-                    "Hide sidebar".into()
-                },
+                    language.text("Hide sidebar", "隱藏側邊欄")
+                }
+                .into(),
             );
 
         let details_toggle = components::Button::new("details_toggle", "")
@@ -362,10 +368,11 @@ impl BarItemOwner for BottomStatusBarView {
             .gitcomet_tooltip(
                 theme,
                 if details_collapsed {
-                    "Show details panel".into()
+                    language.text("Show details panel", "顯示詳細資料面板")
                 } else {
-                    "Hide details panel".into()
-                },
+                    language.text("Hide details panel", "隱藏詳細資料面板")
+                }
+                .into(),
             );
 
         let (active_repo_id, active_hook_count, has_hook_warning) =
@@ -441,10 +448,14 @@ impl BarItemOwner for BottomStatusBarView {
             .gitcomet_tooltip(
                 theme,
                 if keep_minimized {
-                    "Git activity — keep minimized enabled".into()
+                    language.text(
+                        "Git activity — keep minimized enabled",
+                        "Git 活動（已啟用保持最小化）",
+                    )
                 } else {
-                    "Git activity".into()
-                },
+                    language.text("Git activity", "Git 活動")
+                }
+                .into(),
             )
             .debug_selector(|| "bottom_hook_activity".to_string());
 
@@ -477,7 +488,14 @@ impl BarItemOwner for BottomStatusBarView {
                     crate::view::platform_open::open_url_later(url, cx);
                 }),
             )
-            .gitcomet_tooltip(theme, format!("Join the {name} Discord").into())
+            .gitcomet_tooltip(
+                theme,
+                match language {
+                    Language::English => format!("Join the {name} Discord"),
+                    Language::TraditionalChinese => format!("加入 {name} 的 Discord 社群"),
+                }
+                .into(),
+            )
         });
 
         let editions = crate::view::editions_url();
@@ -504,8 +522,15 @@ impl BarItemOwner for BottomStatusBarView {
                     crate::view::platform_open::open_url_later(url, cx);
                 }),
             )
-            .gitcomet_tooltip(theme, format!("See {name} editions").into())
-            .child("FREE")
+            .gitcomet_tooltip(
+                theme,
+                match language {
+                    Language::English => format!("See {name} editions"),
+                    Language::TraditionalChinese => format!("查看 {name} 的版本方案"),
+                }
+                .into(),
+            )
+            .child(language.text("FREE", "免費版"))
         });
 
         let pro_link = editions.map(|url| {
@@ -526,8 +551,15 @@ impl BarItemOwner for BottomStatusBarView {
                     crate::view::platform_open::open_url_later(url, cx);
                 }),
             )
-            .gitcomet_tooltip(theme, format!("See {name} Pro").into())
-            .child("Get Pro!")
+            .gitcomet_tooltip(
+                theme,
+                match language {
+                    Language::English => format!("See {name} Pro"),
+                    Language::TraditionalChinese => format!("查看 {name} Pro"),
+                }
+                .into(),
+            )
+            .child(language.text("Get Pro!", "升級 Pro"))
         });
 
         // GPUI paints an SVG as a mask tinted by the text color, so the mark's
@@ -561,6 +593,7 @@ impl BarItemOwner for BottomStatusBarView {
                     .child(name),
             )
             .when_some(crate::view::website_url(), |brand, url| {
+                let site = url.trim_start_matches("https://");
                 brand
                     .on_activate(
                         false,
@@ -572,7 +605,11 @@ impl BarItemOwner for BottomStatusBarView {
                     )
                     .gitcomet_tooltip(
                         theme,
-                        format!("Open {}", url.trim_start_matches("https://")).into(),
+                        match language {
+                            Language::English => format!("Open {site}"),
+                            Language::TraditionalChinese => format!("開啟 {site}"),
+                        }
+                        .into(),
                     )
             });
 
@@ -598,7 +635,14 @@ impl BarItemOwner for BottomStatusBarView {
                         crate::view::platform_open::open_url_later(url, cx);
                     }),
                 )
-                .gitcomet_tooltip(theme, format!("View {name} releases").into())
+                .gitcomet_tooltip(
+                    theme,
+                    match language {
+                        Language::English => format!("View {name} releases"),
+                        Language::TraditionalChinese => format!("查看 {name} 的發行版本"),
+                    }
+                    .into(),
+                )
             })
             .child(version_label);
 
@@ -613,13 +657,21 @@ impl BarItemOwner for BottomStatusBarView {
                         .filesystem
                         .progress
                         .as_ref()
-                        .map(|progress| {
-                            format!(
+                        .map(|progress| match language {
+                            Language::English => format!(
                                 "Files: {}/{} · Cancel",
                                 progress.completed_items, progress.total_items
-                            )
+                            ),
+                            Language::TraditionalChinese => format!(
+                                "檔案 {}/{} · 取消",
+                                progress.completed_items, progress.total_items
+                            ),
                         })
-                        .unwrap_or_else(|| "Files: waiting · Cancel".into()),
+                        .unwrap_or_else(|| {
+                            language
+                                .text("Files: waiting · Cancel", "檔案等待處理 · 取消")
+                                .into()
+                        }),
                 )
                 .borderless()
                 .style(components::ButtonStyle::Subtle)
@@ -657,7 +709,7 @@ impl BarItemOwner for BottomStatusBarView {
                         root.toggle_document_picker(bounds, window, cx)
                     });
                 })
-                .gitcomet_tooltip(theme, "Open a file…".into())
+                .gitcomet_tooltip(theme, language.text("Open a file…", "開啟檔案…").into())
                 .debug_selector(|| "bottom_documents".into())
         };
         items.push(BuiltinBarItem::Documents, documents);
@@ -676,7 +728,10 @@ impl BarItemOwner for BottomStatusBarView {
                         root.toggle_shortcut_help(window, cx);
                     });
                 })
-                .gitcomet_tooltip(theme, "Keyboard shortcuts".into())
+                .gitcomet_tooltip(
+                    theme,
+                    language.text("Keyboard shortcuts", "鍵盤快捷鍵").into(),
+                )
                 .debug_selector(|| "bottom_keyboard_shortcuts".into()),
         );
         items.push(BuiltinBarItem::Zoom, zoom_button);
@@ -707,7 +762,7 @@ impl BarItemOwner for BottomStatusBarView {
                                     .items_center()
                                     .text_size(theme.ui_text(10.0))
                                     .line_height(scaled_px(theme.metrics.ui_text(12.0)))
-                                    .child("DEV"),
+                                    .child(language.text("DEV", "開發版")),
                             )
                         }),
                 )

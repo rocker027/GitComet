@@ -54,7 +54,7 @@ impl PickerRowMenuTarget {
     /// rendered and the entries the arrow keys walk are one derivation.
     fn model(&self, this: &PopoverHost, cx: &gpui::Context<PopoverHost>) -> ContextMenuModel {
         match self {
-            Self::Repo(entry) => this.repo_picker_row_menu_model(entry),
+            Self::Repo(entry) => this.localized_repo_picker_row_menu_model(entry, cx),
             Self::Branch { .. } | Self::Worktree { .. } => self
                 .popover_kind(this)
                 .and_then(|kind| this.context_menu_model(&kind, cx))
@@ -115,15 +115,15 @@ impl PickerRowMenuTarget {
     /// gone — filtered out, or closed from under the menu.
     fn row_position(&self, this: &PopoverHost, query: &str, language: Language) -> Option<usize> {
         match self {
-            Self::Repo(entry) => repo_picker::filtered_layout(this, query)
-                .0
+            Self::Repo(entry) => repo_picker::cached_for_language(this, query, language)
+                .filtered_payloads()
                 .iter()
                 .position(|candidate| candidate == entry),
             Self::Branch { row, .. } => branch_picker::localized_nav_targets(this, query, language)
                 .iter()
                 .position(|candidate| candidate == row),
             Self::Worktree { repo_id, row } => {
-                worktree_badge_picker::nav_targets(this, *repo_id, query)
+                worktree_badge_picker::nav_targets(this, *repo_id, query, language)
                     .iter()
                     .position(|candidate| candidate == row)
             }

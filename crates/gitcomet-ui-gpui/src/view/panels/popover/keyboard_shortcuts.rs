@@ -4,10 +4,15 @@
 use super::*;
 use crate::kit::components::Shortcut;
 use crate::kit::{Scrollbar, ScrollbarAxis};
+use crate::localization::Language;
 use crate::view::command_palette::{self, CommandEntry};
 use gitcomet_markdown::{MarkdownPreviewRowKind, parse_markdown};
 use gpui::{ListAlignment, ListOffset, ListState};
+use std::borrow::Cow;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
+
+mod translations;
 
 const SHORTCUTS: &str = include_str!("../../../../../../docs/shortcuts.md");
 const EXPLORER: &str = include_str!("../../../../../../docs/file-management.md");
@@ -27,18 +32,51 @@ struct Entry {
     action: String,
     keys: Vec<String>,
     note: String,
+    category_zh_tw: Option<&'static str>,
+    action_zh_tw: Option<Cow<'static, str>>,
+    note_zh_tw: Option<&'static str>,
 }
 
 impl Entry {
-    fn matches(&self, query: &str) -> bool {
-        let haystack = format!(
+    fn category(&self, language: Language) -> &str {
+        language.text(
+            &self.category,
+            self.category_zh_tw.unwrap_or(&self.category),
+        )
+    }
+
+    fn action(&self, language: Language) -> &str {
+        language.text(
+            &self.action,
+            self.action_zh_tw.as_deref().unwrap_or(&self.action),
+        )
+    }
+
+    fn note(&self, language: Language) -> &str {
+        language.text(&self.note, self.note_zh_tw.unwrap_or(&self.note))
+    }
+
+    fn matches(&self, query: &str, language: Language) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        let mut haystack = format!(
             "{} {} {} {}",
             self.category,
             self.action,
             self.keys.join(" "),
             self.note
-        )
-        .to_lowercase();
+        );
+        if language == Language::TraditionalChinese {
+            let _ = write!(
+                haystack,
+                " {} {} {}",
+                self.category(language),
+                self.action(language),
+                self.note(language),
+            );
+        }
+        let haystack = haystack.to_lowercase();
         query
             .to_lowercase()
             .split_whitespace()
@@ -47,6 +85,7 @@ impl Entry {
 }
 
 pub(super) struct State {
+    language: Language,
     entries: Vec<Entry>,
     categories: Vec<String>,
     selected: Option<String>,
@@ -67,6 +106,7 @@ enum HelpRow {
 impl State {
     pub(super) fn new() -> Self {
         Self {
+            language: Language::English,
             entries: Vec::new(),
             categories: Vec::new(),
             selected: None,
@@ -80,7 +120,8 @@ impl State {
         }
     }
 
-    fn reset(&mut self, extensions: &[CommandEntry]) {
+    fn reset(&mut self, extensions: &[CommandEntry], language: Language) {
+        self.language = language;
         self.entries = catalog(cfg!(target_os = "macos"), extensions);
         self.categories.clear();
         for entry in &self.entries {
@@ -92,6 +133,14 @@ impl State {
         self.query.clear();
         self.navigation_scroll.set_offset(point(px(0.0), px(0.0)));
         self.rebuild_rows();
+    }
+
+    fn category_label<'a>(&'a self, category: &'a str) -> &'a str {
+        self.entries
+            .iter()
+            .find(|entry| entry.category == category)
+            .map(|entry| entry.category(self.language))
+            .unwrap_or(category)
     }
 
     fn rebuild_rows(&mut self) {
@@ -106,7 +155,7 @@ impl State {
             }
             let mut header_added = false;
             for (index, entry) in self.entries.iter().enumerate() {
-                if entry.category != *category || !entry.matches(&self.query) {
+                if entry.category != *category || !entry.matches(&self.query, self.language) {
                     continue;
                 }
                 if !header_added {
@@ -128,15 +177,21 @@ pub(super) fn open(
     window: &mut Window,
     cx: &mut gpui::Context<PopoverHost>,
 ) {
+    let language = Language::current(cx);
     this.keyboard_shortcuts
-        .reset(crate::view::extension_host::palette_entries(cx));
+        .reset(crate::view::extension_host::palette_entries(cx), language);
     let input = search_input(this, window, cx);
     input.update(cx, |input, cx| {
         input.clear_transient_key_presses();
+        input.set_placeholder(search_placeholder(language), cx);
         input.set_text("", cx);
     });
     let focus = input.read_with(cx, |input, _| input.focus_handle());
     window.focus(&focus, cx);
+}
+
+fn search_placeholder(language: Language) -> &'static str {
+    language.text("Search actions or keys…", "搜尋操作或按鍵…")
 }
 
 fn search_input(
@@ -147,10 +202,11 @@ fn search_input(
     if let Some(input) = &this.keyboard_shortcuts.search_input {
         return input.clone();
     }
+    let language = Language::current(cx);
     let input = cx.new(|cx| {
         components::TextInput::new(
             components::TextInputOptions {
-                placeholder: "Search actions or keys…".into(),
+                placeholder: search_placeholder(language).into(),
                 ..Default::default()
             },
             window,
@@ -285,11 +341,16 @@ fn documented(source: &str, is_macos: bool, explorer_only: bool) -> Vec<Entry> {
             continue;
         }
         let note_column = if platform_table { 3 } else { 2 };
+        let action = cells[0];
+        let note = cells.get(note_column).copied().unwrap_or("");
         result.push(Entry {
             category: group.clone(),
-            action: cells[0].to_owned(),
+            action: action.to_owned(),
             keys,
-            note: cells.get(note_column).unwrap_or(&"").to_string(),
+            note: note.to_owned(),
+            category_zh_tw: translations::category(&group),
+            action_zh_tw: translations::action(action).map(Cow::Borrowed),
+            note_zh_tw: translations::note(note),
         });
     }
     result
@@ -327,8 +388,9 @@ fn catalog(is_macos: bool, extensions: &[CommandEntry]) -> Vec<Entry> {
         if entries.iter().any(|entry| entry.keys.contains(&key)) {
             continue;
         }
+        let is_extension = command.id.starts_with("extension:");
         entries.push(Entry {
-            category: if command.id.starts_with("extension:") {
+            category: if is_extension {
                 "Extensions"
             } else {
                 command.category
@@ -337,6 +399,14 @@ fn catalog(is_macos: bool, extensions: &[CommandEntry]) -> Vec<Entry> {
             action: command.label().into_owned(),
             keys: vec![key],
             note: String::new(),
+            category_zh_tw: Some(if is_extension {
+                "擴充功能"
+            } else {
+                command.localized_category(Language::TraditionalChinese)
+            }),
+            action_zh_tw: (!is_extension)
+                .then(|| command.localized_title(Language::TraditionalChinese)),
+            note_zh_tw: None,
         });
     }
     entries
@@ -351,12 +421,13 @@ fn row(
 ) -> AnyElement {
     let theme = this.theme;
     let p = crate::ui_scale::scaler(scale);
+    let language = this.keyboard_shortcuts.language;
     let keys = entry.keys.iter().enumerate().flat_map(|(index, key)| {
         let separator = (index > 0).then(|| {
             div()
                 .text_size(theme.ui_text(11.0))
                 .text_color(theme.colors.foreground.disabled)
-                .child("or")
+                .child(language.text("or", "或"))
                 .into_any_element()
         });
         separator.into_iter().chain(std::iter::once(
@@ -380,7 +451,7 @@ fn row(
                 .flex_1()
                 .min_w(px(0.0))
                 .text_size(theme.ui_text(13.0))
-                .child(entry.action.clone()),
+                .child(entry.action(language).to_owned()),
         )
         .child(
             div()
@@ -391,11 +462,12 @@ fn row(
                 .gap(p(6.0))
                 .children(keys),
         );
-    if entry.note.is_empty() {
+    let note = entry.note(language);
+    if note.is_empty() {
         return row.into_any_element();
     }
     // Popovers hide gpui tooltips; their own tooltip host shows the note.
-    let note = SharedString::from(entry.note.clone());
+    let note = SharedString::from(note.to_owned());
     let (note_for_move, host_for_move, host_for_hover) = (
         note.clone(),
         this.tooltip_host.clone(),
@@ -422,6 +494,7 @@ fn rows(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> AnyElement {
     let p = crate::ui_scale::scaler(scale);
+    let language = this.keyboard_shortcuts.language;
     if this.keyboard_shortcuts.rows.is_empty() {
         return div()
             .debug_selector(|| "shortcut_help_empty".to_string())
@@ -432,12 +505,15 @@ fn rows(
             .child(
                 div()
                     .font_weight(FontWeight::BOLD)
-                    .child("No shortcuts found"),
+                    .child(language.text("No shortcuts found", "找不到相符的快捷鍵")),
             )
             .child(
                 div()
                     .text_color(theme.colors.foreground.secondary)
-                    .child("Try an action, a view, or a key name."),
+                    .child(language.text(
+                        "Try an action, a view, or a key name.",
+                        "試試輸入操作、畫面或按鍵名稱。",
+                    )),
             )
             .into_any_element();
     }
@@ -453,7 +529,7 @@ fn rows(
                     .text_size(theme.ui_text(12.0))
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.colors.foreground.secondary)
-                    .child(help.categories[category].clone())
+                    .child(help.category_label(&help.categories[category]).to_owned())
                     .into_any_element(),
                 HelpRow::Entry(entry) => row(this, &help.entries[entry], index, scale, cx),
             }
@@ -480,6 +556,7 @@ pub(super) fn panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let scale = popover_ui_scale(cx);
     let p = crate::ui_scale::scaler(scale);
     let window_size = crate::kit::window_chrome::window_surface_bounds(window).size;
@@ -491,6 +568,15 @@ pub(super) fn panel(
         .max(p(240.0));
 
     let help = &mut this.keyboard_shortcuts;
+    if help.language != language {
+        help.language = language;
+        help.rebuild_rows();
+        if let Some(input) = &help.search_input {
+            input.update(cx, |input, cx| {
+                input.set_placeholder(search_placeholder(language), cx);
+            });
+        }
+    }
     let estimated_row_height = p(ESTIMATED_ROW_HEIGHT);
     if help.estimated_row_height != estimated_row_height {
         help.estimated_row_height = estimated_row_height;
@@ -512,7 +598,11 @@ pub(super) fn panel(
         .enumerate()
         .map(|(index, group)| {
             let active = help.selected == group;
-            let label = group.clone().unwrap_or_else(|| "All shortcuts".to_owned());
+            let label = group
+                .as_deref()
+                .map(|group| help.category_label(group))
+                .unwrap_or_else(|| language.text("All shortcuts", "所有快捷鍵"))
+                .to_owned();
             components::Button::new(format!("shortcut_help_category_{index}"), label)
                 .style(if active {
                     components::ButtonStyle::Subtle
@@ -561,7 +651,10 @@ pub(super) fn panel(
                 .flex_none()
                 .text_size(theme.ui_text(12.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child(format!("{count} shortcuts")),
+                .child(match language {
+                    Language::English => format!("{count} shortcuts"),
+                    Language::TraditionalChinese => format!("{count} 個快捷鍵"),
+                }),
         );
     let body = div()
         .flex_1()
@@ -607,7 +700,7 @@ pub(super) fn panel(
     let close = cancel_button_labeled(
         "shortcut_help_close",
         "shortcut_help_close_hint",
-        "Close",
+        language.text("Close", "關閉"),
         theme,
     )
     .on_click(theme, cx, |this, _, window, cx| {
@@ -615,7 +708,7 @@ pub(super) fn panel(
     })
     .debug_selector(|| "shortcut_help_close".to_string());
 
-    ConfirmDialog::new("Keyboard shortcuts", WIDTH)
+    ConfirmDialog::new(language.text("Keyboard shortcuts", "鍵盤快捷鍵"), WIDTH)
         .section(search)
         .divider(theme)
         .section(body)
@@ -686,20 +779,83 @@ mod tests {
     #[test]
     fn reference_search_matches_actions_modifiers_and_contexts() {
         let entries = catalog(true, &[]);
-        assert!(entries.iter().any(|entry| entry.matches("branch cmd")));
+        let language = Language::English;
         assert!(
             entries
                 .iter()
-                .any(|entry| entry.matches("file explorer rename"))
+                .any(|entry| entry.matches("branch cmd", language))
         );
-        assert!(entries.iter().any(|entry| entry.matches("terminal paste")));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.matches("file explorer rename", language))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.matches("terminal paste", language))
+        );
         assert!(
             !entries
                 .iter()
-                .any(|entry| entry.matches("no-such-action-9382"))
+                .any(|entry| entry.matches("no-such-action-9382", language))
         );
         assert_eq!(doc_keys("Option-Cmd-V", true), vec!["Cmd+Option+V"]);
         assert_eq!(doc_keys("Cmd-,", true), vec!["Cmd+,"]);
         assert_eq!(doc_keys("Cmd-+ / Cmd-=", true), vec!["Cmd++", "Cmd+="]);
+    }
+
+    #[test]
+    fn traditional_chinese_reference_covers_documented_groups_actions_and_notes() {
+        let language = Language::TraditionalChinese;
+        for is_macos in [false, true] {
+            for entry in documented(SHORTCUTS, is_macos, false)
+                .into_iter()
+                .chain(documented(EXPLORER, is_macos, true))
+            {
+                assert_ne!(entry.category(language), entry.category, "{entry:?}");
+                assert_ne!(entry.action(language), entry.action, "{entry:?}");
+                if !entry.note.is_empty() {
+                    assert_ne!(entry.note(language), entry.note, "{entry:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn traditional_chinese_reference_search_accepts_both_languages_and_keeps_extension_titles() {
+        let language = Language::TraditionalChinese;
+        let extension = CommandEntry {
+            id: "extension:example/copy",
+            label: "Copy",
+            shortcut: Shortcut::Platform {
+                macos: "Cmd+Ctrl+Shift+F12",
+                other: "Ctrl+Alt+Shift+F12",
+            },
+            category: "Example commands",
+            requires_repo: false,
+            keywords: "",
+            needs: command_palette::Needs::Nothing,
+        };
+        let entries = catalog(true, &[extension]);
+        let branch = entries
+            .iter()
+            .find(|entry| entry.action == "Create branch")
+            .unwrap();
+        assert_eq!(branch.category(language), "儲存庫與版面配置");
+        assert_eq!(branch.action(language), "建立分支");
+        assert!(branch.matches("branch cmd", language));
+        assert!(branch.matches("建立分支對話框", language));
+        assert!(branch.matches("儲存庫 branch 建立 cmd", language));
+        assert!(!branch.matches("建立分支", Language::English));
+
+        let extension = entries
+            .iter()
+            .find(|entry| entry.category == "Extensions")
+            .unwrap();
+        assert_eq!(extension.category(language), "擴充功能");
+        assert_eq!(extension.action(language), "Copy");
+        assert!(extension.matches("擴充功能 copy", language));
+        assert!(!extension.matches("複製", language));
     }
 }

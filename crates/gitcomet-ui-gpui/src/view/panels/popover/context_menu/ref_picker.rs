@@ -1,16 +1,24 @@
 //! The palette's pick-a-ref menus for deletions. Each row opens the
 //! deletion's confirmation; nothing is deleted from the menu itself.
 use super::*;
+use crate::localization::Language;
 
 pub(super) fn model(
     this: &PopoverHost,
     repo_id: RepoId,
     purpose: RefPickerPurpose,
+    language: Language,
 ) -> ContextMenuModel {
     let repo = this.state.repos.iter().find(|repo| repo.id == repo_id);
     let (title, empty) = match purpose {
-        RefPickerPurpose::DeleteTag => ("Delete Tag", "No tags"),
-        RefPickerPurpose::DeleteRemoteBranch => ("Delete Remote Branch", "No remote branches"),
+        RefPickerPurpose::DeleteTag => (
+            language.text("Delete Tag", "刪除標籤"),
+            language.text("No tags", "沒有標籤"),
+        ),
+        RefPickerPurpose::DeleteRemoteBranch => (
+            language.text("Delete Remote Branch", "刪除遠端分支"),
+            language.text("No remote branches", "沒有遠端分支"),
+        ),
     };
     let mut items = vec![
         ContextMenuItem::Header(title.into()),

@@ -1671,6 +1671,44 @@ fn open_palette_on_ready_repo(
     (store, view, cx)
 }
 
+#[gpui::test]
+fn command_palette_switches_language_while_open_and_keeps_disabled_actions_disabled(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::localization::Language;
+
+    let (_store, view, cx) = open_palette_on_ready_repo(cx, false);
+    cx.update(|_, app| app.set_global(Language::English));
+    cx.simulate_input("中止合併");
+    test_support::redraw(cx);
+    assert!(
+        cx.debug_bounds("command_palette_disabled_abort-merge")
+            .is_none()
+    );
+
+    cx.update(|_, app| {
+        app.set_global(Language::TraditionalChinese);
+        app.refresh_windows();
+    });
+    test_support::redraw(cx);
+    cx.update(|_, app| {
+        let palette = view.read(app).command_palette.read(app);
+        assert_eq!(palette.query_input.read(app).placeholder(), "搜尋命令…");
+        assert_eq!(palette.query_input.read(app).text(), "中止合併");
+    });
+    let row = cx
+        .debug_bounds("command_palette_disabled_abort-merge")
+        .expect("the existing query matches the Chinese label after a language switch");
+    cx.simulate_mouse_move(row.center(), None, gpui::Modifiers::default());
+    test_support::wait_for_native_tooltip(cx);
+    assert_eq!(
+        test_support::tooltip_text(cx, &view).as_deref(),
+        Some("僅能在合併進行中使用"),
+    );
+    cx.simulate_keystrokes("down enter");
+    assert!(command_palette_is_open(cx, &view));
+}
+
 /// Asked for explicitly: a command that cannot run right now stays listed,
 /// greyed out, with a hover tooltip saying why — and Enter does nothing.
 #[gpui::test]

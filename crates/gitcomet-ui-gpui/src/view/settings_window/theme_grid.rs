@@ -396,7 +396,7 @@ impl SettingsWindowView {
     ) -> Stateful<gpui::Div> {
         let follow = ThemeTile {
             mode: None,
-            label: "Follow app theme".into(),
+            label: crate::localization::text(cx, "Follow app theme", "跟隨應用程式主題").into(),
             orb: self.app_theme_orb(themes, theme),
         };
         let target = ThemeTarget::Workspace(id);

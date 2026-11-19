@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::kit::components::Shortcut;
+use crate::localization::Language;
 
 fn push_entry(
     items: &mut Vec<ContextMenuItem>,
@@ -22,16 +23,18 @@ fn push_entry(
     debug_selectors.insert(ix, debug_selector.into());
 }
 
-pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
+pub(super) fn model(this: &PopoverHost, language: Language) -> ContextMenuModel {
     model_with_update_checks_disabled(
         this,
         crate::view::manual_update_check_unavailable(this.extension_update_check),
+        language,
     )
 }
 
 pub(super) fn model_with_update_checks_disabled(
     this: &PopoverHost,
     update_checks_disabled: bool,
+    language: Language,
 ) -> ContextMenuModel {
     let active_repo_id = this.active_repo().map(|repo| repo.id);
     let active_repo_workdir = this.active_repo().map(|repo| repo.spec.workdir.clone());
@@ -46,7 +49,7 @@ pub(super) fn model_with_update_checks_disabled(
             &mut items,
             &mut debug_selectors,
             "app_menu_command_palette",
-            crate::menu_labels::COMMAND_PALETTE,
+            language.text(crate::menu_labels::COMMAND_PALETTE, "命令面板"),
             Shortcut::Secondary("P"),
             false,
             AppMenuAction::CommandPalette,
@@ -56,7 +59,7 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_settings",
-        crate::menu_labels::SETTINGS,
+        language.text(crate::menu_labels::SETTINGS, "設定…"),
         Shortcut::Secondary(","),
         false,
         AppMenuAction::Settings,
@@ -65,7 +68,7 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_open_workspace",
-        "Open Workspace…",
+        language.text("Open Workspace…", "開啟工作區…"),
         Shortcut::Secondary("Shift+R"),
         false,
         AppMenuAction::OpenWorkspace,
@@ -75,7 +78,10 @@ pub(super) fn model_with_update_checks_disabled(
             &mut items,
             &mut debug_selectors,
             "app_menu_open_in_code_editor",
-            crate::menu_labels::OPEN_IN_CODE_EDITOR,
+            language.text(
+                crate::menu_labels::OPEN_IN_CODE_EDITOR,
+                "在程式碼編輯器中開啟",
+            ),
             Shortcut::Secondary("Shift+E"),
             active_repo_workdir.is_none(),
             AppMenuAction::OpenInCodeEditor {
@@ -97,7 +103,10 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_locate_file",
-        crate::menu_labels::OPEN_IN_FILE_EXPLORER,
+        language.text(
+            crate::menu_labels::OPEN_IN_FILE_EXPLORER,
+            "在檔案總管中開啟",
+        ),
         Shortcut::Secondary("Shift+L"),
         !can_locate,
         AppMenuAction::LocateFileInExplorer,
@@ -109,7 +118,10 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_open_remote_in_browser",
-        crate::menu_labels::OPEN_REMOTE_IN_BROWSER,
+        language.text(
+            crate::menu_labels::OPEN_REMOTE_IN_BROWSER,
+            "在瀏覽器中開啟遠端",
+        ),
         Shortcut::Secondary("K"),
         !can_open_remote,
         AppMenuAction::OpenRemoteInBrowser,
@@ -121,7 +133,7 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_show_reflog",
-        "Reflog",
+        language.text("Reflog", "參照日誌"),
         Shortcut::None,
         active_repo_id.is_none(),
         AppMenuAction::ShowReflog {
@@ -134,7 +146,7 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_apply_patch",
-        crate::menu_labels::APPLY_PATCH,
+        language.text(crate::menu_labels::APPLY_PATCH, "套用修補檔…"),
         Shortcut::None,
         active_repo_id.is_none(),
         AppMenuAction::ApplyPatch {
@@ -145,7 +157,7 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_check_for_updates",
-        crate::menu_labels::CHECK_FOR_UPDATES,
+        language.text(crate::menu_labels::CHECK_FOR_UPDATES, "檢查更新"),
         Shortcut::None,
         update_checks_disabled,
         AppMenuAction::CheckForUpdates,
@@ -174,11 +186,21 @@ pub(super) fn model_with_update_checks_disabled(
     }
 
     for (debug_selector, label, shortcut, action) in [
-        ("app_menu_zoom_in", "Zoom In", "=", AppMenuAction::ZoomIn),
-        ("app_menu_zoom_out", "Zoom Out", "-", AppMenuAction::ZoomOut),
+        (
+            "app_menu_zoom_in",
+            language.text("Zoom In", "放大"),
+            "=",
+            AppMenuAction::ZoomIn,
+        ),
+        (
+            "app_menu_zoom_out",
+            language.text("Zoom Out", "縮小"),
+            "-",
+            AppMenuAction::ZoomOut,
+        ),
         (
             "app_menu_reset_zoom",
-            "Reset Zoom",
+            language.text("Reset Zoom", "重設縮放"),
             "0",
             AppMenuAction::ResetZoom,
         ),
@@ -202,7 +224,7 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_install_desktop",
-        "Install desktop integration",
+        language.text("Install desktop integration", "安裝桌面整合"),
         Shortcut::None,
         false,
         AppMenuAction::InstallDesktopIntegration,
@@ -212,7 +234,7 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_close_window",
-        "Close Window",
+        language.text("Close Window", "關閉視窗"),
         Shortcut::Secondary("Shift+W"),
         false,
         AppMenuAction::CloseWindow,
@@ -221,7 +243,7 @@ pub(super) fn model_with_update_checks_disabled(
         &mut items,
         &mut debug_selectors,
         "app_menu_quit",
-        "Quit",
+        language.text("Quit", "結束"),
         Shortcut::Secondary("Q"),
         false,
         AppMenuAction::Quit,
@@ -301,7 +323,9 @@ pub(super) fn activate(
                 files: true,
                 directories: false,
                 multiple: false,
-                prompt: Some("Select patch file".into()),
+                prompt: Some(
+                    crate::localization::text(cx, "Select patch file", "選擇修補檔").into(),
+                ),
                 directory: None,
             });
             window

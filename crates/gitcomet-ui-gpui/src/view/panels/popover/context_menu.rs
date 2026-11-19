@@ -73,6 +73,7 @@ fn marked_comparison_entries(
     commit_id: &CommitId,
     label: &str,
     mark: Option<(&CommitId, &str)>,
+    language: Language,
 ) -> Vec<ContextMenuItem> {
     let Some((mark_commit, mark_label)) = mark else {
         return Vec::new();
@@ -80,7 +81,10 @@ fn marked_comparison_entries(
     let mut items = Vec::new();
     if mark_commit != commit_id {
         items.push(ContextMenuItem::Entry {
-            label: compare_with_mark_label(mark_label),
+            label: match language {
+                Language::English => compare_with_mark_label(mark_label),
+                Language::TraditionalChinese => format!("與 {mark_label} 比較").into(),
+            },
             icon: Some("icons/open_external.svg".into()),
             shortcut: None,
             disabled: false,
@@ -91,7 +95,9 @@ fn marked_comparison_entries(
             }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Compare with merge base".into(),
+            label: language
+                .text("Compare with merge base", "與共同祖先比較")
+                .into(),
             icon: Some("icons/open_external.svg".into()),
             shortcut: None,
             disabled: false,
@@ -103,7 +109,9 @@ fn marked_comparison_entries(
         });
     }
     items.push(ContextMenuItem::Entry {
-        label: "Clear comparison mark".into(),
+        label: language
+            .text("Clear comparison mark", "清除比較標記")
+            .into(),
         icon: Some("icons/generic_close.svg".into()),
         shortcut: None,
         disabled: false,
@@ -642,7 +650,15 @@ impl PopoverHost {
         &self,
         entry: &repo_picker::RepoPickerEntry,
     ) -> ContextMenuModel {
-        repo_picker_row::model(self, entry)
+        repo_picker_row::model(self, entry, Language::English)
+    }
+
+    pub(super) fn localized_repo_picker_row_menu_model(
+        &self,
+        entry: &repo_picker::RepoPickerEntry,
+        cx: &App,
+    ) -> ContextMenuModel {
+        localized_menu(cx, |language| repo_picker_row::model(self, entry, language))
     }
 
     /// The actions of the entries of the menu `kind` opens, for tests.
@@ -678,8 +694,10 @@ impl PopoverHost {
                 .as_ref()
                 .filter(|dialog| dialog.id == *id)
                 .and_then(|dialog| dialog.menu.clone()),
-            PopoverKind::AppMenu => Some(app_menu::model(self)),
-            PopoverKind::AddRepoMenu => Some(add_repo_menu::model()),
+            PopoverKind::AppMenu => Some(localized_menu(cx, |language| {
+                app_menu::model(self, language)
+            })),
+            PopoverKind::AddRepoMenu => Some(localized_menu(cx, add_repo_menu::model)),
             PopoverKind::PullPicker => {
                 Some(localized_menu(cx, |language| pull::model(self, language)))
             }
@@ -692,7 +710,9 @@ impl PopoverHost {
             PopoverKind::PreviousCommitMessagesMenu { repo_id } => {
                 Some(previous_commit_messages::model(self, *repo_id))
             }
-            PopoverKind::RepoTabMenu { repo_id } => Some(repo_tab::model(self, *repo_id)),
+            PopoverKind::RepoTabMenu { repo_id } => Some(localized_menu(cx, |language| {
+                repo_tab::model(self, *repo_id, language)
+            })),
             PopoverKind::CommitMenu {
                 repo_id,
                 commit_id,
@@ -716,9 +736,9 @@ impl PopoverHost {
             } => Some(localized_menu(cx, |language| {
                 file_history_commit::model(self, *repo_id, commit_id, path, language)
             })),
-            PopoverKind::TagMenu { repo_id, commit_id } => {
-                Some(tag::model(self, *repo_id, commit_id))
-            }
+            PopoverKind::TagMenu { repo_id, commit_id } => Some(localized_menu(cx, |language| {
+                tag::model(self, *repo_id, commit_id, language)
+            })),
             PopoverKind::StatusFileMenu {
                 repo_id,
                 area,
@@ -744,7 +764,9 @@ impl PopoverHost {
                 branch_drop::model(self, *repo_id, source, target, language)
             })),
             PopoverKind::RefPickerMenu { repo_id, purpose } => {
-                Some(ref_picker::model(self, *repo_id, *purpose))
+                Some(localized_menu(cx, |language| {
+                    ref_picker::model(self, *repo_id, *purpose, language)
+                }))
             }
             PopoverKind::BranchSectionMenu { repo_id, section } => {
                 Some(localized_menu(cx, |language| {
@@ -754,19 +776,27 @@ impl PopoverHost {
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Remote(RemotePopoverKind::Menu { name }),
-            } => Some(remote::model(self, *repo_id, name)),
+            } => Some(localized_menu(cx, |language| {
+                remote::model(self, *repo_id, name, language)
+            })),
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Remote(RemotePopoverKind::OpenInBrowserMenu),
-            } => Some(remote_web_picker::model(self, *repo_id)),
+            } => Some(localized_menu(cx, |language| {
+                remote_web_picker::model(self, *repo_id, language)
+            })),
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Remote(RemotePopoverKind::EditUrlMenu),
-            } => Some(remote_edit_url_picker::model(self, *repo_id)),
+            } => Some(localized_menu(cx, |language| {
+                remote_edit_url_picker::model(self, *repo_id, language)
+            })),
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Remote(RemotePopoverKind::RemoveMenu),
-            } => Some(remote_edit_url_picker::remove_model(self, *repo_id)),
+            } => Some(localized_menu(cx, |language| {
+                remote_edit_url_picker::remove_model(self, *repo_id, language)
+            })),
             PopoverKind::WebLinkMenu {
                 url,
                 load_remote_image_url,
@@ -810,23 +840,30 @@ impl PopoverHost {
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::SectionMenu),
-            } => Some(worktree_section::model(*repo_id)),
+            } => Some(localized_menu(cx, |language| {
+                worktree_section::model(*repo_id, language)
+            })),
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::CommitMenu { commit_id }),
-            } => Some(worktree::commit_model(self, *repo_id, commit_id)),
+            } => Some(localized_menu(cx, |language| {
+                worktree::commit_model(self, *repo_id, commit_id, language)
+            })),
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::Menu { path, branch }),
-            } => Some(worktree::model(
-                *repo_id,
-                path,
-                branch.as_deref(),
-                self.external_editor_available(),
-                self.worktree_menu_location
-                    .as_ref()
-                    .is_some_and(|(cached_path, available)| cached_path == path && *available),
-            )),
+            } => Some(localized_menu(cx, |language| {
+                worktree::model(
+                    *repo_id,
+                    path,
+                    branch.as_deref(),
+                    self.external_editor_available(),
+                    self.worktree_menu_location
+                        .as_ref()
+                        .is_some_and(|(cached_path, available)| cached_path == path && *available),
+                    language,
+                )
+            })),
             PopoverKind::Repo {
                 repo_id,
                 kind: RepoPopoverKind::Submodule(SubmodulePopoverKind::SectionMenu),
@@ -1984,7 +2021,13 @@ mod tests {
     #[test]
     fn the_marked_commit_offers_only_to_clear_its_mark() {
         let marked = CommitId("c00".into());
-        let entries = marked_comparison_entries(RepoId(1), &marked, "c00", Some((&marked, "main")));
+        let entries = marked_comparison_entries(
+            RepoId(1),
+            &marked,
+            "c00",
+            Some((&marked, "main")),
+            Language::English,
+        );
         assert_eq!(entry_labels(&entries), ["Clear comparison mark"]);
     }
 
@@ -1996,6 +2039,7 @@ mod tests {
             &CommitId("c01".into()),
             "c01",
             Some((&marked, "main")),
+            Language::English,
         );
         assert_eq!(
             entry_labels(&entries),
@@ -2005,7 +2049,10 @@ mod tests {
                 "Clear comparison mark"
             ]
         );
-        assert!(marked_comparison_entries(RepoId(1), &marked, "c00", None).is_empty());
+        assert!(
+            marked_comparison_entries(RepoId(1), &marked, "c00", None, Language::English)
+                .is_empty()
+        );
     }
 
     #[gpui::test]

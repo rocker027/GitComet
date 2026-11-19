@@ -91,7 +91,9 @@ pub(super) fn model(
         if expanded {
             let actions = match &target {
                 HistoryMenuRef::Branch(target) => branch::model(this, repo_id, target, language),
-                HistoryMenuRef::Tag(name) => tag::model_for_tag(this, repo_id, commit_id, name),
+                HistoryMenuRef::Tag(name) => {
+                    tag::model_for_tag(this, repo_id, commit_id, name, language)
+                }
             };
             append_actions(&mut model, actions, true);
         }

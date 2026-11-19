@@ -1,6 +1,7 @@
 use super::super::super::path_display;
 use super::*;
 use crate::kit::interaction as controls;
+use crate::localization::Language;
 use std::collections::BTreeSet;
 
 impl PopoverHost {
@@ -41,6 +42,13 @@ pub(super) const PINNED_SECTION: &str = "Pinned";
 pub(super) const WORKSPACES_SECTION: &str = "Workspaces";
 pub(super) const OPEN_SECTION: &str = "Open Repositories";
 pub(super) const RECENTLY_CLOSED_SECTION: &str = "Recently Closed";
+
+const TRADITIONAL_CHINESE_SECTION_LABELS: &[(&str, &str)] = &[
+    (WORKSPACES_SECTION, "工作區"),
+    (PINNED_SECTION, "已釘選"),
+    (OPEN_SECTION, "已開啟的儲存庫"),
+    (RECENTLY_CLOSED_SECTION, "最近關閉"),
+];
 
 /// Sections in render order, paired with the key their collapse state persists
 /// under. The keys are deliberately not the labels, so the headings can be
@@ -94,12 +102,12 @@ pub(super) enum RepoPickerSort {
 impl RepoPickerSort {
     pub(super) const ALL: [Self; 4] = [Self::Newest, Self::Oldest, Self::Name, Self::Path];
 
-    pub(super) fn label(self) -> &'static str {
+    fn label(self, language: Language) -> &'static str {
         match self {
-            Self::Newest => "Newest",
-            Self::Oldest => "Oldest",
-            Self::Name => "Name (A–Z)",
-            Self::Path => "Path (A–Z)",
+            Self::Newest => language.text("Newest", "最新優先"),
+            Self::Oldest => language.text("Oldest", "最舊優先"),
+            Self::Name => language.text("Name (A–Z)", "名稱（A–Z）"),
+            Self::Path => language.text("Path (A–Z)", "路徑（A–Z）"),
         }
     }
 
@@ -141,6 +149,13 @@ fn scope(this: &PopoverHost) -> RepoPickerScope {
     match this.popover {
         Some(PopoverKind::RepoPicker { scope }) => scope,
         _ => RepoPickerScope::All,
+    }
+}
+
+pub(super) fn search_placeholder(this: &PopoverHost, language: Language) -> &'static str {
+    match scope(this) {
+        RepoPickerScope::All => language.text("Filter repositories", "篩選儲存庫"),
+        RepoPickerScope::WorkspacesOnly => language.text("Filter workspaces", "篩選工作區"),
     }
 }
 
@@ -247,9 +262,18 @@ fn repo_picker_item(workdir: &std::path::Path) -> components::PickerPromptItem {
 /// navigation and Enter target share an index space.
 /// Workspaces lead the list when browsing or choosing a workspace, but are
 /// omitted before matching during a repository search.
+#[cfg(test)]
 pub(super) fn entries(
     this: &PopoverHost,
     query: &str,
+) -> Vec<(RepoPickerEntry, components::PickerPromptItem)> {
+    entries_for_language(this, query, Language::English)
+}
+
+fn entries_for_language(
+    this: &PopoverHost,
+    query: &str,
+    language: Language,
 ) -> Vec<(RepoPickerEntry, components::PickerPromptItem)> {
     let sort = this.repo_picker_sort;
     // Pins, recents and open workdirs are all canonicalized before they are
@@ -263,7 +287,7 @@ pub(super) fn entries(
     };
 
     let workspace_rows = if show_workspaces(this, query) {
-        workspace_rows(this.cached_workspaces.clone(), sort)
+        workspace_rows(this.cached_workspaces.clone(), sort, language)
     } else {
         Vec::new()
     };
@@ -361,18 +385,19 @@ pub(super) fn entries(
 fn workspace_rows(
     mut workspaces: Vec<session::Workspace>,
     sort: RepoPickerSort,
+    language: Language,
 ) -> Vec<SortableRow> {
     crate::workspaces::sort_workspaces(&mut workspaces);
     let mut rows = workspaces
         .into_iter()
         .enumerate()
-        .map(|(recency, workspace)| workspace_row(workspace, recency))
+        .map(|(recency, workspace)| workspace_row(workspace, recency, language))
         .collect::<Vec<_>>();
     sort_rows(&mut rows, sort);
     rows
 }
 
-fn workspace_row(workspace: session::Workspace, recency: usize) -> SortableRow {
+fn workspace_row(workspace: session::Workspace, recency: usize, language: Language) -> SortableRow {
     let name_key = workspace.display_name().to_lowercase();
     let path_key = workspace
         .repositories
@@ -383,7 +408,7 @@ fn workspace_row(workspace: session::Workspace, recency: usize) -> SortableRow {
         .to_lowercase();
     SortableRow {
         entry: RepoPickerEntry::Workspace(workspace.id),
-        item: crate::view::workspace_picker::workspace_picker_item(&workspace)
+        item: crate::view::workspace_picker::workspace_picker_item(&workspace, language)
             .section(WORKSPACES_SECTION),
         name_key,
         path_key,
@@ -417,14 +442,14 @@ fn sortable_row(
     }
 }
 
-/// Digest of everything [`entries`] reads, for the rows cache to key on.
+/// Digest of everything [`entries_for_language`] reads, for the rows cache to key on.
 ///
 /// Held as a hash rather than by value because these are lists: pins are
 /// uncapped, so a key that owned them would clone every path on every render —
 /// more than the rebuild it is there to avoid. Miss an input here and the picker
 /// shows a stale list with nothing to say so, the trap
 /// [`super::rows_cache`] and [`super::fingerprint`] both carry.
-fn rows_signature(this: &PopoverHost, query: &str) -> u64 {
+fn rows_signature(this: &PopoverHost, query: &str, language: Language) -> u64 {
     use std::hash::Hash;
 
     super::rows_cache::signature(|hasher| {
@@ -435,6 +460,7 @@ fn rows_signature(this: &PopoverHost, query: &str) -> u64 {
         let show_workspaces = show_workspaces(this, query);
         show_workspaces.hash(hasher);
         if show_workspaces {
+            language.key().hash(hasher);
             this.cached_workspaces.hash(hasher);
             this.cached_workspace_id.hash(hasher);
         }
@@ -458,21 +484,30 @@ fn rows_signature(this: &PopoverHost, query: &str) -> u64 {
 /// re-renders the whole popover — and every caller here goes through the cache,
 /// so those frames reuse the rows instead of rebuilding a `PickerPromptItem`
 /// and two lowercased sort keys per repository.
+#[cfg(test)]
 pub(super) fn cached(
     this: &PopoverHost,
     query: &str,
 ) -> std::rc::Rc<super::rows_cache::CachedRows<RepoPickerEntry>> {
+    cached_for_language(this, query, Language::English)
+}
+
+pub(super) fn cached_for_language(
+    this: &PopoverHost,
+    query: &str,
+    language: Language,
+) -> std::rc::Rc<super::rows_cache::CachedRows<RepoPickerEntry>> {
     let query = query.trim();
     let key = super::rows_cache::RowsCacheKey::new(
         super::rows_cache::RowsCacheOwner::RepoPicker,
-        rows_signature(this, query),
+        rows_signature(this, query, language),
         query,
     )
     // Must match what `panel` renders with, or Enter activates a different row
     // than the highlighted one.
     .with_collapsed(&collapsed_sections(this, query));
     super::rows_cache::get_or_build(&this.repo_picker_rows_cache, key, |_now| {
-        let entries = entries(this, query);
+        let entries = entries_for_language(this, query, language);
         let marked_index = this
             .cached_workspace_id
             .and_then(|workspace_id| {
@@ -494,6 +529,7 @@ pub(super) fn cached(
 
 /// The picker rows in display order for the current query, paired with the
 /// scroll-child index each row occupies (section headers take child slots too).
+#[cfg(test)]
 pub(super) fn filtered_layout(
     this: &PopoverHost,
     query: &str,
@@ -547,7 +583,7 @@ pub(super) fn nav_targets(
             .collect();
     }
 
-    cached(this, query)
+    cached_for_language(this, query, Language::current(cx))
         .filtered_payloads()
         .into_iter()
         .map(RepoPickerNavTarget::Entry)
@@ -605,6 +641,7 @@ pub(super) fn apply_sort(
 /// The `Sort ▾` toggle that sits at the right edge of the query row.
 fn sort_toggle(this: &PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> impl IntoElement {
     let theme = this.theme;
+    let language = Language::current(cx);
     let ui_scale = super::popover_ui_scale(cx);
     let scaled_px = crate::ui_scale::scaler(ui_scale);
     let menu_open = this.repo_picker_sort_menu_open;
@@ -628,7 +665,7 @@ fn sort_toggle(this: &PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> impl 
             controls::InteractionStyle::new(theme),
             controls::InteractionState::default().open(menu_open),
         )
-        .child(sort_toggle_label(this.repo_picker_sort))
+        .child(sort_toggle_label(this.repo_picker_sort, language))
         .child(crate::view::icons::svg_icon(
             "icons/chevron_down.svg",
             theme.colors.foreground.secondary,
@@ -643,14 +680,19 @@ fn sort_toggle(this: &PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> impl 
         )
 }
 
-fn sort_toggle_label(sort: RepoPickerSort) -> String {
-    format!("Sort: {}", sort.label())
+fn sort_toggle_label(sort: RepoPickerSort, language: Language) -> String {
+    let label = sort.label(language);
+    match language {
+        Language::English => format!("Sort: {label}"),
+        Language::TraditionalChinese => format!("排序：{label}"),
+    }
 }
 
 /// The sort options, rendered in place of the repository rows while the menu is
 /// open. Picking one collapses the menu back to the list.
 fn sort_menu(this: &PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> impl IntoElement {
     let theme = this.theme;
+    let language = Language::current(cx);
     let ui_scale_percent = super::popover_ui_scale(cx).percent();
     let current = this.repo_picker_sort;
     let selected_index = this.repo_picker_selected_index;
@@ -668,7 +710,7 @@ fn sort_menu(this: &PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> impl In
         menu = menu.child(
             components::ContextMenuEntry::new(
                 ("repo_picker_sort_option", ix),
-                components::ContextMenuText::new(sort.label()),
+                components::ContextMenuText::new(sort.label(language)),
             )
             .icon(if sort == current {
                 components::ContextMenuIconSlot::Icon("icons/check.svg".into())
@@ -737,21 +779,30 @@ pub(super) fn forget(
 
 pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
+    let section_labels = match language {
+        Language::English => &[],
+        Language::TraditionalChinese => TRADITIONAL_CHINESE_SECTION_LABELS,
+    };
     let ui_scale = super::popover_ui_scale(cx);
     let ui_scale_percent = ui_scale.percent();
     let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
     let width = super::PICKER_WIDTH;
 
     if let Some(search) = this.repo_picker_search_input.clone() {
+        let placeholder = search_placeholder(this, language);
         // Match the Create Branch search field: a chromeless input, here with a
         // leading magnifier to read as a search box, sitting in the popover card.
         search.update(cx, |input, cx| {
+            if input.placeholder() != placeholder {
+                input.set_placeholder(placeholder, cx);
+            }
             input.set_chromeless(true, cx);
             input.set_leading_icon(Some("icons/zoom.svg"), cx);
         });
 
         let query = search.read(cx).text().trim().to_string();
-        let built = cached(this, &query);
+        let built = cached_for_language(this, &query, language);
         // One list behind all three row callbacks: each closure lives as long as
         // the elements it is attached to, so cloning the vector per callback
         // would hold three copies of every path for the frame.
@@ -770,14 +821,17 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 std::rc::Rc::clone(&built.items),
                 std::rc::Rc::clone(&built.layout),
             )
+            .section_labels(section_labels)
             // A long pin list renders only what is on screen; keyboard
             // navigation scrolls by the row geometry to match
             // (`scroll_picker_prompt_to_row`), which has to be told the same
             .tooltip_host(this.tooltip_host.clone())
             .empty_text(match (workspaces_only, query.is_empty()) {
-                (true, _) => "No workspaces",
-                (false, true) => "No workspaces or repositories",
-                (false, false) => "No repositories",
+                (true, _) => language.text("No workspaces", "沒有工作區"),
+                (false, true) => {
+                    language.text("No workspaces or repositories", "沒有工作區或儲存庫")
+                }
+                (false, false) => language.text("No repositories", "沒有相符的儲存庫"),
             })
             .max_height(scaled_px(REPO_PICKER_LIST_MAX_HEIGHT_PX))
             // While a row menu is open the arrow keys walk its actions, so the
@@ -790,7 +844,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
             )
             .marked_index(built.marked_index)
             .padded_query_row()
-            .remove_tooltip("Remove from recently closed")
+            .remove_tooltip(language.text("Remove from recently closed", "從最近關閉清單移除"))
             .on_context_menu(cx.listener(
                 move |this, event: &components::PickerPromptContextMenuEvent, _window, cx| {
                     let Some(entry) = row_entries.get(event.original_index).cloned() else {
@@ -849,7 +903,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
     } else {
         // No search input yet, so no cache key to build one against: this is the
         // plain menu the picker falls back to, and it is not windowed.
-        let entries = entries(this, "");
+        let entries = entries_for_language(this, "", language);
         let mut menu = div()
             .flex()
             .flex_col()
@@ -863,7 +917,11 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 menu = menu.child(components::context_menu_header(
                     theme,
                     ui_scale_percent,
-                    entry_section.to_owned(),
+                    section_labels
+                        .iter()
+                        .find_map(|&(key, label)| (key == entry_section).then_some(label))
+                        .unwrap_or(entry_section)
+                        .to_owned(),
                     None,
                     cx,
                 ));

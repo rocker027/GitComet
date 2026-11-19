@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 
 impl GitCometView {
     pub(in super::super) fn open_repo_panel(&mut self, cx: &mut gpui::Context<Self>) -> gpui::Div {
@@ -6,6 +7,7 @@ impl GitCometView {
         if !self.open_repo_panel {
             return div();
         }
+        let language = Language::current(cx);
 
         div()
             .flex()
@@ -21,11 +23,11 @@ impl GitCometView {
                 div()
                     .text_size(theme.ui_text(14.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child("Path"),
+                    .child(language.text("Path", "路徑")),
             )
             .child(div().flex_1().child(self.open_repo_input.clone()))
             .child(
-                components::Button::new("open_repo_go", "Open")
+                components::Button::new("open_repo_go", language.text("Open", "開啟"))
                     .separated_end_slot(popover::hotkey_hint(theme, "open_repo_go_hint", "Enter"))
                     .style(components::ButtonStyle::Filled)
                     .on_click(theme, cx, |this, _e, _w, cx| {
@@ -33,11 +35,16 @@ impl GitCometView {
                     }),
             )
             .child(
-                popover::cancel_button("open_repo_cancel", "open_repo_cancel_hint", theme)
-                    .on_click(theme, cx, |this, _e, _w, cx| {
-                        this.open_repo_panel = false;
-                        cx.notify();
-                    }),
+                popover::cancel_button_labeled(
+                    "open_repo_cancel",
+                    "open_repo_cancel_hint",
+                    language.text("Cancel", "取消"),
+                    theme,
+                )
+                .on_click(theme, cx, |this, _e, _w, cx| {
+                    this.open_repo_panel = false;
+                    cx.notify();
+                }),
             )
     }
 

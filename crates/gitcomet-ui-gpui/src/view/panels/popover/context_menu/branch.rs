@@ -325,6 +325,7 @@ pub(super) fn model(
             comparison_mark
                 .as_ref()
                 .map(|mark| (&mark.commit_id, mark.label.as_str())),
+            language,
         ));
     }
 
@@ -357,6 +358,7 @@ pub(super) fn model(
                 gitcomet_core::domain::HistoryFocus::remote_branch(remote, branch)
             }
         },
+        language,
     ));
     let pinned = this.is_branch_pinned(repo_id, section, &name);
     items.push(ContextMenuItem::Entry {

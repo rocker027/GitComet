@@ -329,7 +329,14 @@ fn macos_file_menu_hides_unconfigured_external_editor_action() {
 #[test]
 fn macos_apply_patch_menu_is_disabled_for_bare_repositories() {
     for bare in [false, true] {
-        let menus = macos_app_menus_with_options(true, true, bare, false);
+        let menus = macos_app_menus_with_options(
+            true,
+            true,
+            bare,
+            false,
+            crate::localization::Language::English,
+            Vec::new(),
+        );
         let file = menus
             .iter()
             .find(|menu| menu.name.as_ref() == "File")
@@ -337,6 +344,75 @@ fn macos_apply_patch_menu_is_disabled_for_bare_repositories() {
         let patch = file.items.iter().find(|item| matches!(item, MenuItem::Action { action, .. } if action.name() == ApplyPatch.name())).unwrap();
         assert_eq!(patch.is_disabled(), bare);
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn traditional_chinese_macos_app_menus_preserve_native_actions() {
+    use crate::localization::Language;
+
+    let recent_path = PathBuf::from("/repos/團隊/專案");
+    let menus = Language::ALL.map(|language| {
+        macos_app_menus_with_options(
+            true,
+            false,
+            true,
+            false,
+            language,
+            vec![recent_path.clone()],
+        )
+    });
+    let [english, chinese] = &menus;
+    assert_eq!(
+        chinese
+            .iter()
+            .skip(1)
+            .map(|menu| menu.name.as_ref())
+            .collect::<Vec<_>>(),
+        ["檔案", "編輯", "顯示", "Window"]
+    );
+    for (original, translated) in english.iter().zip(chinese) {
+        assert_eq!(original.items.len(), translated.items.len());
+        for (original_item, translated_item) in original.items.iter().zip(&translated.items) {
+            assert_eq!(original_item.is_disabled(), translated_item.is_disabled());
+            if let MenuItem::Action {
+                action, os_action, ..
+            } = original_item
+            {
+                assert!(matches!(
+                    translated_item,
+                    MenuItem::Action { action: translated_action, os_action: translated_os, .. }
+                        if action.name() == translated_action.name() && os_action == translated_os
+                ));
+            }
+        }
+    }
+    assert!(matches!(
+        &chinese[0].items[3],
+        MenuItem::SystemMenu(menu)
+            if menu.name.as_ref() == "服務" && menu.menu_type == SystemMenuType::Services
+    ));
+    assert!(
+        menu_action_entries(&chinese[0])
+            .contains(&("命令面板".into(), ToggleCommandPalette.name().into(),))
+    );
+    assert!(
+        menu_action_entries(&chinese[4])
+            .contains(&("切換全螢幕".into(), ToggleFullScreen.name().into(),))
+    );
+
+    let recent = chinese[1].items.iter().find_map(|item| match item {
+        MenuItem::Submenu(menu) if menu.name.as_ref() == "最近使用的儲存庫" => Some(menu),
+        _ => None,
+    });
+    let recent = recent.expect("localized recent repositories submenu");
+    assert!(matches!(
+        recent.items.as_slice(),
+        [MenuItem::Action { name, action, .. }]
+            if name.as_ref() == "專案 - /repos/團隊"
+                && action.as_any().downcast_ref::<OpenRecentRepository>().is_some_and(|recent|
+                    recent.storage_key == session::path_storage_key(&recent_path))
+    ));
 }
 
 fn seed_worktree_repo(

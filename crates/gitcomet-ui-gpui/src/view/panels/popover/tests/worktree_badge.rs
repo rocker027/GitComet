@@ -1,5 +1,6 @@
 use super::super::worktree_badge_picker::{self, WorktreeBadgeRow};
 use super::*;
+use crate::localization::Language;
 use crate::view::panels::tests::{app_state_with_repo, opening_repo_state};
 use crate::view::test_support::{push_test_state, redraw};
 use gitcomet_core::domain::{
@@ -156,7 +157,7 @@ fn worktree_badge_picker_lists_every_worktree_and_marks_the_current_one(
 
     let built = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        let built = worktree_badge_picker::cached(host, repo_id, "");
+        let built = worktree_badge_picker::cached(host, repo_id, "", Language::English);
         (built.payloads.to_vec(), built.marked_index)
     });
     let (rows, marked_index) = built;
@@ -190,6 +191,37 @@ fn worktree_badge_picker_lists_every_worktree_and_marks_the_current_one(
 }
 
 #[gpui::test]
+fn worktree_badge_picker_switches_labels_without_changing_row_payloads(
+    cx: &mut gpui::TestAppContext,
+) {
+    let repo_id = RepoId(1);
+    let (view, cx) = open_worktree_badge_picker(cx, repo_with_worktrees(repo_id), repo_id);
+    cx.update(|_window, app| {
+        let host = view.read(app).popover_host.read(app);
+        let english = worktree_badge_picker::cached(host, repo_id, "", Language::English);
+        let chinese =
+            worktree_badge_picker::cached(host, repo_id, "", Language::TraditionalChinese);
+        assert_eq!(english.items[0].debug_display_text(), "Create new worktree");
+        assert_eq!(chinese.items[0].debug_display_text(), "新增工作樹");
+        assert_eq!(chinese.items[0].debug_secondary_text(), "起始參照 main");
+        assert_eq!(english.payloads, chinese.payloads);
+        assert_eq!(english.marked_index, chinese.marked_index);
+        assert_eq!(
+            worktree_badge_picker::nav_targets(
+                host,
+                repo_id,
+                "feat/badges",
+                Language::TraditionalChinese
+            ),
+            vec![
+                WorktreeBadgeRow::CreateNew,
+                WorktreeBadgeRow::Worktree(PathBuf::from("/tmp/ws/feature")),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 fn worktree_badge_picker_create_row_survives_a_query_matching_no_worktree(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -198,7 +230,7 @@ fn worktree_badge_picker_create_row_survives_a_query_matching_no_worktree(
 
     let targets = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        worktree_badge_picker::nav_targets(host, repo_id, "totally-new-thing")
+        worktree_badge_picker::nav_targets(host, repo_id, "totally-new-thing", Language::English)
     });
 
     // `match_items` drops rows whose match text lacks the query, so the create
@@ -218,9 +250,9 @@ fn worktree_badge_picker_nav_targets_follow_the_rendered_row_order(cx: &mut gpui
     let (targets, rendered) = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
         let query = "feat";
-        let targets = worktree_badge_picker::nav_targets(host, repo_id, query);
+        let targets = worktree_badge_picker::nav_targets(host, repo_id, query, Language::English);
         // What the panel renders, resolved exactly the way PickerPrompt does.
-        let built = worktree_badge_picker::cached(host, repo_id, query);
+        let built = worktree_badge_picker::cached(host, repo_id, query, Language::English);
         let layout = crate::view::components::picker_prompt_layout(&built.items, query);
         let rendered: Vec<_> = layout
             .item_indices
@@ -246,7 +278,7 @@ fn worktree_badge_picker_filters_worktrees_by_name_branch_and_path(cx: &mut gpui
 
     let by_branch = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        worktree_badge_picker::nav_targets(host, repo_id, "badges")
+        worktree_badge_picker::nav_targets(host, repo_id, "badges", Language::English)
     });
 
     assert_eq!(
@@ -261,7 +293,7 @@ fn worktree_badge_picker_filters_worktrees_by_name_branch_and_path(cx: &mut gpui
     // The path sits on the row's secondary line; it must still filter from there.
     let by_path = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        worktree_badge_picker::nav_targets(host, repo_id, "ws/detached")
+        worktree_badge_picker::nav_targets(host, repo_id, "ws/detached", Language::English)
     });
 
     assert_eq!(
@@ -870,7 +902,7 @@ mod badges {
                     .as_ref()
                     .expect("a menu should be open")
                     .clone();
-                let row = worktree_badge_picker::cached(host, repo_id, "")
+                let row = worktree_badge_picker::cached(host, repo_id, "", Language::English)
                     .filtered_payloads()
                     .into_iter()
                     .find_map(|row| match row {

@@ -1,14 +1,16 @@
 use super::*;
+use crate::localization::Language;
 
 /// One row per remote, so the palette's Edit Remote URL can pick which
 /// remote's fetch URL to edit. Digits pick directly; the push URL stays in
 /// each remote's own menu.
-pub(super) fn model(this: &PopoverHost, repo_id: RepoId) -> ContextMenuModel {
+pub(super) fn model(this: &PopoverHost, repo_id: RepoId, language: Language) -> ContextMenuModel {
     remote_picker(
         this,
         repo_id,
-        "Edit Remote URL",
+        language.text("Edit Remote URL", "編輯遠端網址"),
         "icons/pencil.svg",
+        language,
         |name| RemotePopoverKind::EditUrlPrompt {
             name,
             kind: RemoteUrlKind::Fetch,
@@ -18,10 +20,19 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId) -> ContextMenuModel {
 
 /// The palette's Remove Remote: each row opens the remote's existing
 /// removal confirmation, so nothing is removed from the menu itself.
-pub(super) fn remove_model(this: &PopoverHost, repo_id: RepoId) -> ContextMenuModel {
-    remote_picker(this, repo_id, "Remove Remote", "icons/trash.svg", |name| {
-        RemotePopoverKind::RemoveConfirm { name }
-    })
+pub(super) fn remove_model(
+    this: &PopoverHost,
+    repo_id: RepoId,
+    language: Language,
+) -> ContextMenuModel {
+    remote_picker(
+        this,
+        repo_id,
+        language.text("Remove Remote", "移除遠端"),
+        "icons/trash.svg",
+        language,
+        |name| RemotePopoverKind::RemoveConfirm { name },
+    )
 }
 
 fn remote_picker(
@@ -29,6 +40,7 @@ fn remote_picker(
     repo_id: RepoId,
     title: &'static str,
     icon: &'static str,
+    language: Language,
     next: impl Fn(String) -> RemotePopoverKind,
 ) -> ContextMenuModel {
     let remotes = this
@@ -47,7 +59,9 @@ fn remote_picker(
     // The remotes can change under an open picker.
     if remotes.is_empty() {
         items.push(ContextMenuItem::Label(
-            "This repository has no remotes".into(),
+            language
+                .text("This repository has no remotes", "這個儲存庫沒有遠端")
+                .into(),
         ));
         return ContextMenuModel::new(items);
     }

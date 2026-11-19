@@ -192,12 +192,18 @@ impl PopoverHost {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Entity<components::TextInput> {
+        let placeholder = repo_picker::search_placeholder(self, Language::current(cx));
         let input = Self::ensure_search_input_entity(
             &mut self.repo_picker_search_input,
-            "Filter repositories",
+            placeholder,
             window,
             cx,
         );
+        input.update(cx, |input, cx| {
+            if input.placeholder() != placeholder {
+                input.set_placeholder(placeholder, cx);
+            }
+        });
         if self._repo_picker_search_input_subscription.is_none() {
             self._repo_picker_search_input_subscription = Some(Self::picker_search_subscription(
                 &input,
@@ -258,7 +264,8 @@ impl PopoverHost {
                     // element to scroll to by child slot: its geometry says
                     // where it would be. Headers are part of that geometry, so
                     // scrolling to a section's first row shows its header too.
-                    let rows = repo_picker::cached(this, &query);
+                    let rows =
+                        repo_picker::cached_for_language(this, &query, Language::current(cx));
                     this.scroll_picker_prompt_to_row(
                         &rows.geometry(super::popover_ui_scale(cx)),
                         sel,
@@ -529,7 +536,7 @@ impl PopoverHost {
     ) -> Entity<components::TextInput> {
         let input = Self::ensure_search_input_entity(
             &mut self.worktree_picker_search_input,
-            "Filter worktrees",
+            worktree_picker::search_placeholder(Language::current(cx)),
             window,
             cx,
         );
@@ -541,10 +548,14 @@ impl PopoverHost {
                     cx,
                     |this| worktree_picker_state(this).is_some(),
                     |this| &mut this.worktree_picker_selected_index,
-                    |this, query, _cx| {
+                    |this, query, cx| {
                         let (repo_id, is_remove) = worktree_picker_state(this)?;
                         Some(worktree_picker::nav_targets(
-                            this, repo_id, is_remove, query,
+                            this,
+                            repo_id,
+                            is_remove,
+                            query,
+                            Language::current(cx),
                         ))
                     },
                     |this, cx| this.close_popover(cx),
@@ -557,7 +568,13 @@ impl PopoverHost {
                             .as_ref()
                             .map(|input| input.read(cx).text().trim().to_string())
                             .unwrap_or_default();
-                        let rows = worktree_picker::cached(this, repo_id, is_remove, &query);
+                        let rows = worktree_picker::cached(
+                            this,
+                            repo_id,
+                            is_remove,
+                            &query,
+                            Language::current(cx),
+                        );
                         this.scroll_picker_prompt_to_row(
                             &rows.geometry(super::popover_ui_scale(cx)),
                             sel,
@@ -587,7 +604,7 @@ impl PopoverHost {
     ) -> Entity<components::TextInput> {
         let input = Self::ensure_search_input_entity(
             &mut self.worktree_badge_picker_search_input,
-            "Select or type to create a worktree",
+            worktree_badge_picker::search_placeholder(Language::current(cx)),
             window,
             cx,
         );
@@ -616,7 +633,12 @@ impl PopoverHost {
                         let repo_id = worktree_badge_picker_state(this)?;
                         // Layout-driven so Enter can never land on a different
                         // row than the highlighted one.
-                        Some(worktree_badge_picker::nav_targets(this, repo_id, query))
+                        Some(worktree_badge_picker::nav_targets(
+                            this,
+                            repo_id,
+                            query,
+                            Language::current(cx),
+                        ))
                     },
                     |this, cx| {
                         // Escape backs out of the menu before it closes the picker.
@@ -639,7 +661,12 @@ impl PopoverHost {
                             .as_ref()
                             .map(|input| input.read(cx).text().trim().to_string())
                             .unwrap_or_default();
-                        let rows = worktree_badge_picker::cached(this, repo_id, &query);
+                        let rows = worktree_badge_picker::cached(
+                            this,
+                            repo_id,
+                            &query,
+                            Language::current(cx),
+                        );
                         this.scroll_picker_prompt_to_row(
                             &rows.geometry(super::popover_ui_scale(cx)),
                             sel,
@@ -665,9 +692,14 @@ impl PopoverHost {
                         let row = payload.or_else(|| {
                             (!query.trim().is_empty())
                                 .then(|| {
-                                    worktree_badge_picker::nav_targets(this, repo_id, query.trim())
-                                        .into_iter()
-                                        .next()
+                                    worktree_badge_picker::nav_targets(
+                                        this,
+                                        repo_id,
+                                        query.trim(),
+                                        Language::current(cx),
+                                    )
+                                    .into_iter()
+                                    .next()
                                 })
                                 .flatten()
                         });

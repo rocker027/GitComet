@@ -1,5 +1,6 @@
 use super::*;
 use crate::kit::interaction as controls;
+use crate::localization::Language;
 use gitcomet_core::domain::{Remote, RemoteBranch, Upstream};
 use gitcomet_core::services::WorktreeCheckout;
 use gitcomet_state::model::RepoState;
@@ -10,7 +11,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum WorktreeAddBlocked {
     Incomplete,
-    Refused(String),
+    InvalidBranchName(String),
+    BranchAlreadyExists(String),
     CheckedOut(PathBuf),
 }
 
@@ -185,18 +187,14 @@ fn new_branch_checkout(
         return Err(WorktreeAddBlocked::Incomplete);
     }
     if !gitcomet_core::branch_name::is_valid_branch_name(&name) {
-        return Err(WorktreeAddBlocked::Refused(format!(
-            "'{name}' is not a valid branch name"
-        )));
+        return Err(WorktreeAddBlocked::InvalidBranchName(name));
     }
     if repo
         .branches
         .ready()
         .is_some_and(|branches| branches.iter().any(|branch| branch.name == name))
     {
-        return Err(WorktreeAddBlocked::Refused(format!(
-            "Branch '{name}' already exists"
-        )));
+        return Err(WorktreeAddBlocked::BranchAlreadyExists(name));
     }
     let tracked = repo.remote_branches.ready().and_then(|branches| {
         branches.iter().find(|branch| {
@@ -229,25 +227,43 @@ pub(super) fn panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let blocked = this.worktree_add_request(repo_id, cx).err();
     let can_submit = blocked.is_none();
     let (refused, checked_out_at) = match blocked {
-        Some(WorktreeAddBlocked::Refused(reason)) => (Some(reason), None),
+        Some(WorktreeAddBlocked::InvalidBranchName(name)) => (
+            Some(match language {
+                Language::English => format!("'{name}' is not a valid branch name"),
+                Language::TraditionalChinese => format!("「{name}」不是有效的分支名稱"),
+            }),
+            None,
+        ),
+        Some(WorktreeAddBlocked::BranchAlreadyExists(name)) => (
+            Some(match language {
+                Language::English => format!("Branch '{name}' already exists"),
+                Language::TraditionalChinese => format!("分支「{name}」已存在"),
+            }),
+            None,
+        ),
         Some(WorktreeAddBlocked::CheckedOut(at)) => (None, Some(at)),
         _ => (None, None),
     };
     let checked_out = checked_out_at.map(|at| {
-        format!(
-            "'{}' is already checked out in {}.",
-            this.worktree_ref_source_target.trim(),
-            at.display()
-        )
+        let reference = this.worktree_ref_source_target.trim();
+        let path = at.display();
+        match language {
+            Language::English => format!("'{reference}' is already checked out in {path}."),
+            Language::TraditionalChinese => format!("工作樹 {path} 已切換至「{reference}」。"),
+        }
     });
     // Unticked, a branch that is checked out already opens where it is.
     let submit = match checked_out {
-        Some(_) => components::Button::new("worktree_add_open", "Open worktree")
-            .separated_end_slot(super::hotkey_hint(theme, "worktree_add_open_hint", "Enter")),
-        None => components::Button::new("worktree_add_go", "Add")
+        Some(_) => components::Button::new(
+            "worktree_add_open",
+            language.text("Open worktree", "開啟工作樹"),
+        )
+        .separated_end_slot(super::hotkey_hint(theme, "worktree_add_open_hint", "Enter")),
+        None => components::Button::new("worktree_add_go", language.text("Add", "新增"))
             .disabled(!can_submit)
             .separated_end_slot(super::hotkey_hint(theme, "worktree_add_go_hint", "Enter")),
     };
@@ -262,6 +278,13 @@ pub(super) fn panel(
         });
     let ui_scale_percent = super::popover_ui_scale_percent(cx);
     let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
+
+    let new_branch_placeholder = language.text("Defaults to the folder name", "預設使用資料夾名稱");
+    if this.worktree_new_branch_input.read(cx).placeholder() != new_branch_placeholder {
+        this.worktree_new_branch_input.update(cx, |input, cx| {
+            input.set_placeholder(new_branch_placeholder, cx);
+        });
+    }
 
     let ref_row = if let Some(search) = this.branch_picker_search_input.clone() {
         let is_focused = search
@@ -289,7 +312,7 @@ pub(super) fn panel(
                     cx,
                 )
                 .tooltip_host(this.tooltip_host.clone())
-                .empty_text("No matches")
+                .empty_text(language.text("No matches", "找不到相符的參照"))
                 .max_height(scaled_px(branch_picker::REF_PICKER_LIST_MAX_HEIGHT_PX))
                 .selected_index(this.branch_picker_selected_index)
                 .render(
@@ -309,6 +332,11 @@ pub(super) fn panel(
             div().px_2().pb_1().w_full().min_w(px(0.0)).child(search)
         }
     } else {
+        let placeholder = language.text("branch-or-commit", "分支或提交");
+        if this.worktree_ref_input.read(cx).placeholder() != placeholder {
+            this.worktree_ref_input
+                .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        }
         div()
             .px_2()
             .pb_1()
@@ -321,9 +349,15 @@ pub(super) fn panel(
         .flex()
         .flex_col()
         .w(scaled_px(640.0))
-        .child(popover_title(theme, "Add worktree"))
+        .child(popover_title(
+            theme,
+            language.text("Add worktree", "新增工作樹"),
+        ))
         .child(super::popover_rule(theme))
-        .child(input_label(theme, "Worktree folder"))
+        .child(input_label(
+            theme,
+            language.text("Worktree folder", "工作樹資料夾"),
+        ))
         .child(
             div()
                 .px_2()
@@ -340,7 +374,7 @@ pub(super) fn panel(
                         .child(this.worktree_path_input.clone()),
                 )
                 .child(
-                    components::Button::new("worktree_browse", "Browse")
+                    components::Button::new("worktree_browse", language.text("Browse", "瀏覽"))
                         .focus_handle(this.worktree_browse_focus_handle.clone())
                         .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, move |this, _e, window, cx| {
@@ -361,7 +395,11 @@ pub(super) fn panel(
                                 files: false,
                                 directories: true,
                                 multiple: false,
-                                prompt: Some("Select worktree folder".into()),
+                                prompt: Some(
+                                    language
+                                        .text("Select worktree folder", "選擇工作樹資料夾")
+                                        .into(),
+                                ),
                                 directory,
                             });
 
@@ -392,7 +430,7 @@ pub(super) fn panel(
                 checkbox_row(
                     "worktree_add_create_branch",
                     "worktree_add_create_branch",
-                    "Create new branch",
+                    language.text("Create new branch", "建立新分支"),
                     create_branch,
                     &this.worktree_add_create_branch_focus_handle,
                     theme,
@@ -411,9 +449,9 @@ pub(super) fn panel(
         .child(input_label(
             theme,
             if create_branch {
-                "Start from"
+                language.text("Start from", "起始參照")
             } else {
-                "Checkout branch"
+                language.text("Checkout branch", "要切換的分支")
             },
         ))
         .child(ref_row)
@@ -425,19 +463,27 @@ pub(super) fn panel(
                     .pb_1()
                     .text_size(theme.ui_text(12.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child("Not a local branch: the worktree starts on a detached HEAD."),
+                    .child(language.text(
+                        "Not a local branch: the worktree starts on a detached HEAD.",
+                        "此參照不是本機分支，工作樹的 HEAD 將處於分離狀態。",
+                    )),
             )
         })
         .when(create_branch, |panel| {
-            panel.child(input_label(theme, "New branch name")).child(
-                div()
-                    .debug_selector(|| "worktree_add_new_branch".to_string())
-                    .px_2()
-                    .pb_1()
-                    .w_full()
-                    .min_w(px(0.0))
-                    .child(this.worktree_new_branch_input.clone()),
-            )
+            panel
+                .child(input_label(
+                    theme,
+                    language.text("New branch name", "新分支名稱"),
+                ))
+                .child(
+                    div()
+                        .debug_selector(|| "worktree_add_new_branch".to_string())
+                        .px_2()
+                        .pb_1()
+                        .w_full()
+                        .min_w(px(0.0))
+                        .child(this.worktree_new_branch_input.clone()),
+                )
         })
         .when_some(checked_out, |panel, notice| {
             panel.child(
@@ -465,11 +511,16 @@ pub(super) fn panel(
         .child(
             super::prompt_footer_row()
                 .child(
-                    cancel_button("worktree_add_cancel", "worktree_add_cancel_hint", theme)
-                        .focus_handle(this.worktree_focus.cancel.clone())
-                        .on_click(theme, cx, |this, _e, window, cx| {
-                            this.dismiss_prompt_popover(window, cx);
-                        }),
+                    cancel_button_labeled(
+                        "worktree_add_cancel",
+                        "worktree_add_cancel_hint",
+                        language.text("Cancel", "取消"),
+                        theme,
+                    )
+                    .focus_handle(this.worktree_focus.cancel.clone())
+                    .on_click(theme, cx, |this, _e, window, cx| {
+                        this.dismiss_prompt_popover(window, cx);
+                    }),
                 )
                 .child(
                     submit
@@ -697,15 +748,11 @@ mod tests {
     fn a_new_branch_that_exists_is_refused() {
         assert_eq!(
             request("/tmp/ws/free", "main", true, "free"),
-            Err(WorktreeAddBlocked::Refused(
-                "Branch 'free' already exists".to_string()
-            ))
+            Err(WorktreeAddBlocked::BranchAlreadyExists("free".to_string()))
         );
         assert_eq!(
             request("/tmp/ws/free", "main", true, ""),
-            Err(WorktreeAddBlocked::Refused(
-                "Branch 'free' already exists".to_string()
-            )),
+            Err(WorktreeAddBlocked::BranchAlreadyExists("free".to_string())),
             "the folder-name fallback is checked too"
         );
     }
@@ -740,16 +787,14 @@ mod tests {
     fn an_invalid_branch_name_is_refused() {
         assert_eq!(
             request("/tmp/ws/my feature", "main", true, ""),
-            Err(WorktreeAddBlocked::Refused(
-                "'my feature' is not a valid branch name".to_string()
+            Err(WorktreeAddBlocked::InvalidBranchName(
+                "my feature".to_string()
             )),
             "the folder-name fallback is checked too"
         );
         assert_eq!(
             request("/tmp/ws/x", "main", true, "a..b"),
-            Err(WorktreeAddBlocked::Refused(
-                "'a..b' is not a valid branch name".to_string()
-            ))
+            Err(WorktreeAddBlocked::InvalidBranchName("a..b".to_string()))
         );
     }
 
@@ -810,7 +855,7 @@ mod tests {
     fn a_refusal_shows_before_the_folder_is_filled_in() {
         assert!(matches!(
             request("", "main", true, "a..b"),
-            Err(WorktreeAddBlocked::Refused(_))
+            Err(WorktreeAddBlocked::InvalidBranchName(_))
         ));
         assert_eq!(
             request("", "main", false, ""),

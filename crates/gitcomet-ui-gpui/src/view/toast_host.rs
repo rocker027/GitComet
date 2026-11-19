@@ -885,6 +885,7 @@ impl ToastHost {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme;
+        let language = crate::localization::Language::current(cx);
         let ui_scale = crate::ui_scale::UiScale::current(cx).with_appearance(theme.metrics);
         let spinner_color = crate::view::clone_progress::clone_progress_color(theme, &op);
         let percent = op.progress.percent.min(100);
@@ -895,7 +896,11 @@ impl ToastHost {
 
         let mut abort_button = components::Button::new(
             "clone_progress_abort",
-            if aborting { "Aborting…" } else { "Abort" },
+            if aborting {
+                language.text("Aborting…", "正在中止…")
+            } else {
+                language.text("Abort", "中止")
+            },
         )
         .style(components::ButtonStyle::Transparent)
         .borderless()
@@ -936,11 +941,9 @@ impl ToastHost {
                             .min_w(px(0.0))
                             .flex_col()
                             .gap_0p5()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child(crate::view::clone_progress::clone_progress_title(&op)),
-                            )
+                            .child(div().font_weight(FontWeight::BOLD).child(
+                                crate::view::clone_progress::clone_progress_title(&op, language),
+                            ))
                             .child(
                                 div()
                                     .text_size(theme.ui_text(14.0))
@@ -958,11 +961,9 @@ impl ToastHost {
                     .items_center()
                     .justify_between()
                     .text_size(theme.ui_text(14.0))
-                    .child(
-                        div()
-                            .text_color(spinner_color)
-                            .child(crate::view::clone_progress::clone_progress_phase_label(&op)),
-                    )
+                    .child(div().text_color(spinner_color).child(
+                        crate::view::clone_progress::clone_progress_phase_label(&op, language),
+                    ))
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)

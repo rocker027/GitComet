@@ -5,27 +5,43 @@ use super::chrome;
 use super::components::{
     PickerPromptItem, PickerPromptItemPart, PickerSwatch, PickerSwatchColors, TextTruncationProfile,
 };
+use crate::localization::Language;
 use gitcomet_state::session::{self, WorkspaceColor};
 
 /// A workspace as every workspace list shows it: its name and state, its
 /// repositories underneath, and its colour.
-pub(crate) fn workspace_picker_item(workspace: &session::Workspace) -> PickerPromptItem {
+pub(crate) fn workspace_picker_item(
+    workspace: &session::Workspace,
+    language: Language,
+) -> PickerPromptItem {
     let state = if workspace.restore_on_launch {
         "Open"
     } else {
         "Saved"
     };
-    let detail = format!(
+    let count = workspace.repositories.len();
+    let english_detail = format!(
         "{state} · {}",
-        crate::workspaces::repository_count_label(workspace.repositories.len())
+        crate::workspaces::repository_count_label(count)
     );
+    let (detail, english_alias) = match language {
+        Language::English => (english_detail, None),
+        Language::TraditionalChinese => {
+            let state = if workspace.restore_on_launch {
+                "已開啟"
+            } else {
+                "已儲存"
+            };
+            (format!("{state} · {count} 個儲存庫"), Some(english_detail))
+        }
+    };
     let repositories = workspace
         .repositories
         .iter()
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>()
         .join(" · ");
-    PickerPromptItem::from_parts([
+    let item = PickerPromptItem::from_parts([
         PickerPromptItemPart::new(workspace.display_name())
             .profile(TextTruncationProfile::End)
             .flexible(false),
@@ -33,7 +49,11 @@ pub(crate) fn workspace_picker_item(workspace: &session::Workspace) -> PickerPro
         PickerPromptItemPart::path(detail),
     ])
     .secondary_parts([PickerPromptItemPart::path(repositories)])
-    .swatch(workspace_swatch(workspace.color))
+    .swatch(workspace_swatch(workspace.color));
+    match english_alias {
+        Some(alias) => item.with_search_alias(alias),
+        None => item,
+    }
 }
 
 /// A workspace's dot and, once a colour is chosen, its title-bar tint behind

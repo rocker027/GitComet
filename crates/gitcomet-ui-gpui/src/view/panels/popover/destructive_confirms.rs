@@ -1,6 +1,7 @@
 //! Confirmations for deletions reached from menus and the command palette:
 //! nothing is deleted before the user confirms here.
 use super::*;
+use crate::localization::Language;
 
 pub(super) fn delete_tag_panel(
     this: &mut PopoverHost,
@@ -10,16 +11,23 @@ pub(super) fn delete_tag_panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let (title, text, command) = match &remote {
         None => (
-            "Delete tag?",
-            "This removes the tag from this repository. A copy pushed to a remote stays there."
+            language.text("Delete tag?", "要刪除標籤嗎？"),
+            language.text(
+                "This removes the tag from this repository. A copy pushed to a remote stays there.",
+                "這會刪除本機儲存庫的標籤。已推送至遠端的標籤仍會保留。",
+            )
                 .to_string(),
             format!("git tag -d {name}"),
         ),
         Some(remote) => (
-            "Delete tag from remote?",
-            format!("This removes the tag from {remote} for everyone who fetches from it."),
+            language.text("Delete tag from remote?", "要刪除遠端標籤嗎？"),
+            match language {
+                Language::English => format!("This removes the tag from {remote} for everyone who fetches from it."),
+                Language::TraditionalChinese => format!("這會從 {remote} 刪除標籤，影響所有從這個遠端擷取的使用者。"),
+            },
             format!("git push --delete {remote} refs/tags/{name}"),
         ),
     };
@@ -29,12 +37,14 @@ pub(super) fn delete_tag_panel(
         .command(theme, command)
         .render(
             theme,
-            cancel_button("delete_tag_confirm_cancel", "delete_tag_cancel_hint", theme).on_click(
+            cancel_button_labeled(
+                "delete_tag_confirm_cancel",
+                "delete_tag_cancel_hint",
+                language.text("Cancel", "取消"),
                 theme,
-                cx,
-                |this, _e, _w, cx| this.close_popover(cx),
-            ),
-            components::Button::new("delete_tag_confirm_go", "Delete")
+            )
+            .on_click(theme, cx, |this, _e, _w, cx| this.close_popover(cx)),
+            components::Button::new("delete_tag_confirm_go", language.text("Delete", "刪除"))
                 .style(components::ButtonStyle::Danger)
                 .on_click(theme, cx, move |this, _e, _w, cx| {
                     match remote.clone() {

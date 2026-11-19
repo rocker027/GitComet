@@ -464,6 +464,7 @@ fn model_with_header(
         comparison_mark
             .as_ref()
             .map(|mark| (&mark.commit_id, mark.label.as_str())),
+        language,
     ));
     items.extend(super::ref_menu::entries(
         this,

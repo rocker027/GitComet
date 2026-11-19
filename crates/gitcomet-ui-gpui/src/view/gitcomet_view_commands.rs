@@ -62,6 +62,10 @@ impl GitCometView {
                 &self.command_palette_context(cx),
             )
         {
+            let reason = command_palette::localized_unavailable_reason(
+                reason,
+                crate::localization::Language::current(cx),
+            );
             self.push_toast(components::ToastKind::Warning, reason.to_owned(), cx);
             return;
         }
@@ -515,7 +519,9 @@ impl GitCometView {
                         files: true,
                         directories: false,
                         multiple: false,
-                        prompt: Some("Select patch file".into()),
+                        prompt: Some(
+                            crate::localization::text(cx, "Select patch file", "選擇修補檔").into(),
+                        ),
                         directory: None,
                     });
                     cx.spawn(async move |cx| {
