@@ -8,12 +8,16 @@ struct LiveLane {
     id: u32,
     target: u32,
     born: usize,
+    stash: bool,
     color: LaneColorIx,
 }
 
 /// A column with no lane in a checkpoint. Live targets are row indices, which
 /// the index keeps below this value.
 const NO_LANE: u32 = u32::MAX;
+/// The palette leaves this bit available in the checkpoint's colour byte.
+const CHECKPOINT_STASH: u8 = 1 << 7;
+const _: () = assert!(LANE_COLOR_PALETTE_SIZE <= CHECKPOINT_STASH as usize);
 
 /// A frontier stored one target and one colour per column: five bytes a
 /// column, where a list of live lanes spelled out the column and a lane
@@ -68,7 +72,7 @@ impl GraphCheckpoint {
             free: BTreeSet::new(),
             colors: [0; LANE_COLOR_PALETTE_SIZE],
         };
-        for (col, (&target, &color)) in self.targets.iter().zip(&*self.colors).enumerate() {
+        for (col, (&target, &packed_color)) in self.targets.iter().zip(&*self.colors).enumerate() {
             if target == NO_LANE {
                 walk.free.insert(col);
                 walk.lanes.push(None);
@@ -83,7 +87,8 @@ impl GraphCheckpoint {
                 LiveLane {
                     id,
                     target,
-                    color,
+                    color: packed_color & !CHECKPOINT_STASH,
+                    stash: packed_color & CHECKPOINT_STASH != 0,
                     born: usize::MAX,
                 },
             );
@@ -139,6 +144,7 @@ impl GraphWalk {
                     id: 1,
                     target: target as u32,
                     color: 0,
+                    stash: false,
                     born: usize::MAX,
                 },
             );
@@ -159,7 +165,15 @@ impl GraphWalk {
         let colors = self
             .lanes
             .iter()
-            .map(|lane| lane.map_or(0, |lane| lane.color))
+            .map(|lane| {
+                lane.map_or(0, |lane| {
+                    if lane.stash {
+                        lane.color | CHECKPOINT_STASH
+                    } else {
+                        lane.color
+                    }
+                })
+            })
             .collect();
         let main_col = self.main.and_then(|main| {
             self.lanes
@@ -230,12 +244,15 @@ impl GraphWalk {
                 id,
                 target: target as u32,
                 born: row,
+                stash: false,
                 color,
             },
         );
     }
+    #[cfg(test)]
     pub fn step(&mut self, row: usize, parents: &[usize], merge: bool, head: bool) -> GraphRow {
-        self.transition(row, parents, merge, head, true).paint
+        self.transition(row, parents, merge, head, false, true)
+            .paint
     }
     pub fn transition(
         &mut self,
@@ -243,6 +260,7 @@ impl GraphWalk {
         parents: &[usize],
         merge: bool,
         head: bool,
+        stash: bool,
         materialize: bool,
     ) -> GraphTransition {
         gitcomet_core::history_perf::record(gitcomet_core::history_perf::Work::GraphTransition);
@@ -270,6 +288,11 @@ impl GraphWalk {
             .iter()
             .copied()
             .find(|&col| self.main == self.lanes[col].map(|lane| lane.id))
+            .or_else(|| {
+                hits.iter()
+                    .copied()
+                    .find(|&col| !self.lanes[col].unwrap().stash)
+            })
             .unwrap_or(hits[0]);
         let fork_color = force.then(|| self.color(&[]));
         let fork = fork_color.and_then(|color| {
@@ -307,6 +330,7 @@ impl GraphWalk {
                             false,
                         )
                         .with_reserved(reserved_id == Some(lane.id))
+                        .with_stash(lane.stash)
                     },
                 ));
             }
@@ -338,6 +362,7 @@ impl GraphWalk {
                 let lane = self.lanes[col].as_mut().unwrap();
                 let old_target = lane.target;
                 lane.target = parent as u32;
+                lane.stash = stash && ix == 0;
                 let targets = self.targets.get_mut(&old_target).unwrap();
                 targets.retain(|target| *target != col);
                 if targets.is_empty() {
@@ -358,7 +383,13 @@ impl GraphWalk {
             lane.born = row;
         }
         for &parent in parents.iter().skip(parents.len().min(hits.len())) {
-            if self.targets.contains_key(&(parent as u32)) {
+            // Ordinary merge edges need an ordinary lane even when they share
+            // their target with the stash-to-base edge.
+            if self
+                .targets
+                .get(&(parent as u32))
+                .is_some_and(|cols| cols.iter().any(|&col| !self.lanes[col].unwrap().stash))
+            {
                 continue;
             }
             let color = self.color(&ended);
@@ -381,6 +412,7 @@ impl GraphWalk {
         let outgoing = |slot: Option<LiveLane>| {
             slot.map_or(LanePaint::HOLE, |lane| {
                 LanePaint::lane(lane.color, false, lane.born == row)
+                    .with_stash(lane.stash)
                     .with_reserved(reserved_id == Some(lane.id))
             })
         };
@@ -406,7 +438,9 @@ impl GraphWalk {
             if let Some(col) = self.targets.get(&(parent as u32)).and_then(|cols| {
                 cols.iter()
                     .copied()
-                    .filter(|&col| self.lanes[col].unwrap().born != row)
+                    .filter(|&col| {
+                        self.lanes[col].is_some_and(|lane| lane.born != row && !lane.stash)
+                    })
                     .min()
             }) {
                 edges.push(GraphEdge {
@@ -537,7 +571,8 @@ mod tests {
                 let expected = original.step(row, &parents, parents.len() > 1, head);
                 let actual = walk.step(row, &parents, parents.len() > 1, head);
                 assert_eq!(actual, expected, "width={width} row={row}");
-                let transition = no_paint.transition(row, &parents, parents.len() > 1, head, false);
+                let transition =
+                    no_paint.transition(row, &parents, parents.len() > 1, head, false, false);
                 assert!(transition.paint.lanes_now.is_empty());
                 assert!(transition.paint.lanes_next.is_empty());
                 assert_eq!(transition.paint.joins_in, expected.joins_in);

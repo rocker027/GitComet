@@ -32,22 +32,38 @@ impl Render for RefChipsTestView {
     }
 }
 
-struct InitialsCacheTestView;
+#[test]
+fn history_author_patterns_identify_names_beyond_their_initials() {
+    let ada = HistoryAuthorVm::new("Ada Lovelace".into());
+    let alan = HistoryAuthorVm::new("Alan Lane".into());
+    assert_eq!(ada.initials, alan.initials);
+    assert_ne!(ada.pattern, alan.pattern);
+    assert_eq!(
+        ada.pattern,
+        HistoryAuthorVm::new("Ada Lovelace".into()).pattern
+    );
+    for name in ["", "符文", "Ada Lovelace", "Alan Lane"] {
+        let author = HistoryAuthorVm::new(name.into());
+        assert!(author.pattern.iter().all(|row| (1..31).contains(row)));
+    }
+}
 
-impl Render for InitialsCacheTestView {
+struct AuthorMarkTestView;
+
+impl Render for AuthorMarkTestView {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         super::super::canvas::keyed_canvas(
-            "initials_cache_test",
+            "author_mark_no_text_layout",
             |_, _, _| (),
             |_, _, window, _cx| {
                 let theme = AppTheme::gitcomet_dark();
-                let author = HistoryAuthorVm::new("Initials Cache".into());
+                let author = HistoryAuthorVm::new("Ada Lovelace".into());
                 let row = test_row_visual(theme);
                 let cached = || HISTORY_TEXT_LAYOUT_CACHE.with(|cache| cache.borrow().len());
                 let paint = |progress: f32, window: &mut Window| {
                     let d = super::super::history_node::author_diameter(
                         ui_scale::UiScale::from_window(window).with_appearance(theme.metrics),
-                        progress,
+                        0.6 + 0.4 * progress,
                     );
                     paint_history_author_node(
                         theme,
@@ -55,18 +71,18 @@ impl Render for InitialsCacheTestView {
                         row,
                         &author,
                         progress,
+                        false,
                         window,
                     );
                 };
-                paint(1.0, window);
-                let warm = cached();
-                for frame in 1..60 {
-                    paint(0.5 + frame as f32 / 120.0, window);
+                let before = cached();
+                for frame in 0..=60 {
+                    paint(frame as f32 / 60.0, window);
                 }
                 assert_eq!(
                     cached(),
-                    warm,
-                    "animated alpha must not grow the text layout cache"
+                    before,
+                    "author marks must not allocate text layouts"
                 );
             },
         )
@@ -76,8 +92,8 @@ impl Render for InitialsCacheTestView {
 }
 
 #[gpui::test]
-fn history_initials_animation_reuses_shaped_text(cx: &mut gpui::TestAppContext) {
-    let (_, cx) = cx.add_window_view(|_, _| InitialsCacheTestView);
+fn history_author_patterns_animate_without_shaping_text(cx: &mut gpui::TestAppContext) {
+    let (_, cx) = cx.add_window_view(|_, _| AuthorMarkTestView);
     cx.update(|window, app| {
         let _ = window.draw(app);
     });

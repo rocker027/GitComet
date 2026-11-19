@@ -55,6 +55,7 @@ pub(in crate::view) struct IndexedGraph {
     pub projection: HistoryProjection,
     checkpoints: Vec<Checkpoint>,
     branch_heads: FxHashSet<usize>,
+    listed_stash_rows: FxHashSet<usize>,
     main: Option<usize>,
     geometry_cache: Arc<std::sync::Mutex<Option<GeometryWindow>>>,
     direct_labels: FxHashMap<usize, u16>,
@@ -152,6 +153,7 @@ impl IndexedGraph {
         previous: Option<&Self>,
     ) -> Result<Self> {
         let mut hidden = Vec::new();
+        let mut listed_stash_rows = FxHashSet::default();
         if stashes.is_empty() {
             for &raw in index.probable_stash_rows() {
                 cancellation.check_cancelled()?;
@@ -160,6 +162,7 @@ impl IndexedGraph {
         } else {
             for stash in stashes {
                 if let Some(raw) = index.position(stash.id.as_ref()) {
+                    listed_stash_rows.insert(raw);
                     hidden.extend(index.parents(raw).iter().skip(1).copied());
                 }
             }
@@ -245,6 +248,7 @@ impl IndexedGraph {
         let reusable = previous.filter(|old| {
             Arc::ptr_eq(&old.projection.index, &projection.index)
                 && old.projection == projection
+                && old.listed_stash_rows == listed_stash_rows
                 && old.branch_heads == branch_heads
                 && old.main == main
         });
@@ -269,6 +273,7 @@ impl IndexedGraph {
             projection,
             checkpoints: Vec::new(),
             branch_heads,
+            listed_stash_rows,
             main,
             geometry_cache: reusable
                 .map(|old| old.geometry_cache.clone())
@@ -366,7 +371,9 @@ impl IndexedGraph {
         // One raw lookup per row; the parents map through the projection directly.
         let raw = self.projection.raw_position(row).expect("graph row");
         let raw_parents = self.projection.index.parents(raw);
-        let parents: SmallVec<[usize; 4]> = raw_parents
+        let stash =
+            self.listed_stash_rows.contains(&raw) || self.projection.index.is_probable_stash(raw);
+        let parents: SmallVec<[usize; 4]> = history_graph::graph_parents(raw_parents, stash)
             .iter()
             .filter_map(|&parent| self.projection.visible_position(parent as usize))
             .filter(|&parent| parent > row)
@@ -376,6 +383,7 @@ impl IndexedGraph {
             &parents,
             raw_parents.len() > 1,
             self.branch_heads.contains(&row),
+            stash,
             materialize,
         );
         let paint = &transition.paint;

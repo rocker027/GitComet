@@ -9,6 +9,56 @@ fn raw(row: usize) -> [u8; 20] {
 }
 
 #[test]
+fn indexed_stash_style_survives_checkpoint_replay_and_stash_list_refresh() {
+    let base = CHECKPOINT_STRIDE + 2;
+    let mut builder = HistoryIndexBuilder::new(
+        HistorySnapshot("stash-style".into()),
+        LogScope::AllBranches,
+        20,
+    )
+    .unwrap();
+    for row in 0..=base + 1 {
+        let parent = match row {
+            0 => Some(2),
+            1 => Some(base),
+            _ if row <= base => Some(row + 1),
+            _ => None,
+        }
+        .map(raw);
+        builder
+            .push(&raw(row), parent.iter().map(|id| id.as_slice()), false)
+            .unwrap();
+    }
+    let cancel = CancellationToken::new();
+    let index = builder.finish(&cancel).unwrap();
+    let old = IndexedGraph::build(index.clone(), &[], &[], &[], None, None, &cancel).unwrap();
+    let range = CHECKPOINT_STRIDE..base + 2;
+    let old_rows = old.window(range.clone(), &cancel).unwrap();
+    assert!(
+        old_rows.rows[0]
+            .lanes_now
+            .iter()
+            .all(|lane| !lane.is_stash())
+    );
+    let entry = StashEntry {
+        index: 0,
+        id: index.commit_id(1).unwrap(),
+        message: "saved".into(),
+        created_at: None,
+    };
+    let graph =
+        IndexedGraph::build_reusing(index, &[], &[], &[entry], None, None, &cancel, Some(&old))
+            .unwrap();
+    let rows = graph.window(range, &cancel).unwrap().rows;
+    assert!(rows[0].lanes_now[1].is_stash());
+    assert!(rows[1].lanes_next[1].is_stash());
+    assert!(rows[2].lanes_now[1].is_stash());
+    assert_eq!(rows[2].joins_in[0].from_col, 1);
+    assert!(rows[2].lanes_next.iter().all(|lane| !lane.is_stash()));
+    assert!(rows[3].lanes_now.iter().all(|lane| !lane.is_stash()));
+}
+
+#[test]
 fn checkpoint_windows_match_continuous_graph_and_attribution() {
     for (linear, width) in [(true, 1), (false, 83), (false, 512)] {
         let count = 4200;

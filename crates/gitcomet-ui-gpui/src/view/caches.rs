@@ -396,20 +396,38 @@ pub(in crate::view) fn history_text_hash(text: &str) -> u64 {
     hasher.finish()
 }
 
-/// Cached once with row presentation, including Unicode case expansion.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// Name, initials and a four-row, five-column mirrored mark shared by this author.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::view) struct HistoryAuthorVm {
     name: HistoryTextVm,
     pub(in crate::view) initials: HistoryTextVm,
+    pub(in crate::view) pattern: [u8; 4],
 }
 
 impl HistoryAuthorVm {
     pub(in crate::view) fn new(name: SharedString) -> Self {
         let initials = HistoryTextVm::new(components::author_initials(name.as_ref()).into());
+        let name = HistoryTextVm::new(name);
+        // Each row has ink and a gap. Mirror symmetry keeps the mark legible
+        // even when a compact history row has only one device pixel per cell.
+        const ROWS: [u8; 6] = [0b00100, 0b01010, 0b10001, 0b01110, 0b10101, 0b11011];
+        let mut seed = name.text_hash();
+        let pattern = std::array::from_fn(|_| {
+            let row = ROWS[(seed % ROWS.len() as u64) as usize];
+            seed /= ROWS.len() as u64;
+            row
+        });
         Self {
-            name: HistoryTextVm::new(name),
+            name,
             initials,
+            pattern,
         }
+    }
+}
+
+impl Default for HistoryAuthorVm {
+    fn default() -> Self {
+        Self::new(SharedString::default())
     }
 }
 

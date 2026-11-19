@@ -110,7 +110,7 @@ fn a_lane_a_merge_hands_on_leaves_the_node_instead_of_a_stub(cx: &mut gpui::Test
             );
         }
 
-        let (lanes, xs, elbows) = paint_row(&view, cx, theme, &row, |_| px(200.0));
+        let (lanes, xs, elbows) = paint_row(&view, cx, theme, &row, false, |_| px(200.0));
         let on_col = |col: usize| straight_runs_at(&lanes, xs[col]);
         for &col in shape.handed_on {
             assert_eq!(
@@ -167,7 +167,7 @@ fn a_handed_on_lane_on_the_edge_line_leaves_the_straight_lane_beside_it(
 
     let (view, cx) = cx.add_window_view(|_, _| GraphPaintView(Rc::new(|_, _| {})));
     // Columns from 1 on all land on the edge line.
-    let (lanes, xs, elbows) = paint_row(&view, cx, theme, &row, |grid| {
+    let (lanes, xs, elbows) = paint_row(&view, cx, theme, &row, false, |grid| {
         grid.margin_x + grid.col_gap + grid.margin_right
     });
     assert!(
@@ -190,13 +190,45 @@ fn a_handed_on_lane_on_the_edge_line_leaves_the_straight_lane_beside_it(
     );
 }
 
+#[gpui::test]
+fn stash_paints_a_box_and_a_dashed_lane_between_ordinary_commits(cx: &mut gpui::TestAppContext) {
+    let theme = AppTheme::gitcomet_dark();
+    let commits = [
+        commit("head", &["intermediate"]),
+        commit("stash", &["base", "index"]),
+        commit("intermediate", &["base"]),
+        commit("base", &["root"]),
+        commit("root", &[]),
+    ];
+    let rows =
+        history_graph::compute_graph_with_stashes(&commits, theme, &[1], ["head"], Some("head"));
+    let (view, cx) = cx.add_window_view(|_, _| GraphPaintView(Rc::new(|_, _| {})));
+    let stash_col = usize::from(rows[1].node_col);
+    let (_, _, paths) = paint_row(&view, cx, theme, &rows[1], true, |_| px(200.0));
+    assert_eq!(paths, 1, "the stash exit is a dashed path");
+    cx.update(|window, _| {
+        let quads = window.painted_quads();
+        let node = quads.iter().find(|q| q.border_widths.top.0 > 0.0).unwrap();
+        let radius = node.corner_radii.top_left.0;
+        assert!(radius > 0.0 && radius < node.bounds.size.width.0 * 0.25);
+    });
+    let (lanes, xs, paths) = paint_row(&view, cx, theme, &rows[2], false, |_| px(200.0));
+    assert_eq!(paths, 2, "both halves of the passing stash lane are dashed");
+    assert_eq!(straight_runs_at(&lanes, xs[stash_col]), 0);
+    let main = usize::from(rows[2].node_col);
+    assert_eq!(straight_runs_at(&lanes, xs[main]), 2);
+    let (_, _, paths) = paint_row(&view, cx, theme, &rows[4], false, |_| px(200.0));
+    assert_eq!(paths, 0, "only ordinary ancestry continues below the base");
+}
+
 /// Paints `row` into a cell `width(grid)` wide. Returns the straight lane runs
-/// (the unrounded quads), each column's x and the number of elbows (paths).
+/// (the tall unrounded quads), each column's x and the number of elbows (paths).
 fn paint_row(
     view: &gpui::Entity<GraphPaintView>,
     cx: &mut gpui::VisualTestContext,
     theme: AppTheme,
     row: &history_graph::GraphRow,
+    is_stash: bool,
     width: impl FnOnce(GraphGrid) -> Pixels,
 ) -> (Vec<gpui::Quad>, Vec<f32>, u64) {
     let _capture = history_perf::capture();
@@ -226,7 +258,7 @@ fn paint_row(
                     0,
                     None,
                     true,
-                    false,
+                    is_stash,
                     None,
                     history_canvas::HistoryRowVisual::new(
                         theme,
@@ -241,7 +273,7 @@ fn paint_row(
                     0.0,
                     cell,
                     grid,
-                    graph_node_bounds(row, false, 1.0, cell, grid, scale),
+                    graph_node_bounds(row, is_stash, 1.0, cell, grid, scale),
                     window,
                     app,
                 );
@@ -253,7 +285,10 @@ fn paint_row(
     });
     let lanes = quads
         .into_iter()
-        .filter(|quad| quad.corner_radii.top_left.0 == 0.0)
+        .filter(|quad| {
+            quad.corner_radii.top_left.0 == 0.0
+                && quad.bounds.size.height.0 > quad.bounds.size.width.0
+        })
         .collect();
     (lanes, xs, history_perf::count(Work::PaintPath))
 }

@@ -590,42 +590,62 @@ fn history_chip_visual(
     }
 }
 
-/// Paint an opaque disc above the lane strokes, with cached, cap-height centred
-/// initials. Case expansion can produce more than two glyphs (e.g. SSE); fit
-/// those glyphs instead of replacing the author's identity with an ellipsis.
+/// The ring follows the graph lane. The mark inside follows the author, so its
+/// shape and ink stay recognizable across branches, hover and selection.
 pub(super) fn paint_history_author_node(
     theme: AppTheme,
     bounds: Bounds<Pixels>,
     row: HistoryRowVisual,
     author: &HistoryAuthorVm,
-    initials_reveal: f32,
+    expansion: f32,
+    is_merge: bool,
     window: &mut Window,
 ) {
     let scale = ui_scale::UiScale::from_window(window).with_appearance(theme.metrics);
-    let disc = crate::theme::composite_over(row.background, with_alpha(row.lane, 0.12));
-    let background = crate::theme::mix_colors(row.lane, disc, initials_reveal);
-    let foreground = readable_chip_foreground(theme, background, theme.colors.foreground.primary);
+    let background = theme.colors.surface.canvas;
+    let ink = readable_chip_foreground(
+        theme,
+        background,
+        components::author_color(theme, author.as_ref()),
+    );
     super::history_shapes::paint_rounded_rect(
         bounds,
         bounds.size.width * 0.5,
         background,
-        super::history_node::ring_width(scale, window.scale_factor()) * initials_reveal,
-        row.lane,
+        super::history_node::ring_width(scale, window.scale_factor()),
+        crate::theme::mix_colors(background, row.lane, 0.75 + expansion * 0.25),
         window,
     );
-    let text_opacity = ((initials_reveal - 0.5) * 2.0).clamp(0.0, 1.0);
-    if text_opacity == 0.0 {
-        return;
+    // Adjacent cells in a row share a quad. Device-pixel cells keep the mark
+    // crisp without shaping text or allocating on each animation frame.
+    let cell = super::history_shapes::device_px(bounds.size.width * 0.105, window.scale_factor());
+    let inset = if is_merge {
+        bounds.size.width * 0.065
+    } else {
+        px(0.0)
+    };
+    let origin = window.pixel_snap_point(point(
+        bounds.center().x - cell * 2.5 - inset,
+        bounds.center().y - cell * 2.0 - inset,
+    ));
+    for (y, bits) in author.pattern.iter().copied().enumerate() {
+        let mut x = 0;
+        while x < 5 {
+            if bits & (1 << x) == 0 {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < 5 && bits & (1 << x) != 0 {
+                x += 1;
+            }
+            let run = Bounds::new(
+                point(origin.x + cell * start as f32, origin.y + cell * y as f32),
+                size(cell * (x - start) as f32, cell),
+            );
+            window.paint_quad(PaintQuad::new(run).background(ink));
+        }
     }
-    paint_author_initials(
-        bounds,
-        author,
-        scale.ui_text(9.0),
-        scale.ui_text(16.0),
-        foreground,
-        text_opacity,
-        window,
-    );
 }
 
 fn paint_author_initials(
@@ -634,12 +654,10 @@ fn paint_author_initials(
     mut font: Pixels,
     available: Pixels,
     foreground: gpui::Rgba,
-    opacity: f32,
     window: &mut Window,
 ) {
     let mut style = window.text_style();
     style.font_weight = gpui::FontWeight::SEMIBOLD;
-    // Shape at full opacity: animation must not add a cache entry per frame.
     let mut shaped = shape_truncated_line_cached(
         window,
         &style,
@@ -650,7 +668,7 @@ fn paint_author_initials(
         gpui::rgba(0xffffffff),
         None,
     );
-    // Keep glyph metrics stable while the dot expands beneath the text.
+    // Unicode case expansion can produce more than two glyphs.
     if shaped.width > available && shaped.width > px(0.0) {
         font *= available / shaped.width;
         shaped = shape_truncated_line_cached(
@@ -669,13 +687,13 @@ fn paint_author_initials(
         .first()
         .map(|run| window.text_system().cap_height(run.font_id, font))
         .unwrap_or(font * 0.7);
-    // Glyph positions stay cached; color and opacity are paint-only state.
+    // Glyph positions stay cached; color is paint-only state.
     // These single-line initials have no decorations or inline elements.
     let origin = point(
         bounds.left() + (bounds.size.width - shaped.width).max(px(0.0)) * 0.5,
         bounds.center().y + cap_height * 0.5,
     );
-    let color = with_alpha(foreground, opacity).into_color();
+    let color = foreground.into_color();
     for fragment in &shaped.paint_fragments {
         for glyph in &*fragment.glyphs {
             let position = origin + glyph.position;
@@ -1902,7 +1920,7 @@ pub(super) fn history_commit_row_canvas(
             } else {
                 0.0
             };
-            let initials_reveal = if author_run_interior
+            let author_expansion = if author_run_interior
                 && branch_chips.is_empty()
                 && tag_names.is_empty()
                 && connect_from_top_col.is_none()
@@ -1917,13 +1935,13 @@ pub(super) fn history_commit_row_canvas(
                 super::history_graph_paint::graph_node_bounds(
                     graph_row,
                     is_stash_node,
-                    initials_reveal,
+                    author_expansion,
                     graph_bounds,
                     grid,
                     scale,
                 )
             });
-            // Dots retain the same generous author tooltip target as discs.
+            // Compact marks retain the full author tooltip target.
             let author_hover_bounds = graph_node.map(|node| {
                 let diameter = super::history_node::author_diameter(scale, 1.0);
                 Bounds::new(
@@ -2355,7 +2373,7 @@ pub(super) fn history_commit_row_canvas(
                                 selected_lane,
                                 row_visual,
                                 &author,
-                                initials_reveal,
+                                author_expansion,
                                 selection,
                                 graph_bounds,
                                 grid,
@@ -2442,8 +2460,8 @@ pub(super) fn history_commit_row_canvas(
                 // Matches the header's extra left inset that clears the
                 // column resize handle.
                 let avatar_left = author_bounds.left() + cell_pad_x * 2.0;
-                let identity_color = components::author_color(theme, author.as_ref());
                 if !show_graph && author_bounds.size.width >= avatar_d + cell_pad_x * 2.0 {
+                    let identity_color = components::author_color(theme, author.as_ref());
                     let avatar_top = author_bounds.top()
                         + (author_bounds.size.height - avatar_d).max(px(0.0)) * 0.5;
                     let avatar = super::history_shapes::paint_disc(
@@ -2458,7 +2476,6 @@ pub(super) fn history_commit_row_canvas(
                         scale.ui_text(components::AVATAR_FONT_PX),
                         avatar_d,
                         identity_color,
-                        1.0,
                         window,
                     );
                 }

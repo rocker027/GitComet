@@ -114,15 +114,26 @@ pub(in crate::view) fn build_history_page_graph<'a>(
         commits,
     );
     let branch_heads = graph_branch_heads(history_scope, branches, remote_branches);
-    let rows = if stash_helper_ids.is_empty() {
+    let stash_rows: Vec<_> = stash_analysis
+        .stash_tips
+        .iter()
+        .filter_map(|tip| visible_indices.visible_ix(tip.commit_ix))
+        .collect();
+    let rows = if stash_rows.is_empty() && stash_helper_ids.is_empty() {
         history_graph::compute_graph(commits, theme, branch_heads, head_target).into()
     } else {
         let visible_commit_refs = visible_indices
             .iter()
             .map(|ix| &commits[ix])
             .collect::<Vec<_>>();
-        history_graph::compute_graph_refs(&visible_commit_refs, theme, branch_heads, head_target)
-            .into()
+        history_graph::compute_graph_with_stashes(
+            &visible_commit_refs,
+            theme,
+            &stash_rows,
+            branch_heads,
+            head_target,
+        )
+        .into()
     };
     HistoryPageGraph {
         stash_tips: stash_analysis.stash_tips,
