@@ -1697,6 +1697,7 @@ fn schedule_reset(
     mode: ResetMode,
 ) {
     let command_target = target.clone();
+    let observer = msg_tx.clone();
     schedule_repo_command(
         executor,
         repos,
@@ -1706,7 +1707,24 @@ fn schedule_reset(
             mode,
             target: command_target,
         },
-        move |repo| repo.reset_with_output(&target, mode),
+        move |repo| {
+            // A soft reset can be undone: report the commit it moves the
+            // checked-out branch from.
+            if mode == ResetMode::Soft {
+                let branch = repo
+                    .current_branch(&gitcomet_core::services::CancellationToken::new())
+                    .ok();
+                let head = repo.head_commit_id().ok().flatten();
+                super::repo_actions::report_git_undo_ref(
+                    &observer,
+                    repo_id,
+                    crate::model::PendingGitUndoKind::SoftReset,
+                    format!("refs/heads/{}", branch.unwrap_or_default()),
+                    head,
+                );
+            }
+            repo.reset_with_output(&target, mode)
+        },
     );
 }
 

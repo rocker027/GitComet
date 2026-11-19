@@ -1150,6 +1150,7 @@ pub(super) fn repo_action_finished(
     action: RepoActionKind,
     result: std::result::Result<(), Error>,
 ) -> Vec<Effect> {
+    super::git_undo::repo_action_finished(state, repo_id, action, result.is_ok());
     let completion = match result {
         Ok(()) => RepoActionCompletion::Succeeded,
         Err(error) => RepoActionCompletion::Failed(error),
@@ -1164,6 +1165,7 @@ pub(super) fn branch_not_fully_merged(
     repo_id: RepoId,
     name: String,
 ) -> Vec<Effect> {
+    super::git_undo::repo_action_finished(state, repo_id, RepoActionKind::DeleteBranch, false);
     if state.repos.iter().any(|repo| repo.id == repo_id) {
         let generation = state.force_delete_branch_prompt_generation.wrapping_add(1);
         state.force_delete_branch_prompt_generation = generation;

@@ -157,6 +157,8 @@ impl Msg {
             | Self::CreateBranch { repo_id, .. }
             | Self::RenameBranch { repo_id, .. }
             | Self::DeleteBranch { repo_id, .. }
+            | Self::UndoGitOperation { repo_id }
+            | Self::RedoGitOperation { repo_id }
             | Self::ForceDeleteBranch { repo_id, .. }
             | Self::DeleteBranches { repo_id, .. }
             | Self::ExportPatch { repo_id, .. }

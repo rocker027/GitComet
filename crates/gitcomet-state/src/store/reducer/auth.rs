@@ -802,11 +802,22 @@ pub(super) fn commit_finished(
     result: Result<CommitOperationOutcome, Error>,
 ) -> Vec<Effect> {
     let outcome = result.as_ref().ok().cloned();
+    if let Some(outcome) = outcome.as_ref() {
+        super::git_undo::commit_finished(state, repo_id, request.amend, outcome);
+    }
     let push_after_commit = outcome.is_some() && request.push_after_commit;
     let auth_prompt = result
         .as_ref()
         .err()
-        .and_then(|error| auth_prompt_for_commit(repo_id, request.clone(), error))
+        .and_then(|error| {
+            // An auth failure comes from the commit, after its paths were
+            // staged: the retry only commits.
+            let retry = CommitRequest {
+                stage_paths: Vec::new(),
+                ..request.clone()
+            };
+            auth_prompt_for_commit(repo_id, retry, error)
+        })
         .filter(|prompt| may_install_auth_prompt(state, prompt));
     let mut effects = actions_emit_effects::commit_finished(
         inputs,
@@ -884,6 +895,7 @@ pub(super) fn repo_command_finished(
     command: RepoCommandKind,
     result: Result<CommandOutput, Error>,
 ) -> Vec<Effect> {
+    super::git_undo::repo_command_finished(state, repo_id, &command, result.is_ok());
     let auth_prompt = result
         .as_ref()
         .err()

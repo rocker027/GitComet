@@ -21,6 +21,7 @@ mod file_history;
 mod filesystem;
 mod git_hook_activity;
 mod git_operations;
+mod git_undo;
 mod history_authors;
 mod history_find;
 #[cfg(test)]
@@ -376,6 +377,8 @@ pub(crate) fn msg_requires_available_git(msg: &Msg) -> bool {
             | Msg::ApplyStash { .. }
             | Msg::PopStash { .. }
             | Msg::DropStash { .. }
+            | Msg::UndoGitOperation { .. }
+            | Msg::RedoGitOperation { .. }
     )
 }
 
@@ -1528,6 +1531,7 @@ fn reduce_inner(
             name,
             target,
         } => {
+            git_undo::prepare_create_branch(state, repo_id, &name, &target);
             begin_local_action(state, repo_id);
             vec![Effect::CreateBranch {
                 repo_id,
@@ -1575,6 +1579,7 @@ fn reduce_inner(
             actions_emit_effects::rename_branch(repo_id, old_name, new_name, force)
         }
         Msg::DeleteBranch { repo_id, name } => {
+            git_undo::prepare_delete_branch(state, repo_id, &name, false);
             begin_local_action(state, repo_id);
             actions_emit_effects::delete_branch(repo_id, name)
         }
@@ -1587,6 +1592,7 @@ fn reduce_inner(
             {
                 state.force_delete_branch_prompt = None;
             }
+            git_undo::prepare_delete_branch(state, repo_id, &name, true);
             begin_local_action(state, repo_id);
             vec![Effect::ForceDeleteBranch { repo_id, name }]
         }
@@ -1910,6 +1916,12 @@ fn reduce_inner(
             Some(effects) => effects,
             None => actions_emit_effects::pull_branch(repos, state, repo_id, remote, branch),
         },
+        Msg::UndoGitOperation { repo_id } => {
+            git_undo::request(inputs, state, repo_id, crate::model::GitUndoDirection::Undo)
+        }
+        Msg::RedoGitOperation { repo_id } => {
+            git_undo::request(inputs, state, repo_id, crate::model::GitUndoDirection::Redo)
+        }
         Msg::MergeRef { repo_id, reference } => {
             if let Some(effects) = annex_adjusted_refusal(inputs, state, repo_id, "Merge") {
                 return effects;
@@ -2020,6 +2032,7 @@ fn reduce_inner(
             target,
             mode,
         } => {
+            git_undo::prepare_reset(state, repo_id, &target, mode);
             begin_local_action(state, repo_id);
             vec![Effect::RepoCommand(RepoCommandEffect::Reset {
                 repo_id,

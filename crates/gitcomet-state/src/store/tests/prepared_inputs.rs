@@ -993,6 +993,7 @@ fn cancelled_action_uses_its_inner_log_refresh_without_an_extra_head_query() {
                     amend: false,
                     push_after_commit: false,
                     hooks: gitcomet_core::services::GitHooks::Run,
+                    stage_paths: Vec::new(),
                 },
                 repo_id: RepoId(1),
                 result: Err(cancelled()),

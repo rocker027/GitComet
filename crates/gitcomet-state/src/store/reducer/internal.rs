@@ -505,6 +505,15 @@ pub(super) fn reduce(
         InternalMsg::BranchNotFullyMerged { repo_id, name } => {
             external_and_history::branch_not_fully_merged(inputs, state, repo_id, name)
         }
+        InternalMsg::GitUndoRefObserved {
+            repo_id,
+            kind,
+            reference,
+            value,
+        } => {
+            super::git_undo::ref_observed(state, repo_id, kind, &reference, value);
+            Vec::new()
+        }
         InternalMsg::RepoActionFinishedInWorktree {
             repo_id,
             action,

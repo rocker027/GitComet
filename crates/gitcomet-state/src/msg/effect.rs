@@ -384,6 +384,14 @@ pub enum Effect {
         repo_id: RepoId,
         index: usize,
     },
+    /// Runs an undo or redo as one `git update-ref` transaction.
+    ApplyGitUndo {
+        repo_id: RepoId,
+        direction: crate::model::GitUndoDirection,
+        updates: Vec<gitcomet_core::services::RefUpdate>,
+        /// Confirmed against the repository before `updates` run.
+        checks: Vec<crate::model::GitUndoCheck>,
+    },
     DropStash {
         repo_id: RepoId,
         index: usize,
@@ -466,6 +474,7 @@ impl Effect {
             | Self::Stash { .. }
             | Self::ApplyStash { .. }
             | Self::PopStash { .. }
+            | Self::ApplyGitUndo { .. }
             | Self::DropStash { .. } => true,
         }
     }

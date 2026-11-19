@@ -429,6 +429,7 @@ fn commit_finished_auth_error_uses_pending_retry_and_clears_it() {
         amend: false,
         push_after_commit: false,
         hooks: gitcomet_core::services::GitHooks::Run,
+        stage_paths: Vec::new(),
     });
 
     reduce(
@@ -441,6 +442,7 @@ fn commit_finished_auth_error_uses_pending_retry_and_clears_it() {
                 amend: false,
                 push_after_commit: false,
                 hooks: gitcomet_core::services::GitHooks::Run,
+                stage_paths: Vec::new(),
             },
             repo_id,
             result: Err(auth_error(
@@ -461,7 +463,8 @@ fn commit_finished_auth_error_uses_pending_retry_and_clears_it() {
                 message: "ship it".to_string(),
                 amend: false,
                 push_after_commit: false,
-                hooks: gitcomet_core::services::GitHooks::Run
+                hooks: gitcomet_core::services::GitHooks::Run,
+                stage_paths: Vec::new(),
             }
         }
     );
@@ -478,6 +481,7 @@ fn commit_amend_finished_auth_error_uses_pending_retry_with_amend() {
         amend: true,
         push_after_commit: false,
         hooks: gitcomet_core::services::GitHooks::Skip,
+        stage_paths: Vec::new(),
     });
 
     reduce(
@@ -490,6 +494,7 @@ fn commit_amend_finished_auth_error_uses_pending_retry_with_amend() {
                 amend: true,
                 push_after_commit: false,
                 hooks: gitcomet_core::services::GitHooks::Skip,
+                stage_paths: Vec::new(),
             },
             repo_id,
             result: Err(auth_error(
@@ -510,7 +515,8 @@ fn commit_amend_finished_auth_error_uses_pending_retry_with_amend() {
                 message: "fixup".to_string(),
                 amend: true,
                 push_after_commit: false,
-                hooks: gitcomet_core::services::GitHooks::Skip
+                hooks: gitcomet_core::services::GitHooks::Skip,
+                stage_paths: Vec::new(),
             }
         }
     );
@@ -529,12 +535,14 @@ fn commit_auth_retry_replays_the_failed_commit_not_the_latest_one() {
         amend: false,
         push_after_commit: false,
         hooks: gitcomet_core::services::GitHooks::Skip,
+        stage_paths: Vec::new(),
     };
     state.repos[0].pending.commit_retry = Some(CommitRequest {
         message: "second".to_string(),
         amend: true,
         push_after_commit: false,
         hooks: gitcomet_core::services::GitHooks::Run,
+        stage_paths: Vec::new(),
     });
 
     reduce(
@@ -556,6 +564,63 @@ fn commit_auth_retry_replays_the_failed_commit_not_the_latest_one() {
         AuthRetryOperation::Commit {
             repo_id,
             request: failed
+        }
+    );
+}
+
+/// "Stage all and commit" stages before it commits, so an auth failure
+/// comes after the stage: the retry only commits.
+#[test]
+fn commit_auth_retry_does_not_stage_again() {
+    let _lock = super::staged_auth_test_lock();
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+    let request = CommitRequest {
+        message: "ship it".to_string(),
+        amend: false,
+        push_after_commit: false,
+        hooks: gitcomet_core::services::GitHooks::Run,
+        stage_paths: vec![std::path::PathBuf::from("a.txt")],
+    };
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Commit {
+            repo_id,
+            request: request.clone(),
+        },
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::Commit { request: CommitRequest { stage_paths, .. }, .. }]
+            if stage_paths == &[std::path::PathBuf::from("a.txt")]
+    ));
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::CommitFinished {
+            repo_id,
+            request: request.clone(),
+            result: Err(auth_error(
+                "git commit failed: Enter passphrase for key '/home/user/.ssh/id_ed25519': terminal prompts disabled",
+            )),
+        }),
+    );
+
+    assert!(state.repos[0].pending.commit_retry.is_none());
+    let prompt = state.auth_prompt.expect("expected auth prompt");
+    assert_eq!(
+        prompt.operation,
+        AuthRetryOperation::Commit {
+            repo_id,
+            request: CommitRequest {
+                stage_paths: Vec::new(),
+                ..request
+            }
         }
     );
 }
@@ -799,6 +864,7 @@ fn submit_auth_prompt_replays_commit_and_commit_amend() {
                 amend: false,
                 push_after_commit: false,
                 hooks: gitcomet_core::services::GitHooks::Run,
+                stage_paths: Vec::new(),
             },
         },
     });
@@ -828,6 +894,7 @@ fn submit_auth_prompt_replays_commit_and_commit_amend() {
             amend: false,
             push_after_commit: false,
             hooks: gitcomet_core::services::GitHooks::Run,
+            stage_paths: Vec::new(),
         })
     );
 
@@ -844,6 +911,7 @@ fn submit_auth_prompt_replays_commit_and_commit_amend() {
                 amend: true,
                 push_after_commit: false,
                 hooks: gitcomet_core::services::GitHooks::Skip,
+                stage_paths: Vec::new(),
             },
         },
     });
@@ -876,6 +944,7 @@ fn submit_auth_prompt_replays_commit_and_commit_amend() {
             amend: true,
             push_after_commit: false,
             hooks: gitcomet_core::services::GitHooks::Skip,
+            stage_paths: Vec::new(),
         })
     );
 }

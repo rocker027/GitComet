@@ -1057,6 +1057,16 @@ pub(super) fn schedule_effect(
         Effect::PopStash { repo_id, index } => {
             repo_actions::schedule_pop_stash(executor, repos, msg_tx, repo_id, index);
         }
+        Effect::ApplyGitUndo {
+            repo_id,
+            direction,
+            updates,
+            checks,
+        } => {
+            repo_actions::schedule_git_undo(
+                executor, repos, msg_tx, repo_id, direction, updates, checks,
+            );
+        }
         Effect::DropStash { repo_id, index } => {
             repo_actions::schedule_drop_stash(executor, repos, msg_tx, repo_id, index);
         }

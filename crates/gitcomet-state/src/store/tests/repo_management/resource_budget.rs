@@ -29,6 +29,7 @@ fn commit_to_checked_push_keeps_its_backend_through_both_handoffs() {
                     message: "message".into(),
                     push_after_commit: true,
                     hooks: gitcomet_core::services::GitHooks::Run,
+                    stage_paths: Vec::new(),
                 },
             },
         );
@@ -51,6 +52,7 @@ fn commit_to_checked_push_keeps_its_backend_through_both_handoffs() {
                     message: "message".into(),
                     push_after_commit: true,
                     hooks: gitcomet_core::services::GitHooks::Run,
+                    stage_paths: Vec::new(),
                 },
                 repo_id: id,
                 result: Ok(CommitOperationOutcome::default()),

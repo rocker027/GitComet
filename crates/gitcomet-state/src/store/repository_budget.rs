@@ -448,6 +448,7 @@ mod tests {
                     amend: false,
                     push_after_commit: false,
                     hooks: gitcomet_core::services::GitHooks::Run,
+                    stage_paths: Vec::new(),
                 },
             },
         ] {

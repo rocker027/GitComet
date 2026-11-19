@@ -86,6 +86,7 @@ fn repo_state_with_tags_loaded(repo_id: RepoId) -> RepoState {
 mod large_files;
 
 mod command_completion;
+mod git_undo;
 mod head_changes;
 mod remote_commands;
 mod reword;

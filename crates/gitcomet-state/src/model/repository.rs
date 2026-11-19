@@ -1,5 +1,6 @@
 //! One open repository's state, identity, and lifetime.
 
+use super::GitUndoJournal;
 use super::LargeFileSettings;
 use super::{
     CommandLogEntry, ConflictState, DiffState, FileBrowserState, GitHookOperation, HistoryState,
@@ -162,6 +163,8 @@ pub struct RepoState {
     pub log_rev: u64,
     pub stashes: Loadable<Arc<Vec<StashEntry>>>,
     pub stashes_rev: u64,
+    /// Undo and redo of this run's ref-moving operations; never persisted.
+    pub git_undo: GitUndoJournal,
     pub reflog: Loadable<Arc<Vec<ReflogEntry>>>,
     pub reflog_rev: u64,
     pub recent_commit_messages: Loadable<Arc<Vec<RecentCommitMessage>>>,
@@ -443,6 +446,7 @@ impl RepoState {
             log_rev: 0,
             stashes: Loadable::NotLoaded,
             stashes_rev: 0,
+            git_undo: GitUndoJournal::default(),
             reflog: Loadable::NotLoaded,
             reflog_rev: 0,
             recent_commit_messages: Loadable::NotLoaded,
@@ -611,6 +615,8 @@ impl RepoState {
         }
         self.tags = tags;
         self.tags_rev = self.tags_rev.wrapping_add(1);
+        // The sidebar lists tags in their own section.
+        self.bump_branch_sidebar_rev();
     }
 
     pub(crate) fn set_remote_tags(&mut self, remote_tags: Loadable<Vec<RemoteTag>>) {
@@ -912,6 +918,7 @@ impl RepoState {
                 self.worktrees_rev,
                 self.submodules_rev,
                 self.stashes_rev,
+                self.tags_rev,
             ])
         }
     }
@@ -1268,7 +1275,7 @@ const BRANCH_SIDEBAR_REV_MIX: u64 = 0x9e37_79b9_7f4a_7c15;
 const STATUS_CACHE_REV_MIX: u64 = 0x517c_c1b7_2722_0a95;
 
 #[inline]
-fn mix_branch_sidebar_revs(values: [u64; 7]) -> u64 {
+fn mix_branch_sidebar_revs(values: [u64; 8]) -> u64 {
     let mut acc = BRANCH_SIDEBAR_REV_MIX;
     for value in values {
         acc ^= value.wrapping_mul(BRANCH_SIDEBAR_REV_MIX);

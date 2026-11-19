@@ -84,6 +84,8 @@ pub enum RepoActionKind {
     ApplyStash,
     PopStash,
     DropStash,
+    UndoGitOperation,
+    RedoGitOperation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,6 +109,8 @@ impl RepoActionKind {
                 | Self::DeleteBranch
                 | Self::ForceDeleteBranch
                 | Self::DeleteBranches
+                | Self::UndoGitOperation
+                | Self::RedoGitOperation
         )
     }
 
@@ -116,7 +120,9 @@ impl RepoActionKind {
             | Self::RenameBranch
             | Self::DeleteBranch
             | Self::ForceDeleteBranch
-            | Self::DeleteBranches => RepositoryRequirement::Repository,
+            | Self::DeleteBranches
+            | Self::UndoGitOperation
+            | Self::RedoGitOperation => RepositoryRequirement::Repository,
             Self::CheckoutBranch
             | Self::CheckoutRemoteBranch
             | Self::CheckoutCommit
@@ -166,7 +172,9 @@ impl RepoActionKind {
             | Self::StagePaths
             | Self::UnstagePath
             | Self::UnstagePaths
-            | Self::DropStash => false,
+            | Self::DropStash
+            | Self::UndoGitOperation
+            | Self::RedoGitOperation => false,
         }
     }
 
@@ -187,6 +195,8 @@ impl RepoActionKind {
             Self::ApplyStash => "Apply stash",
             Self::PopStash => "Pop stash",
             Self::DropStash => "Drop stash",
+            Self::UndoGitOperation => "Undo",
+            Self::RedoGitOperation => "Redo",
         }
     }
 }
@@ -1400,6 +1410,15 @@ pub enum Msg {
         repo_id: RepoId,
         index: usize,
     },
+    /// Undoes the newest recorded ref-moving operation of this run (commit,
+    /// branch creation or deletion, soft reset).
+    UndoGitOperation {
+        repo_id: RepoId,
+    },
+    /// Redoes the newest undone operation.
+    RedoGitOperation {
+        repo_id: RepoId,
+    },
     DropStash {
         repo_id: RepoId,
         index: usize,
@@ -1831,6 +1850,15 @@ pub enum InternalMsg {
     BranchNotFullyMerged {
         repo_id: RepoId,
         name: String,
+    },
+    /// The worker read `reference` just before the pending operation of
+    /// `kind` moved it: the value the Undo journal records. `None` when it
+    /// could not be read.
+    GitUndoRefObserved {
+        repo_id: RepoId,
+        kind: crate::model::PendingGitUndoKind,
+        reference: String,
+        value: Option<gitcomet_core::domain::CommitId>,
     },
     /// The action was carried out in (or redirected to) another worktree that
     /// has the branch checked out; on success that worktree is opened.

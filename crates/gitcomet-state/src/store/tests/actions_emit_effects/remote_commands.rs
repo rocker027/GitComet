@@ -950,6 +950,7 @@ fn commit_finished_push_after_commit_enqueues_safe_push_only_on_success() {
         amend: false,
         push_after_commit: true,
         hooks: gitcomet_core::services::GitHooks::Run,
+        stage_paths: Vec::new(),
     });
 
     let effects = reduce(
@@ -962,6 +963,7 @@ fn commit_finished_push_after_commit_enqueues_safe_push_only_on_success() {
                 amend: false,
                 push_after_commit: true,
                 hooks: gitcomet_core::services::GitHooks::Run,
+                stage_paths: Vec::new(),
             },
             repo_id,
             result: Ok(gitcomet_core::services::CommitOperationOutcome {
@@ -992,6 +994,7 @@ fn commit_finished_push_after_commit_enqueues_safe_push_only_on_success() {
         amend: false,
         push_after_commit: true,
         hooks: gitcomet_core::services::GitHooks::Run,
+        stage_paths: Vec::new(),
     });
 
     let effects = reduce(
@@ -1004,6 +1007,7 @@ fn commit_finished_push_after_commit_enqueues_safe_push_only_on_success() {
                 amend: false,
                 push_after_commit: true,
                 hooks: gitcomet_core::services::GitHooks::Run,
+                stage_paths: Vec::new(),
             },
             repo_id,
             result: Err(Error::new(ErrorKind::Backend("commit boom".to_string()))),
@@ -1039,6 +1043,7 @@ fn a_finished_commit_pushes_by_its_own_request_not_the_latest_one() {
         amend: false,
         push_after_commit: true,
         hooks: GitHooks::Skip,
+        stage_paths: Vec::new(),
     };
     for request in [
         first.clone(),
@@ -1047,6 +1052,7 @@ fn a_finished_commit_pushes_by_its_own_request_not_the_latest_one() {
             amend: false,
             push_after_commit: false,
             hooks: GitHooks::Run,
+            stage_paths: Vec::new(),
         },
     ] {
         reduce(
@@ -1120,6 +1126,7 @@ fn skipped_hooks_follow_the_commit_to_the_push_after_it() {
                 message: "wip".to_string(),
                 push_after_commit: true,
                 hooks: GitHooks::Skip,
+                stage_paths: Vec::new(),
             },
         },
     );
@@ -1155,6 +1162,7 @@ fn skipped_hooks_follow_the_commit_to_the_push_after_it() {
                 message: "wip".to_string(),
                 push_after_commit: true,
                 hooks: GitHooks::Skip,
+                stage_paths: Vec::new(),
             },
             repo_id,
             result: Ok(gitcomet_core::services::CommitOperationOutcome {

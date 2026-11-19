@@ -215,6 +215,9 @@ pub struct CommitRequest {
     pub push_after_commit: bool,
     /// Kept by the push after this commit.
     pub hooks: gitcomet_core::services::GitHooks,
+    /// Paths staged by the same operation just before the commit, for
+    /// "Stage all and commit". Empty stages nothing.
+    pub stage_paths: Vec<std::path::PathBuf>,
 }
 
 #[derive(Clone, Debug)]

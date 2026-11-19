@@ -557,6 +557,14 @@ pub(super) fn send_unavailable_git_effect_result(
         Effect::PopStash { repo_id, .. } => {
             send_repo_action_unavailable(repo_id, RepoActionKind::PopStash, runtime, &send)
         }
+        Effect::ApplyGitUndo {
+            repo_id, direction, ..
+        } => send_repo_action_unavailable(
+            repo_id,
+            crate::model::GitUndoDirection::action_kind(direction),
+            runtime,
+            &send,
+        ),
         Effect::DropStash { repo_id, .. } => {
             send_repo_action_unavailable(repo_id, RepoActionKind::DropStash, runtime, &send)
         }
