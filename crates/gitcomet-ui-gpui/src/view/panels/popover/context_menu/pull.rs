@@ -216,6 +216,24 @@ pub(super) fn model(this: &PopoverHost, language: Language) -> ContextMenuModel 
             action: Box::new(ContextMenuAction::PruneLocalTags { repo_id }),
         },
     ]);
+    if let Some(repo) = this.active_repo()
+        && let Loadable::Ready(branch) = &repo.head_branch
+        && !branch.is_empty()
+        && branch != "HEAD"
+    {
+        model.items.push(ContextMenuItem::Entry {
+            label: language.text("Manage upstream…", "管理上游分支…").into(),
+            icon: Some("icons/cloud.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::OpenPopover {
+                kind: PopoverKind::UpstreamPicker {
+                    repo_id: repo.id,
+                    branch: branch.clone(),
+                },
+            }),
+        });
+    }
     if let Some(reason) = pull_unavailable {
         for (ix, item) in model.items.iter().enumerate() {
             if let ContextMenuItem::Entry { action, .. } = item

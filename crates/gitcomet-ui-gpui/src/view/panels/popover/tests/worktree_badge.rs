@@ -526,42 +526,42 @@ mod badges {
     }
 
     #[gpui::test]
-    fn upstream_badge_arrow_pull_and_push_follow_the_local_branch(cx: &mut gpui::TestAppContext) {
+    fn pull_and_push_follow_the_local_branch_without_an_upstream_badge(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let repo_id = RepoId(1);
         let (_view, cx) = draw_with_repo(cx, repo_with_upstream(repo_id), repo_id);
 
         let branch = cx.debug_bounds("branch_badge").expect("branch badge");
-        let arrow = cx.debug_bounds("upstream_arrow").expect("upstream arrow");
-        let upstream = cx.debug_bounds("upstream_badge").expect("upstream badge");
         let pull = cx.debug_bounds("pull").expect("pull button");
         let push = cx.debug_bounds("push").expect("push button");
 
-        assert!(arrow.origin.x >= branch.origin.x + branch.size.width);
-        assert!(upstream.origin.x >= arrow.origin.x + arrow.size.width);
-        assert!(pull.origin.x >= upstream.origin.x + upstream.size.width);
-        assert!(push.origin.x >= pull.origin.x + pull.size.width);
+        assert!(cx.debug_bounds("upstream_arrow").is_none());
+        assert!(cx.debug_bounds("upstream_badge").is_none());
+        assert!(pull.left() >= branch.right() && pull.left() - branch.right() <= px(12.0));
+        assert!(push.left() >= pull.right());
     }
 
     #[gpui::test]
-    fn branch_badges_use_available_width_for_the_name_suffix(cx: &mut gpui::TestAppContext) {
+    fn branch_badge_uses_available_width_for_the_name_suffix(cx: &mut gpui::TestAppContext) {
         let widths_for = |cx: &mut gpui::TestAppContext, name: &str| {
             let repo_id = RepoId(1);
             let (_, cx) = draw_with_repo(cx, repo_tracking_branch(repo_id, name), repo_id);
             cx.simulate_resize(gpui::size(px(1800.0), px(560.0)));
             redraw(cx);
-            ["branch_badge", "upstream_badge"]
-                .map(|selector| cx.debug_bounds(selector).expect(selector).size.width)
+            cx.debug_bounds("branch_badge")
+                .expect("branch badge")
+                .size
+                .width
         };
         // The prefix is already longer than the previous 28-character limit.
         let prefix = "release/mobile-worktree-update";
         let short = widths_for(cx, prefix);
         let long = widths_for(cx, &format!("{prefix}-signing-and-provisioning"));
-        for (short, long) in short.into_iter().zip(long) {
-            assert!(
-                long > short + px(100.0),
-                "a longer branch should show its suffix when space is available: {short:?}, {long:?}"
-            );
-        }
+        assert!(
+            long > short + px(100.0),
+            "a longer branch should show its suffix when space is available: {short:?}, {long:?}"
+        );
     }
 
     #[gpui::test]
@@ -592,35 +592,19 @@ mod badges {
     }
 
     #[gpui::test]
-    fn empty_upstream_badge_stays_between_the_branch_and_pull_push(cx: &mut gpui::TestAppContext) {
-        let repo_id = RepoId(1);
-        let (_view, cx) = draw_with_repo(cx, repo_without_upstream(repo_id), repo_id);
-
-        let branch = cx.debug_bounds("branch_badge").expect("branch badge");
-        let arrow = cx.debug_bounds("upstream_arrow").expect("upstream arrow");
-        let upstream = cx
-            .debug_bounds("upstream_badge")
-            .expect("empty upstream badge");
-        let pull = cx.debug_bounds("pull").expect("pull button");
-        let push = cx.debug_bounds("push").expect("push button");
-
-        assert!(arrow.origin.x >= branch.origin.x + branch.size.width);
-        assert!(upstream.origin.x >= arrow.origin.x + arrow.size.width);
-        assert!(pull.origin.x >= upstream.origin.x + upstream.size.width);
-        assert!(push.origin.x >= pull.origin.x + pull.size.width);
-    }
-
-    #[gpui::test]
-    fn empty_upstream_badge_still_opens_its_picker(cx: &mut gpui::TestAppContext) {
+    fn pull_menu_opens_the_upstream_picker_for_an_untracked_branch(cx: &mut gpui::TestAppContext) {
         let repo_id = RepoId(1);
         let (view, cx) = draw_with_repo(cx, repo_without_upstream(repo_id), repo_id);
 
-        let center = cx.debug_bounds("upstream_badge").expect("badge").center();
-        cx.simulate_mouse_move(center, None, gpui::Modifiers::default());
-        cx.simulate_mouse_down(center, gpui::MouseButton::Left, gpui::Modifiers::default());
-        cx.simulate_mouse_up(center, gpui::MouseButton::Left, gpui::Modifiers::default());
-        cx.run_until_parked();
-        redraw(cx);
+        assert!(cx.debug_bounds("upstream_badge").is_none());
+        for selector in ["pull_menu", "context_menu_manage_upstream"] {
+            let center = cx.debug_bounds(selector).expect(selector).center();
+            cx.simulate_mouse_move(center, None, gpui::Modifiers::default());
+            cx.simulate_mouse_down(center, gpui::MouseButton::Left, gpui::Modifiers::default());
+            cx.simulate_mouse_up(center, gpui::MouseButton::Left, gpui::Modifiers::default());
+            cx.run_until_parked();
+            redraw(cx);
+        }
 
         let kind = cx.update(|_window, app| {
             view.read(app)
@@ -755,7 +739,6 @@ mod badges {
                 "global_nav",
                 "worktree_badge",
                 "branch_badge",
-                "upstream_badge",
                 "pull",
                 "push",
                 "create_branch",

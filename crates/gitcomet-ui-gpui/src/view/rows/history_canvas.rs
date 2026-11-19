@@ -1204,11 +1204,26 @@ fn paint_history_chip(
         window,
     );
 
+    let content_x = chip_bounds.left() + pad_x;
+    let leading_check = icons.first() == Some(&HistoryBranchChipIcon::Check);
+    let text_x = if leading_check {
+        // Reuse the spacing already reserved for the check so the chip keeps
+        // the same text budget and bounds when the check moves before the name.
+        let check_gap = if icons.len() > 1 {
+            icon_gap
+        } else {
+            text_icon_gap
+        };
+        content_x + icon_size + check_gap
+    } else {
+        content_x
+    };
+
     // Center the line box on the chip even when it is taller than the chip
     // (clamping the offset to zero pushed the glyphs visibly below center).
     let text_y = chip_bounds.top() + (chip_bounds.size.height - line_height) * 0.5;
     let _ = shaped.paint(
-        point(chip_bounds.left() + pad_x, text_y),
+        point(text_x, text_y),
         line_height,
         gpui::TextAlign::Left,
         None,
@@ -1216,15 +1231,16 @@ fn paint_history_chip(
         cx,
     );
 
-    let mut icon_x = chip_bounds.left() + pad_x + shaped.width;
-    if !icons.is_empty() {
-        icon_x += text_icon_gap;
-    }
+    let mut trailing_icon_x = text_x + shaped.width + text_icon_gap;
     for (ix, icon) in icons.iter().enumerate() {
-        if ix > 0 {
-            icon_x += icon_gap;
-        }
         let painted_icon_size = icon.size(icon_size, combined_icon_size);
+        let icon_x = if leading_check && ix == 0 {
+            content_x
+        } else {
+            let x = trailing_icon_x;
+            trailing_icon_x += painted_icon_size + icon_gap;
+            x
+        };
         let cell = Bounds::new(
             point(icon_x, chip_bounds.top()),
             size(painted_icon_size, chip_bounds.size.height),
@@ -1247,7 +1263,6 @@ fn paint_history_chip(
                 cx,
             );
         }
-        icon_x += painted_icon_size;
     }
 }
 

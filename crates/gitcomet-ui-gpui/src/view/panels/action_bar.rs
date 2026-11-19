@@ -14,12 +14,9 @@ const ACTION_BAR_HEIGHT_PX: f32 = components::CONTROL_HEIGHT_PX + 12.0;
 const TOOLBAR_TILE_MIN_WIDTH_PX: f32 = 850.0;
 
 // The main window supports widths down to 820 design pixels. At that size the
-// branch/upstream run and the fixed actions cannot all retain full
-// text. Pull/Push retain their labels because they describe the remote
-// operation beside the upstream badge, except in compact mode at Comfortable or
-// Spacious density, where every control is wider and only icons still fit.
-// Only compact mode hides the remaining action labels; condensed mode keeps
-// them while using tighter spacing.
+// branch name and fixed actions cannot all retain full text. Compact mode uses
+// icon-only Pull and Push at Comfortable and Spacious densities. Condensed
+// mode keeps action labels while using tighter spacing.
 // Tooltips keep omitted labels available in compact mode.
 const COMPACT_ACTION_BAR_MAX_WIDTH_PX: f32 = 1120.0;
 const CONDENSED_ACTION_BAR_MAX_WIDTH_PX: f32 = 1400.0;
@@ -258,26 +255,6 @@ fn head_branch_tracking_upstream_name(
 ) -> Option<String> {
     head_branch_upstream(head_branch, branches)
         .map(|upstream| format!("{}/{}", upstream.remote, upstream.branch))
-}
-
-/// Returns the local branch that owns the upstream badge and its optional
-/// tracking target. Badge visibility intentionally depends only on having a
-/// checked-out local branch: an absent (or not-yet-loaded) upstream is the
-/// state in which the badge offers to configure one, not a reason to hide it.
-fn upstream_badge_state<'a>(
-    head_branch: &'a Loadable<String>,
-    branches: &Loadable<Arc<Vec<Branch>>>,
-) -> Option<(&'a str, Option<String>)> {
-    let Loadable::Ready(branch) = head_branch else {
-        return None;
-    };
-    if branch.is_empty() || branch == "HEAD" {
-        return None;
-    }
-    Some((
-        branch.as_str(),
-        head_branch_tracking_upstream_name(head_branch, branches),
-    ))
 }
 
 fn pull_tooltip_text(
@@ -1115,87 +1092,6 @@ impl BarItemOwner for ActionBarView {
             )
         });
 
-        let upstream_badge = self.active_repo().and_then(|repo| {
-            let (branch, upstream) = upstream_badge_state(&repo.head_branch, &repo.branches)?;
-            let has_upstream = upstream.is_some();
-            let repo_id = repo.id;
-            let local_branch = branch.to_string();
-            let label = upstream
-                .as_deref()
-                .map(SharedString::from)
-                .unwrap_or_else(|| language.text("No upstream", "無上游").into());
-            let badge_color = if has_upstream {
-                icon_primary
-            } else {
-                theme.colors.foreground.secondary
-            };
-            let tooltip: SharedString = upstream.as_deref().map_or_else(
-                || {
-                    language
-                        .text(
-                            "No upstream branch configured\nClick to select one",
-                            "尚未設定上游分支\n點選以指定上游",
-                        )
-                        .into()
-                },
-                |upstream| {
-                    match language {
-                        Language::English => {
-                            format!("Tracking upstream {upstream}\nClick to change or unlink")
-                        }
-                        Language::TraditionalChinese => {
-                            format!("正在追蹤上游 {upstream}\n點選以變更或取消追蹤")
-                        }
-                    }
-                    .into()
-                },
-            );
-            let invoker: SharedString = "upstream_badge".into();
-            let is_active = active_invoker
-                .as_ref()
-                .is_some_and(|id| id.as_ref() == invoker.as_ref());
-            Some(
-                components::Button::new("upstream_badge", label)
-                    .truncate_label()
-                    .start_slot(icon("icons/cloud.svg", badge_color))
-                    .style(components::ButtonStyle::Subtle)
-                    .text_color(if has_upstream {
-                        theme.colors.foreground.primary
-                    } else {
-                        theme.colors.foreground.secondary
-                    })
-                    .open(is_active)
-                    .selected_bg(menu_selected_bg)
-                    .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
-                        this.open_popover_for_bounds(
-                            (PopoverKind::UpstreamPicker {
-                                repo_id,
-                                branch: local_branch.clone(),
-                            })
-                            .invoked_by(invoker.clone()),
-                            bounds,
-                            window,
-                            cx,
-                        );
-                    })
-                    .min_w(badge_min_width)
-                    .debug_selector(|| "upstream_badge".to_string())
-                    .gitcomet_tooltip(theme, tooltip),
-            )
-        });
-        let upstream_arrow = upstream_badge.is_some().then(|| {
-            div()
-                .debug_selector(|| "upstream_arrow".to_string())
-                .flex()
-                .flex_none()
-                .items_center()
-                .child(svg_icon(
-                    "icons/arrow_right.svg",
-                    theme.colors.foreground.secondary,
-                    scaled_px(12.0),
-                ))
-        });
-
         let pull_color = if pull_count > 0 {
             theme.colors.status.warning.foreground
         } else {
@@ -1587,10 +1483,6 @@ impl BarItemOwner for ActionBarView {
             .gitcomet_tooltip(theme, language.text("Create branch", "建立分支").into()),
         );
 
-        // Keep the branch, its tracking target, and the operations that use
-        // that target together. Pull/Push stay in this run even before the
-        // branch has an upstream, so the action bar does not jump around after
-        // the first push.
         let tracking_actions = div()
             .id("tracking_actions")
             .debug_selector(|| "tracking_actions".to_string())
@@ -1599,8 +1491,6 @@ impl BarItemOwner for ActionBarView {
             .items_center()
             .gap(tracking_action_gap)
             .children(branch_badge)
-            .children(upstream_arrow)
-            .children(upstream_badge)
             .child(pull)
             .child(push);
 
@@ -2161,27 +2051,6 @@ mod tests {
         assert_eq!(
             secondary_action_label(ActionBarDensity::Wide, true, "Stash"),
             "Stash"
-        );
-    }
-
-    #[test]
-    fn upstream_badge_state_remains_present_without_tracking_upstream() {
-        let head_branch = Loadable::Ready("feat/no-upstream".to_string());
-        let branches = Loadable::Ready(Arc::new(vec![test_branch("feat/no-upstream", None)]));
-
-        assert_eq!(
-            upstream_badge_state(&head_branch, &branches),
-            Some(("feat/no-upstream", None))
-        );
-    }
-
-    #[test]
-    fn upstream_badge_state_remains_present_while_branch_metadata_loads() {
-        let head_branch = Loadable::Ready("feat/no-upstream".to_string());
-
-        assert_eq!(
-            upstream_badge_state(&head_branch, &Loadable::Loading),
-            Some(("feat/no-upstream", None))
         );
     }
 
