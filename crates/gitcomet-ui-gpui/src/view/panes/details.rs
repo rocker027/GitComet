@@ -1,6 +1,7 @@
 use super::super::path_display;
 use super::super::*;
 use crate::kit::text_truncation::path_alignment_visible_signature;
+use crate::localization::text;
 use crate::view::pending_commit::PendingCommit;
 use gitcomet_core::history_find::HistoryFindQuery;
 use rustc_hash::FxHasher;
@@ -8,6 +9,10 @@ use std::hash::{Hash, Hasher};
 
 mod review;
 mod review_search;
+
+const COMMIT_MESSAGE_PLACEHOLDER: (&str, &str) = ("What changed and why", "變更內容與原因");
+const COMMIT_REWORD_PLACEHOLDER: (&str, &str) = ("Enter commit message", "輸入提交訊息");
+const REVIEW_SEARCH_PLACEHOLDER: (&str, &str) = ("Filter files", "篩選檔案");
 
 /// A commit message being edited in the commit details. Kept only while that
 /// commit stays the one shown.
@@ -451,7 +456,12 @@ impl DetailsPaneView {
         let commit_message_input = cx.new(|cx| {
             let mut input = components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "What changed and why".into(),
+                    placeholder: text(
+                        cx,
+                        COMMIT_MESSAGE_PLACEHOLDER.0,
+                        COMMIT_MESSAGE_PLACEHOLDER.1,
+                    )
+                    .into(),
                     multiline: true,
                     soft_wrap: true,
                     // The commit box draws the card around the input.
@@ -486,7 +496,8 @@ impl DetailsPaneView {
         let commit_reword_input = cx.new(|cx| {
             let mut input = components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Enter commit message".into(),
+                    placeholder: text(cx, COMMIT_REWORD_PLACEHOLDER.0, COMMIT_REWORD_PLACEHOLDER.1)
+                        .into(),
                     multiline: true,
                     soft_wrap: true,
                     ..Default::default()
@@ -537,7 +548,8 @@ impl DetailsPaneView {
         let review_search_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Filter files".into(),
+                    placeholder: text(cx, REVIEW_SEARCH_PLACEHOLDER.0, REVIEW_SEARCH_PLACEHOLDER.1)
+                        .into(),
                     chromeless: true,
                     ..Default::default()
                 },
@@ -3149,6 +3161,16 @@ impl Render for DetailsPaneView {
         #[cfg(any(test, feature = "benchmarks"))]
         {
             self.render_count += 1;
+        }
+        for (input, (english, traditional_chinese)) in [
+            (&self.commit_message_input, COMMIT_MESSAGE_PLACEHOLDER),
+            (&self.commit_reword_input, COMMIT_REWORD_PLACEHOLDER),
+            (&self.review_search_input, REVIEW_SEARCH_PLACEHOLDER),
+        ] {
+            let hint = text(cx, english, traditional_chinese);
+            if input.read(cx).placeholder() != hint {
+                input.update(cx, |input, cx| input.set_placeholder(hint, cx));
+            }
         }
         div()
             .size_full()

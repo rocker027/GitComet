@@ -16,7 +16,11 @@ impl SidebarPaneView {
         let SidebarRowSlot { row_style, .. } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
-        let tooltip = tooltip.clone();
+        let tooltip = if message.is_empty() {
+            text(cx, "Stash", "貯藏").into()
+        } else {
+            tooltip
+        };
         let stash_message_for_menu = message.as_ref().to_owned();
         let context_menu_invoker: SharedString =
             format!("stash_menu_{}_{}", repo_id.0, index).into();
@@ -322,7 +326,7 @@ impl SidebarPaneView {
                 row.child(
                     components::Button::new(
                         format!("submodule_placeholder_load_{}", repo_id.0),
-                        "Load",
+                        text(cx, "Load", "載入"),
                     )
                     .borderless()
                     .on_click(theme, cx, move |this, _e, _window, _cx| {
@@ -354,11 +358,13 @@ impl SidebarPaneView {
         let path_label = this.cached_path_display(&path);
         let (icon_color, badge_label, can_open, tooltip) = {
             let badge_label = match status {
-                SubmoduleStatus::NotInitialized => Some("Not loaded"),
-                SubmoduleStatus::HeadMismatch => Some("Head mismatch"),
-                SubmoduleStatus::MergeConflict => Some("Conflict"),
-                SubmoduleStatus::MissingMapping => Some("Missing mapping"),
-                SubmoduleStatus::Unknown(_) => Some("Unknown"),
+                SubmoduleStatus::NotInitialized => Some(text(cx, "Not loaded", "尚未載入")),
+                SubmoduleStatus::HeadMismatch => Some(text(cx, "Head mismatch", "HEAD 不一致")),
+                SubmoduleStatus::MergeConflict => Some(text(cx, "Conflict", "衝突")),
+                SubmoduleStatus::MissingMapping => {
+                    Some(text(cx, "Missing mapping", "缺少對應設定"))
+                }
+                SubmoduleStatus::Unknown(_) => Some(text(cx, "Unknown", "未知")),
                 SubmoduleStatus::UpToDate => None,
             };
             let icon_color = match status {
@@ -381,13 +387,17 @@ impl SidebarPaneView {
             let checked_out = checked_out_head
                 .as_ref()
                 .map(|head| head.as_ref())
-                .unwrap_or("not loaded");
-            let tooltip: SharedString = format!(
-                "{}\nRecorded: {}\nChecked out: {}",
-                path.display(),
-                recorded_head.as_ref(),
-                checked_out,
-            )
+                .unwrap_or(text(cx, "not loaded", "尚未載入"));
+            let display_path = path.display();
+            let recorded = recorded_head.as_ref();
+            let tooltip: SharedString = match Language::current(cx) {
+                Language::English => {
+                    format!("{display_path}\nRecorded: {recorded}\nChecked out: {checked_out}")
+                }
+                Language::TraditionalChinese => {
+                    format!("{display_path}\n已記錄：{recorded}\n已簽出：{checked_out}")
+                }
+            }
             .into();
             (icon_color, badge_label, can_open, tooltip)
         };

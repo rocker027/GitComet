@@ -1,6 +1,7 @@
 //! The commit message form: submit gating, submission, and the commit box.
 
 use super::*;
+use crate::localization::{Language, text};
 use crate::view::pending_commit::PendingCommit;
 use gitcomet_core::services::GitHooks;
 
@@ -32,31 +33,74 @@ impl CommitOptions {
 
     /// The commit button's label and tooltip. Skipped hooks show on the button
     /// itself, since the choice outlasts the commit it was made for.
-    pub(super) fn button_text(self) -> (&'static str, &'static str) {
-        match (self.amend, self.push_after, self.skip_hooks) {
-            (false, false, false) => ("Commit", "Commit staged changes"),
-            (false, true, false) => ("Commit & Push", "Commit staged changes and push"),
-            (true, false, false) => ("Amend", "Amend the previous commit"),
+    pub(super) fn button_text(self, language: Language) -> (&'static str, &'static str) {
+        let (english, traditional_chinese) = match (self.amend, self.push_after, self.skip_hooks) {
+            (false, false, false) => (
+                ("Commit", "Commit staged changes"),
+                ("提交", "提交已暫存的變更"),
+            ),
+            (false, true, false) => (
+                ("Commit & Push", "Commit staged changes and push"),
+                ("提交並推送", "提交已暫存的變更並推送"),
+            ),
+            (true, false, false) => (
+                ("Amend", "Amend the previous commit"),
+                ("修訂", "修訂上一筆提交"),
+            ),
             (true, true, false) => (
-                "Amend & Push",
-                "Amend the previous commit; published amends require explicit force push with lease",
+                (
+                    "Amend & Push",
+                    "Amend the previous commit; published amends require explicit force push with lease",
+                ),
+                (
+                    "修訂並推送",
+                    "修訂上一筆提交。若原提交已推送，須另外執行有租約的強制推送（force push with lease）。",
+                ),
             ),
             (false, false, true) => (
-                "Commit without Hooks",
-                "Commit staged changes without running the pre-commit and commit-msg hooks",
+                (
+                    "Commit without Hooks",
+                    "Commit staged changes without running the pre-commit and commit-msg hooks",
+                ),
+                (
+                    "提交（略過掛鉤）",
+                    "提交已暫存的變更，略過 pre-commit 和 commit-msg 掛鉤。",
+                ),
             ),
             (false, true, true) => (
-                "Commit & Push without Hooks",
-                "Commit staged changes and push without running the pre-commit, commit-msg and pre-push hooks",
+                (
+                    "Commit & Push without Hooks",
+                    "Commit staged changes and push without running the pre-commit, commit-msg and pre-push hooks",
+                ),
+                (
+                    "提交並推送（略過掛鉤）",
+                    "提交已暫存的變更並推送，略過 pre-commit、commit-msg 和 pre-push 掛鉤。",
+                ),
             ),
             (true, false, true) => (
-                "Amend without Hooks",
-                "Amend the previous commit without running the pre-commit and commit-msg hooks",
+                (
+                    "Amend without Hooks",
+                    "Amend the previous commit without running the pre-commit and commit-msg hooks",
+                ),
+                (
+                    "修訂（略過掛鉤）",
+                    "修訂上一筆提交，略過 pre-commit 和 commit-msg 掛鉤。",
+                ),
             ),
             (true, true, true) => (
-                "Amend & Push without Hooks",
-                "Amend the previous commit without running the pre-commit, commit-msg and pre-push hooks; published amends require explicit force push with lease",
+                (
+                    "Amend & Push without Hooks",
+                    "Amend the previous commit without running the pre-commit, commit-msg and pre-push hooks; published amends require explicit force push with lease",
+                ),
+                (
+                    "修訂並推送（略過掛鉤）",
+                    "修訂上一筆提交，略過 pre-commit、commit-msg 和 pre-push 掛鉤。若原提交已推送，須另外執行有租約的強制推送（force push with lease）。",
+                ),
             ),
+        };
+        match language {
+            Language::English => english,
+            Language::TraditionalChinese => traditional_chinese,
         }
     }
 }
@@ -164,16 +208,17 @@ impl DetailsPaneView {
         };
         let options = self.commit_options();
         let amend = options.amend;
+        let language = Language::current(cx);
         let (commit_label, commit_tooltip) = CommitOptions {
             push_after: false,
             ..options
         }
-        .button_text();
+        .button_text(language);
         let (push_label, push_tooltip) = CommitOptions {
             push_after: true,
             ..options
         }
-        .button_text();
+        .button_text(language);
         let previous_messages_invoker: SharedString = "previous_commit_messages".into();
         let previous_messages_active = self
             .active_context_menu_invoker
@@ -289,32 +334,43 @@ impl DetailsPaneView {
                         .child(label),
                 )
         };
-        let amend_toggle = checkbox("commit_amend_toggle", "Amend previous commit", amend)
-            .on_activate(
-                false,
-                components::ControlActivation::Action,
-                cx.listener(|this, e: &ClickEvent, _w, cx| {
-                    if e.standard_click() {
-                        this.toggle_commit_amend(cx);
-                    }
-                }),
-            );
-        let skip_hooks_toggle =
-            checkbox("commit_skip_hooks_toggle", "Skip hooks", options.skip_hooks)
-                .on_activate(
-                    false,
-                    components::ControlActivation::Action,
-                    cx.listener(|this, e: &ClickEvent, _w, cx| {
-                        if e.standard_click() {
-                            this.toggle_commit_skip_hooks(cx);
-                        }
-                    }),
-                )
-                .gitcomet_tooltip(
-                    theme,
-                    "Skip the pre-commit, commit-msg and pre-push hooks until this window closes"
-                        .into(),
-                );
+        let amend_toggle = checkbox(
+            "commit_amend_toggle",
+            text(cx, "Amend previous commit", "修訂上一筆提交"),
+            amend,
+        )
+        .on_activate(
+            false,
+            components::ControlActivation::Action,
+            cx.listener(|this, e: &ClickEvent, _w, cx| {
+                if e.standard_click() {
+                    this.toggle_commit_amend(cx);
+                }
+            }),
+        );
+        let skip_hooks_toggle = checkbox(
+            "commit_skip_hooks_toggle",
+            text(cx, "Skip hooks", "略過掛鉤"),
+            options.skip_hooks,
+        )
+        .on_activate(
+            false,
+            components::ControlActivation::Action,
+            cx.listener(|this, e: &ClickEvent, _w, cx| {
+                if e.standard_click() {
+                    this.toggle_commit_skip_hooks(cx);
+                }
+            }),
+        )
+        .gitcomet_tooltip(
+            theme,
+            text(
+                cx,
+                "Skip the pre-commit, commit-msg and pre-push hooks until this window closes",
+                "關閉此視窗前，略過 pre-commit、commit-msg 和 pre-push 掛鉤。",
+            )
+            .into(),
+        );
         let previous_messages_menu = components::Button::new("previous_commit_messages", "")
             .start_slot(
                 svg_icon(
@@ -342,7 +398,10 @@ impl DetailsPaneView {
                 );
             })
             .debug_selector(|| "previous_commit_messages_button".to_string())
-            .gitcomet_tooltip(theme, "Previous commit messages".into());
+            .gitcomet_tooltip(
+                theme,
+                text(cx, "Previous commit messages", "先前的提交訊息").into(),
+            );
         let message_card = div()
             .flex()
             .flex_col()
@@ -360,7 +419,7 @@ impl DetailsPaneView {
                     .text_size(theme.ui_text(13.0))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.colors.foreground.primary)
-                    .child("Commit Message"),
+                    .child(text(cx, "Commit Message", "提交訊息")),
             )
             .child(div().px_3().py_2().child(commit_message));
         div()

@@ -2,6 +2,7 @@
 //! changed files between two points.
 
 use super::*;
+use crate::localization::{Language, text};
 use crate::view::panes::{ComparisonCardCache, ComparisonOrderCache};
 use crate::view::rows::CommitCard;
 use gitcomet_state::model::{ComparisonSource, RangeSelection};
@@ -429,7 +430,7 @@ impl DetailsPaneView {
                     .text_size(theme.ui_text(14.0))
                     .font_weight(FontWeight::BOLD)
                     .line_clamp(1)
-                    .child(SharedString::from(format!("{count} commits selected"))),
+                    .child(selected_commits_label(count, Language::current(cx))),
             )
             .child(
                 components::Button::new("commit_details_close", "")
@@ -442,7 +443,10 @@ impl DetailsPaneView {
                     .on_click(theme, cx, |this, _e, window, cx| {
                         this.close_review_details(window, cx);
                     })
-                    .gitcomet_tooltip(theme, "Close commit details".into()),
+                    .gitcomet_tooltip(
+                        theme,
+                        text(cx, "Close commit details", "關閉提交詳情").into(),
+                    ),
             );
 
         // Shown when the selection has no comparison: three or more commits
@@ -452,7 +456,7 @@ impl DetailsPaneView {
             .debug_selector(|| "multi_commit_no_merged_diff".to_string())
             .text_size(theme.ui_text(14.0))
             .text_color(theme.colors.foreground.secondary)
-            .child("Select two commits to compare them, or consecutive commits to see their combined changes.");
+            .child(text(cx, "Select two commits to compare them, or consecutive commits to see their combined changes.", "選取兩筆提交來比較，或選取一段連續的提交以查看合併後的變更。"));
         let body = self.commit_cards_list(repo_id, count, cx);
 
         div()
@@ -517,7 +521,8 @@ impl DetailsPaneView {
             (card_count, range, files_state)
         };
 
-        let (header_title, subheader) = comparison_titles(&range, card_count);
+        let language = Language::current(cx);
+        let (header_title, subheader) = comparison_titles(&range, card_count, language);
 
         let header = components::content_header_bar(theme, ui_scale)
             .justify_between()
@@ -544,7 +549,7 @@ impl DetailsPaneView {
                         }
                         cx.notify();
                     })
-                    .gitcomet_tooltip(theme, "Close comparison".into()),
+                    .gitcomet_tooltip(theme, text(cx, "Close comparison", "關閉比較").into()),
             );
 
         // Compared-commit preview cards. A two-point comparison has one or two,
@@ -576,11 +581,16 @@ impl DetailsPaneView {
         // selector names which of the two the label is, so a test can tell them
         // apart without reading painted text.
         let (files_label, files_label_selector): (SharedString, &'static str) = match &files_state {
-            RangeFilesState::Loading | RangeFilesState::Failed(_) => {
-                ("Changed files".into(), "range_files_label_pending")
-            }
+            RangeFilesState::Loading | RangeFilesState::Failed(_) => (
+                text(cx, "Changed files", "變更的檔案").into(),
+                "range_files_label_pending",
+            ),
             RangeFilesState::Loaded(count) => {
-                (format!("{count} changed").into(), "range_files_label_count")
+                let label = match language {
+                    Language::English => format!("{count} changed"),
+                    Language::TraditionalChinese => format!("{count} 個檔案有變更"),
+                };
+                (label.into(), "range_files_label_count")
             }
         };
         let (range_row_count, range_counts) = self
@@ -621,7 +631,7 @@ impl DetailsPaneView {
                 .debug_selector(|| "range_files_loading".to_string())
                 .text_size(theme.ui_text(14.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child("Loading")
+                .child(text(cx, "Loading", "載入中"))
                 .into_any_element(),
             // An error must not render as "No files." — that is exactly what a
             // pair of identical commits looks like, so the user would read a
@@ -636,7 +646,7 @@ impl DetailsPaneView {
                 .debug_selector(|| "range_files_empty".to_string())
                 .text_size(theme.ui_text(14.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child("No files.")
+                .child(text(cx, "No files.", "沒有檔案。"))
                 .into_any_element(),
             RangeFilesState::Loaded(_) => Self::vertical_scroll_frame_content(
                 theme,
@@ -763,17 +773,48 @@ impl DetailsPaneView {
 
 /// The comparison view's header and subheader. Only a merged selection is a
 /// "merged diff"; a selected pair and an explicit compare name their endpoints.
-fn comparison_titles(range: &RangeSelection, card_count: usize) -> (SharedString, SharedString) {
-    let endpoints = || format!("Viewing diff: {} → {}", range.from_label, range.to_label).into();
+fn comparison_titles(
+    range: &RangeSelection,
+    card_count: usize,
+    language: Language,
+) -> (SharedString, SharedString) {
+    let endpoints = || {
+        match language {
+            Language::English => format!("Viewing diff: {} → {}", range.from_label, range.to_label),
+            Language::TraditionalChinese => {
+                format!("比較差異：{} → {}", range.from_label, range.to_label)
+            }
+        }
+        .into()
+    };
     match range.source {
         ComparisonSource::MergedSelection => (
-            format!("{card_count} commits selected").into(),
-            format!("Viewing merged diff of {card_count} commits").into(),
+            selected_commits_label(card_count, language).into(),
+            match language {
+                Language::English => format!("Viewing merged diff of {card_count} commits"),
+                Language::TraditionalChinese => format!("查看 {card_count} 筆提交的合併差異"),
+            }
+            .into(),
         ),
-        ComparisonSource::SelectedPair => {
-            (format!("{card_count} commits selected").into(), endpoints())
-        }
-        ComparisonSource::Explicit => ("Comparison".into(), endpoints()),
+        ComparisonSource::SelectedPair => (
+            selected_commits_label(card_count, language).into(),
+            endpoints(),
+        ),
+        ComparisonSource::Explicit => (
+            match language {
+                Language::English => "Comparison",
+                Language::TraditionalChinese => "比較",
+            }
+            .into(),
+            endpoints(),
+        ),
+    }
+}
+
+fn selected_commits_label(count: usize, language: Language) -> String {
+    match language {
+        Language::English => format!("{count} commits selected"),
+        Language::TraditionalChinese => format!("已選取 {count} 筆提交"),
     }
 }
 
@@ -795,22 +836,39 @@ mod tests {
 
     #[test]
     fn a_selected_pair_names_its_endpoints_not_a_merged_diff() {
-        let (title, subheader) = comparison_titles(&range(ComparisonSource::SelectedPair), 2);
+        let (title, subheader) =
+            comparison_titles(&range(ComparisonSource::SelectedPair), 2, Language::English);
         assert_eq!(title.as_ref(), "2 commits selected");
         assert_eq!(subheader.as_ref(), "Viewing diff: aaaa → bbbb");
     }
 
     #[test]
     fn a_merged_selection_names_its_commit_count() {
-        let (title, subheader) = comparison_titles(&range(ComparisonSource::MergedSelection), 3);
+        let (title, subheader) = comparison_titles(
+            &range(ComparisonSource::MergedSelection),
+            3,
+            Language::English,
+        );
         assert_eq!(title.as_ref(), "3 commits selected");
         assert_eq!(subheader.as_ref(), "Viewing merged diff of 3 commits");
     }
 
     #[test]
     fn an_explicit_comparison_names_its_endpoints() {
-        let (title, subheader) = comparison_titles(&range(ComparisonSource::Explicit), 2);
+        let (title, subheader) =
+            comparison_titles(&range(ComparisonSource::Explicit), 2, Language::English);
         assert_eq!(title.as_ref(), "Comparison");
         assert_eq!(subheader.as_ref(), "Viewing diff: aaaa → bbbb");
+    }
+
+    #[test]
+    fn localized_comparison_keeps_range_endpoints() {
+        let (title, subheader) = comparison_titles(
+            &range(ComparisonSource::Explicit),
+            2,
+            Language::TraditionalChinese,
+        );
+        assert_eq!(title.as_ref(), "比較");
+        assert_eq!(subheader.as_ref(), "比較差異：aaaa → bbbb");
     }
 }

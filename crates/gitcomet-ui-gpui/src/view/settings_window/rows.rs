@@ -958,10 +958,14 @@ impl SettingsWindowView {
         range
             .filter_map(|ix| CHANGE_TRACKING_OPTIONS.get(ix).copied())
             .map(|(id, option, detail)| {
+                let chinese_detail = match option {
+                    ChangeTrackingView::Combined => "將未追蹤的檔案顯示在未暫存區",
+                    ChangeTrackingView::SplitUntracked => "在未暫存區上方顯示獨立的未追蹤區",
+                };
                 this.option_row(
                     id,
-                    option.label(),
-                    Some(detail.into()),
+                    super::cards::change_tracking_label(cx, option, option.label()),
+                    Some(crate::localization::text(cx, detail, chinese_detail).into()),
                     this.change_tracking_view == option,
                     theme,
                 )
@@ -987,10 +991,15 @@ impl SettingsWindowView {
         range
             .filter_map(|ix| FILE_LIST_LAYOUT_OPTIONS.get(ix).copied())
             .map(|(id, option, detail)| {
+                let chinese_detail = match option {
+                    FileListLayout::Flat => "顯示每個變更檔案的完整路徑",
+                    FileListLayout::Tree => "依資料夾排列變更檔案",
+                    FileListLayout::Groups => "依變更類型或檢視中的群組排列變更檔案",
+                };
                 this.option_row(
                     id,
-                    option.label(),
-                    Some(detail.into()),
+                    super::cards::file_list_layout_label(cx, option),
+                    Some(crate::localization::text(cx, detail, chinese_detail).into()),
                     this.file_list_layout == option,
                     theme,
                 )
@@ -1016,10 +1025,20 @@ impl SettingsWindowView {
         range
             .filter_map(|ix| FILE_LIST_SORT_OPTIONS.get(ix).copied())
             .map(|(id, option, detail)| {
+                use crate::view::rows::CommitFileSort::*;
+                let chinese_detail = match option {
+                    PathAscending => "依路徑從 A 排到 Z",
+                    PathDescending => "依路徑從 Z 排到 A",
+                    FileTypeAscending => "依副檔名分組，從 A 排到 Z",
+                    FileTypeDescending => "依副檔名分組，從 Z 排到 A",
+                    EditSizeAscending => "變更行數較少的檔案在前",
+                    EditSizeDescending => "變更行數較多的檔案在前",
+                    Edits => "相同變更的檔案列在一起，檔案數較多的群組在前",
+                };
                 this.option_row(
                     id,
-                    option.label(),
-                    Some(detail.into()),
+                    super::cards::file_list_sort_label(cx, option),
+                    Some(crate::localization::text(cx, detail, chinese_detail).into()),
                     this.file_list_sort == option,
                     theme,
                 )
@@ -1248,7 +1267,7 @@ impl SettingsWindowView {
         components::settings_nav_item(
             category.nav_id(),
             category.icon(),
-            category.label(),
+            category.label(Language::current(cx)),
             selected,
             theme,
             self.row_scale(theme),
@@ -1307,7 +1326,7 @@ impl SettingsWindowView {
                     .py_1()
                     .text_size(theme.ui_text(14.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child("No matching settings"),
+                    .child(text(cx, "No matching settings", "找不到符合的設定")),
             );
         }
 

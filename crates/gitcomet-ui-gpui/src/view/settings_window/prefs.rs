@@ -21,6 +21,7 @@ impl SettingsWindowView {
             sidebar_collapsed: None,
             repo_sidebar_collapsed_items: None,
             repo_sidebar_pinned_branches: None,
+            ui_language: None,
             theme_mode: Some(self.theme_mode.key().to_string()),
             ui_scale_percent: Some(self.default_ui_scale_percent),
             image_sampling_mode: None,

@@ -275,6 +275,59 @@ fn expanded_history_columns_section_renders_detail_container(cx: &mut gpui::Test
 }
 
 #[gpui::test]
+fn settings_ui_language_switches_between_english_and_traditional_chinese(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (settings, cx) = cx.add_window_view(SettingsWindowView::new);
+    cx.simulate_resize(size(px(880.0), px(720.0)));
+
+    let click = |cx: &mut gpui::VisualTestContext, selector| {
+        cx.run_until_parked();
+        cx.update(|window, app| {
+            let _ = window.draw(app);
+        });
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("missing {selector}"));
+        cx.simulate_click(bounds.center(), Modifiers::default());
+    };
+
+    click(cx, "settings_window_nav_appearance");
+    click(cx, "settings_window_language");
+    click(cx, "settings_window_language_zh-TW");
+    cx.run_until_parked();
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+        assert_eq!(Language::current(app), Language::TraditionalChinese);
+        assert_eq!(
+            SettingsCategory::Appearance.label(Language::current(app)),
+            "外觀"
+        );
+        assert!(SettingsCategory::Appearance.matches_query("語言"));
+        assert_eq!(
+            settings.read(app).search_input.read(app).placeholder(),
+            "搜尋"
+        );
+    });
+
+    click(cx, "settings_window_language");
+    click(cx, "settings_window_language_en");
+    cx.run_until_parked();
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+        assert_eq!(Language::current(app), Language::English);
+        assert_eq!(
+            SettingsCategory::Appearance.label(Language::current(app)),
+            "Appearance"
+        );
+        assert_eq!(
+            settings.read(app).search_input.read(app).placeholder(),
+            "Search"
+        );
+    });
+}
+
+#[gpui::test]
 fn expanded_git_log_default_mode_section_renders_modes_in_order_and_updates_selection(
     cx: &mut gpui::TestAppContext,
 ) {

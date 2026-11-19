@@ -43,6 +43,104 @@ fn image_sampling_settings_round_trip_and_survive_other_writers() {
 }
 
 #[test]
+fn ui_language_round_trips_without_overwriting_existing_preferences() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let path = dir.path().join("session.json");
+    for version in [SESSION_FILE_VERSION_V2, CURRENT_SESSION_FILE_VERSION] {
+        let previous = serde_json::json!({
+            "version": version,
+            "theme_mode": "dark",
+            "ui_scale_percent": 125
+        });
+        fs::write(&path, serde_json::to_vec(&previous).unwrap()).expect("seed session");
+        assert_eq!(load_from_path(&path).ui_language, None);
+
+        persist_ui_settings_to_path(
+            UiSettings {
+                ui_language: Some("zh-TW".into()),
+                ..Default::default()
+            },
+            &path,
+        )
+        .expect("save Traditional Chinese");
+
+        let session = load_from_path(&path);
+        assert_eq!(session.ui_language.as_deref(), Some("zh-TW"));
+        assert_eq!(session.theme_mode.as_deref(), Some("dark"));
+        assert_eq!(session.ui_scale_percent, Some(125));
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).expect("read saved session");
+        assert_eq!(persisted["version"], CURRENT_SESSION_FILE_VERSION);
+        assert_eq!(persisted["ui_language"], "zh-TW");
+
+        persist_ui_settings_to_path(
+            UiSettings {
+                ui_scale_percent: Some(100),
+                ..Default::default()
+            },
+            &path,
+        )
+        .expect("save unrelated setting");
+        assert_eq!(load_from_path(&path).ui_language.as_deref(), Some("zh-TW"));
+
+        persist_ui_settings_to_path(
+            UiSettings {
+                ui_language: Some("en".into()),
+                ..Default::default()
+            },
+            &path,
+        )
+        .expect("save English");
+        let session = load_from_path(&path);
+        assert_eq!(session.ui_language.as_deref(), Some("en"));
+        assert_eq!(session.theme_mode.as_deref(), Some("dark"));
+        assert_eq!(session.ui_scale_percent, Some(100));
+    }
+}
+
+#[test]
+fn saving_ui_language_migrates_v1_and_preserves_the_active_repository() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let path = dir.path().join("session.json");
+    let repository = dir.path().join("repository");
+    let previous = serde_json::json!({
+        "version": SESSION_FILE_VERSION_V1,
+        "open_repos": [&repository],
+        "active_repo": &repository
+    });
+    fs::write(&path, serde_json::to_vec(&previous).unwrap()).expect("seed v1 session");
+    assert_eq!(load_from_path(&path).ui_language, None);
+
+    persist_ui_settings_to_path(
+        UiSettings {
+            ui_language: Some("zh-TW".into()),
+            ..Default::default()
+        },
+        &path,
+    )
+    .expect("save Traditional Chinese and migrate session");
+    let session = load_from_path(&path);
+    assert_eq!(session.ui_language.as_deref(), Some("zh-TW"));
+    assert_eq!(session.active_repo.as_ref(), Some(&repository));
+    assert_eq!(session.open_repos, [repository]);
+}
+
+#[test]
+fn malformed_ui_language_does_not_discard_the_session() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let path = dir.path().join("session.json");
+    let previous = serde_json::json!({
+        "version": CURRENT_SESSION_FILE_VERSION,
+        "ui_language": 42,
+        "theme_mode": "dark"
+    });
+    fs::write(&path, serde_json::to_vec(&previous).unwrap()).expect("seed session");
+    let session = load_from_path(&path);
+    assert_eq!(session.ui_language, None);
+    assert_eq!(session.theme_mode.as_deref(), Some("dark"));
+}
+
+#[test]
 fn signature_verification_requires_fresh_opt_in_and_survives_other_writers() {
     let dir_guard = tempfile::tempdir().expect("create tempdir");
     let dir = dir_guard.path().to_path_buf();

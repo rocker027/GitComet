@@ -1,3 +1,4 @@
+use crate::localization::Language;
 use gitcomet_core::domain::{HistoryFocus, HistoryFocusSet, RemoteBranch};
 use gitcomet_state::model::RepoState;
 
@@ -54,21 +55,24 @@ fn count(
 }
 
 /// `1 ref`, `8 refs`.
-pub(crate) fn refs_label(count: usize) -> String {
-    format!("{count} {}", if count == 1 { "ref" } else { "refs" })
+pub(crate) fn refs_label(count: usize, language: Language) -> String {
+    match language {
+        Language::English => format!("{count} {}", if count == 1 { "ref" } else { "refs" }),
+        Language::TraditionalChinese => format!("{count} 個參照"),
+    }
 }
 
 /// What the REF header chip says after "Focus: " — the ref's own name when one
 /// is focused, otherwise how many are, because a list of names does not fit the
 /// chip. `None` while nothing is focused.
-pub(crate) fn history_focus_label(repo: &RepoState) -> Option<String> {
+pub(crate) fn history_focus_label(repo: &RepoState, language: Language) -> Option<String> {
     let focus = &repo.history_state.history_focus;
     if focus.is_empty() {
         return None;
     }
     Some(match focus.single() {
         Some(only) => only.label(),
-        None => refs_label(history_focus_count(repo).focused),
+        None => refs_label(history_focus_count(repo).focused, language),
     })
 }
 
@@ -132,7 +136,8 @@ mod tests {
 
     #[test]
     fn refs_label_agrees_with_its_count() {
-        assert_eq!(refs_label(1), "1 ref");
-        assert_eq!(refs_label(8), "8 refs");
+        assert_eq!(refs_label(1, Language::English), "1 ref");
+        assert_eq!(refs_label(8, Language::English), "8 refs");
+        assert_eq!(refs_label(8, Language::TraditionalChinese), "8 個參照");
     }
 }

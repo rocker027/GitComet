@@ -1,5 +1,6 @@
 use super::super::super::*;
 use crate::kit::interaction as controls;
+use crate::localization::{Language, text};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -112,16 +113,21 @@ impl HistoryView {
                 )
                 .into_any_element()
         } else if count == 0 {
+            let history = text(cx, "History", "提交歷史");
             match repo.map(|r| &r.log) {
-                None => {
-                    components::empty_state(theme, "History", "No repository.").into_any_element()
-                }
+                None => components::empty_state(
+                    theme,
+                    history,
+                    text(cx, "No repository.", "沒有開啟的儲存庫。"),
+                )
+                .into_any_element(),
                 Some(Loadable::Loading) => div().into_any_element(),
                 Some(Loadable::Error(e)) => {
-                    components::empty_state(theme, "History", e.clone()).into_any_element()
+                    components::empty_state(theme, history, e.clone()).into_any_element()
                 }
                 Some(Loadable::NotLoaded) | Some(Loadable::Ready(_)) => {
-                    components::empty_state(theme, "History", "No commits.").into_any_element()
+                    components::empty_state(theme, history, text(cx, "No commits.", "尚無提交。"))
+                        .into_any_element()
                 }
             }
         } else if self.indexed.presentation.is_some() {
@@ -833,49 +839,75 @@ impl HistoryView {
         let handle_w = scaled_px(HISTORY_COL_HANDLE_PX);
         let handle_half = scaled_px(HISTORY_COL_HANDLE_PX / 2.0);
         let cell_pad = handle_half;
-        let history_mode_label: SharedString = self
+        let history_mode = self
             .active_repo()
-            .map(|r| {
-                crate::view::history_mode::history_mode_label(r.history_state.history_scope)
-                    .to_string()
-            })
-            .unwrap_or_else(|| {
-                crate::view::history_mode::history_mode_label(
-                    gitcomet_core::domain::HistoryMode::default(),
-                )
-                .to_string()
-            })
-            .into();
+            .map(|r| r.history_state.history_scope)
+            .unwrap_or_default();
+        let history_mode_label =
+            crate::view::history_mode::localized_history_mode_label(history_mode, cx);
+        let language = Language::current(cx);
         // A focused walk shows one ref's commits and nothing else, which is
         // drastic enough that the header has to say so rather than leave the
         // mode name explaining a graph it no longer describes.
         let history_focus_label: Option<String> = self
             .active_repo()
-            .and_then(crate::view::history_focus::history_focus_label);
-        let scope_label: SharedString = match &history_focus_label {
-            Some(focused_on) => format!("Focus: {focused_on}").into(),
-            None => history_mode_label.clone(),
+            .and_then(|repo| crate::view::history_focus::history_focus_label(repo, language));
+        let scope_label: SharedString = match (language, history_focus_label.as_deref()) {
+            (Language::English, Some(focused_on)) => format!("Focus: {focused_on}").into(),
+            (Language::TraditionalChinese, Some(focused_on)) => {
+                format!("聚焦：{focused_on}").into()
+            }
+            (_, None) => history_mode_label.into(),
         };
+        let scope_tooltip: SharedString = match (language, history_focus_label.as_deref()) {
+            (Language::English, Some(focused_on)) => {
+                format!("Focused on {focused_on} · History mode: {history_mode_label}")
+            }
+            (Language::TraditionalChinese, Some(focused_on)) => {
+                format!("聚焦於 {focused_on} · 歷史顯示模式：{history_mode_label}")
+            }
+            (Language::English, None) => format!("History mode: {history_mode_label}"),
+            (Language::TraditionalChinese, None) => format!("歷史顯示模式：{history_mode_label}"),
+        }
+        .into();
         let scope_repo_id = self.active_repo_id();
         let index_error = self
             .active_repo()
             .is_some_and(|repo| repo.history_state.indexed.error.is_some());
         let message_label: Option<SharedString> = if index_error {
-            Some("Full history unavailable · retry".into())
+            Some(
+                text(
+                    cx,
+                    "Full history unavailable · retry",
+                    "無法載入完整歷史 · 重試",
+                )
+                .into(),
+            )
         } else if self.loading.status_visible(cx.background_executor().now()) {
             Some(
                 self.active_repo()
                     .filter(|repo| repo.history_state.indexed.loading)
                     .and_then(|repo| repo.history_state.indexed.progress.as_ref())
-                    .map(|progress| format!("Loading history · {} commits found", progress.matched))
-                    .unwrap_or_else(|| "Loading history…".to_owned())
+                    .map(|progress| match language {
+                        Language::English => {
+                            format!("Loading history · {} commits found", progress.matched)
+                        }
+                        Language::TraditionalChinese => {
+                            format!("正在載入歷史 · 已找到 {} 筆提交", progress.matched)
+                        }
+                    })
+                    .unwrap_or_else(|| text(cx, "Loading history…", "正在載入歷史…").to_owned())
                     .into(),
             )
         } else {
-            self.indexed
-                .presentation
-                .as_ref()
-                .map(|shown| format!("{} commits", shown.graph.projection.len()).into())
+            self.indexed.presentation.as_ref().map(|shown| {
+                let count = shown.graph.projection.len();
+                match language {
+                    Language::English => format!("{count} commits"),
+                    Language::TraditionalChinese => format!("{count} 筆提交"),
+                }
+                .into()
+            })
         };
 
         let scope_invoker: SharedString = "history_mode_header".into();
@@ -889,7 +921,7 @@ impl HistoryView {
         let author_label: SharedString = self
             .active_repo()
             .and_then(|r| r.history_state.history_author_filter.clone())
-            .unwrap_or_else(|| "Author".to_string())
+            .unwrap_or_else(|| text(cx, "Author", "作者").to_owned())
             .into();
         let author_invoker: SharedString = "history_author_filter_header".into();
         let author_anchor_bounds: Rc<RefCell<Option<Bounds<Pixels>>>> = Rc::new(RefCell::new(None));
@@ -912,8 +944,11 @@ impl HistoryView {
         let author_tooltip: SharedString = self
             .active_repo()
             .and_then(|r| r.history_state.history_author_filter.clone())
-            .map(|name| format!("Author filter: {name}"))
-            .unwrap_or_else(|| "Filter history by author".to_string())
+            .map(|name| match language {
+                Language::English => format!("Author filter: {name}"),
+                Language::TraditionalChinese => format!("作者篩選：{name}"),
+            })
+            .unwrap_or_else(|| text(cx, "Filter history by author", "依作者篩選歷史").to_owned())
             .into();
 
         let ui_scale_percent = self.ui_scale_percent;
@@ -1073,16 +1108,7 @@ impl HistoryView {
                             }),
                         )
                     })
-                    .gitcomet_tooltip(
-                        theme,
-                        match &history_focus_label {
-                            Some(focused_on) => format!(
-                                "Focused on {focused_on} · History mode: {history_mode_label}"
-                            )
-                            .into(),
-                            None => format!("History mode: {history_mode_label}").into(),
-                        },
-                    ),
+                    .gitcomet_tooltip(theme, scope_tooltip),
             );
         let (ref_control, graph_control, message_control) = if !inline_refs {
             (Some(scope_control), None, None)
@@ -1140,7 +1166,7 @@ impl HistoryView {
                     .debug_selector(|| "history_message_header_cell".to_string())
                     .when_some(message_control, |cell, control| cell
                         .items_center().gap_2().child(control))
-                    .child(div().flex_none().child("MESSAGE"))
+                    .child(div().flex_none().child(text(cx, "MESSAGE", "提交訊息")))
                     .when_some(message_label, |cell, label| cell.child(
                         div()
                             .flex_1().min_w(px(0.0)).line_clamp(1).whitespace_nowrap()
@@ -1261,7 +1287,7 @@ impl HistoryView {
                     .px(cell_pad)
                     .whitespace_nowrap()
                     .overflow_hidden()
-                    .child("DATE"),
+                    .child(text(cx, "DATE", "日期")),
             );
         }
 

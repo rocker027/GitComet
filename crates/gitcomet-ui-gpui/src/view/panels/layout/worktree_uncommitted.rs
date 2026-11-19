@@ -1,6 +1,7 @@
 //! The details view for another linked worktree's uncommitted changes.
 
 use super::*;
+use crate::localization::{Language, text};
 
 impl DetailsPaneView {
     /// The changed files of a linked worktree that is *not* this tab, shown when
@@ -54,7 +55,7 @@ impl DetailsPaneView {
                     .font_weight(FontWeight::BOLD)
                     // Not "Uncommitted changes": that is the current repo's
                     // own row, and these are somebody else's.
-                    .child(SharedString::from("Worktree changes")),
+                    .child(text(cx, "Worktree changes", "工作樹變更")),
             )
             .child(div().flex_1().min_w(px(0.0)))
             .child({
@@ -72,7 +73,12 @@ impl DetailsPaneView {
                 .debug_selector(|| "worktree_uncommitted_open".to_string())
                 .gitcomet_tooltip(
                     theme,
-                    format!("Open this worktree in a tab\n{}", worktree_path.display()).into(),
+                    format!(
+                        "{}\n{}",
+                        text(cx, "Open this worktree in a tab", "在分頁開啟此工作樹"),
+                        worktree_path.display()
+                    )
+                    .into(),
                 )
                 // A chip is a control of its own: a right or middle click must not
                 // open a repo tab, and a left click must not reach the row behind it.
@@ -104,7 +110,7 @@ impl DetailsPaneView {
                     .on_click(theme, cx, move |this, _e, window, cx| {
                         this.close_review_details(window, cx);
                     })
-                    .gitcomet_tooltip(theme, "Close".into()),
+                    .gitcomet_tooltip(theme, text(cx, "Close", "關閉").into()),
             );
 
         // No "no files" state: the scan only reports a worktree once
@@ -159,7 +165,7 @@ impl DetailsPaneView {
                 .debug_selector(|| "worktree_files_loading".to_string())
                 .text_size(theme.ui_text(14.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child("Loading files…")
+                .child(text(cx, "Loading files…", "正在載入檔案…"))
                 .into_any_element()
         } else {
             Self::vertical_scroll_frame_content(
@@ -216,7 +222,12 @@ impl DetailsPaneView {
                                     .text_size(theme.ui_text(14.0))
                                     .text_color(theme.colors.foreground.secondary)
                                     .line_clamp(1)
-                                    .child(SharedString::from(format!("{file_count} changed"))),
+                                    .child(match Language::current(cx) {
+                                        Language::English => format!("{file_count} changed"),
+                                        Language::TraditionalChinese => {
+                                            format!("{file_count} 個檔案有變更")
+                                        }
+                                    }),
                             )
                             .child(worktree_controls),
                     )

@@ -3,6 +3,8 @@
 
 use super::*;
 use crate::kit::click::PointerClickExt as _;
+use crate::localization::{Language, text};
+use crate::view::rows::{CommitFileFilter, FileListId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CommitFileFilterLabels {
@@ -125,8 +127,29 @@ impl DetailsPaneView {
             let count = counts.for_filter(filter);
             let selected = current == filter;
             let disabled = count == 0;
-            let full_label = format!("{} ({count})", filter.label());
-            let tooltip = filter.tooltip_in(list.filter_scope(), count);
+            let (label, tooltip) = match Language::current(cx) {
+                Language::English => (
+                    filter.label(),
+                    filter.tooltip_in(list.filter_scope(), count),
+                ),
+                Language::TraditionalChinese => {
+                    let scope = match list {
+                        FileListId::Status(_) => "工作樹",
+                        FileListId::CommitFiles => "這筆提交",
+                        FileListId::WorktreeFiles => "這個工作樹",
+                        FileListId::RangeFiles => "這次比較",
+                    };
+                    let (label, files) = match filter {
+                        CommitFileFilter::All => ("全部", "所有變更"),
+                        CommitFileFilter::Modified => ("修改", "已修改"),
+                        CommitFileFilter::Removed => ("刪除", "已刪除"),
+                        CommitFileFilter::Added => ("新增", "已新增"),
+                        CommitFileFilter::Renamed => ("更名", "已更名"),
+                    };
+                    (label, format!("顯示{scope}中{files}的檔案（{count} 個）"))
+                }
+            };
+            let full_label = format!("{label} ({count})");
             let display_label = match labels {
                 CommitFileFilterLabels::Full => full_label.clone(),
                 CommitFileFilterLabels::Compact => count.to_string(),
@@ -291,13 +314,17 @@ impl DetailsPaneView {
             div()
                 .text_size(theme.ui_text(14.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child("No files.")
+                .child(text(cx, "No files.", "沒有檔案。"))
                 .into_any_element()
         } else if visible_count == 0 {
             div()
                 .text_size(theme.ui_text(14.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child("No files match this filter.")
+                .child(text(
+                    cx,
+                    "No files match this filter.",
+                    "沒有符合篩選條件的檔案。",
+                ))
                 .into_any_element()
         } else {
             Self::vertical_scroll_frame_content(
@@ -345,7 +372,11 @@ impl DetailsPaneView {
                     .text_size(theme.ui_text(14.0))
                     .text_color(theme.colors.foreground.secondary)
                     .line_clamp(1)
-                    .child(format!("Committed files ({})", projection.counts.all)),
+                    .child(format!(
+                        "{} ({})",
+                        text(cx, "Committed files", "已提交的檔案"),
+                        projection.counts.all
+                    )),
             )
             .child(controls);
         let filters_width = self

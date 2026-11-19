@@ -4,6 +4,7 @@
 
 use super::indexed_graph::IndexedGraph;
 use super::*;
+use crate::localization::text;
 use components::QuickSearchStatus;
 use gitcomet_core::history_find::HistoryFindQuery;
 use gitcomet_core::history_index::HistoryIndex;
@@ -256,11 +257,12 @@ impl HistoryView {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        let placeholder = text(cx, "Find commits", "搜尋提交");
         let find = self.find.get_or_insert_with(|| {
             let input = cx.new(|cx| {
                 components::TextInput::new(
                     components::TextInputOptions {
-                        placeholder: "Find commits".into(),
+                        placeholder: placeholder.into(),
                         chromeless: true,
                         ..Default::default()
                     },
@@ -896,6 +898,8 @@ impl HistoryView {
     ) -> Option<AnyElement> {
         let find = self.find.as_ref().filter(|find| find.open)?;
         let (input, options, bar) = (find.input.clone(), find.options, find.bar.clone());
+        let placeholder = text(cx, "Find commits", "搜尋提交");
+        input.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
         let theme = self.theme;
         let ui_scale =
             ui_scale::UiScale::from_percent(self.ui_scale_percent).with_appearance(theme.metrics);

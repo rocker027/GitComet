@@ -352,11 +352,11 @@ fn status_action_labels_rewrite_the_wording() {
         "Ustg (1)"
     );
     assert_eq!(
-        status_action_all_label(StatusActionLabels::Full, "Unstage all changes"),
+        status_action_all_label(StatusActionLabels::Full, "Unstage all changes", "All"),
         "Unstage all changes"
     );
     assert_eq!(
-        status_action_all_label(StatusActionLabels::Compact, "Unstage all changes"),
+        status_action_all_label(StatusActionLabels::Compact, "Unstage all changes", "All"),
         "All"
     );
 }
@@ -486,7 +486,7 @@ fn commit_button_names_skipped_hooks() {
                     push_after,
                     skip_hooks,
                 };
-                let (label, tooltip) = options.button_text();
+                let (label, tooltip) = options.button_text(crate::localization::Language::English);
                 assert!(labels.insert(label), "{label} is used twice");
                 assert_eq!(label.contains("without Hooks"), skip_hooks, "{label}");
                 assert_eq!(tooltip.contains("without running"), skip_hooks, "{tooltip}");
@@ -497,7 +497,7 @@ fn commit_button_names_skipped_hooks() {
         }
     }
     assert_eq!(
-        CommitOptions::default().button_text(),
+        CommitOptions::default().button_text(crate::localization::Language::English),
         ("Commit", "Commit staged changes")
     );
 }

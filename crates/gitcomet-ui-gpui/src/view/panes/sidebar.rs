@@ -12,6 +12,7 @@ use super::super::sidebar_presentation::{
 };
 use super::super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
+use crate::localization::{Language, text};
 use gitcomet_core::domain::{FileEntry, FileEntryKind, LogScope};
 use gitcomet_state::model::{Loadable, SidebarDataRequest, SidebarMode};
 use gitcomet_state::msg::Msg;
@@ -214,15 +215,15 @@ impl CollapsedSidebarSection {
         }
     }
 
-    pub(in crate::view) fn title(self) -> &'static str {
+    pub(in crate::view) fn title(self, cx: &App) -> &'static str {
         match self {
-            Self::Local => "Local Branches",
-            Self::Remote => "Remote Branches",
-            Self::Worktrees => "Worktrees",
-            Self::Submodules => "Submodules",
+            Self::Local => text(cx, "Local Branches", "本機分支"),
+            Self::Remote => text(cx, "Remote Branches", "遠端分支"),
+            Self::Worktrees => text(cx, "Worktrees", "工作樹"),
+            Self::Submodules => text(cx, "Submodules", "子模組"),
             Self::Annex => "git-annex",
-            Self::Stashes => "Stashes",
-            Self::Files => "Files",
+            Self::Stashes => text(cx, "Stashes", "貯藏"),
+            Self::Files => text(cx, "Files", "檔案"),
         }
     }
 
@@ -574,7 +575,7 @@ impl SidebarPaneView {
         let file_browser_search_input = cx.new(|cx| {
             let mut input = TextInput::new_inert(
                 TextInputOptions {
-                    placeholder: "Search files".into(),
+                    placeholder: text(cx, "Search files", "搜尋檔案").into(),
                     chromeless: true,
                     multiline: true,
                     ..Default::default()
@@ -616,7 +617,7 @@ impl SidebarPaneView {
         let branch_filter_input = cx.new(|cx| {
             TextInput::new_inert(
                 TextInputOptions {
-                    placeholder: "Search branches".into(),
+                    placeholder: text(cx, "Search branches", "搜尋分支").into(),
                     chromeless: true,
                     ..Default::default()
                 },
@@ -649,7 +650,7 @@ impl SidebarPaneView {
             explorer_name_input: cx.new(|cx| {
                 TextInput::new_inert(
                     TextInputOptions {
-                        placeholder: "Name".into(),
+                        placeholder: text(cx, "Name", "名稱").into(),
                         chromeless: true,
                         ..Default::default()
                     },
@@ -1551,7 +1552,7 @@ impl SidebarPaneView {
                     .text_size(theme.ui_text(12.0))
                     .font_weight(FontWeight::BOLD)
                     .text_color(theme.colors.foreground.primary)
-                    .child(section.title()),
+                    .child(section.title(cx)),
             )
             .child(self.render_section_locator(section, cx))
             .when_some(section_menu.clone(), |header, (invoker, kind)| {
@@ -1583,7 +1584,7 @@ impl SidebarPaneView {
                         })
                         .w(components::control_height(ui_scale))
                         .h(components::control_height(ui_scale))
-                        .gitcomet_tooltip(theme, "More actions".into())
+                        .gitcomet_tooltip(theme, text(cx, "More actions", "更多操作").into())
                         .debug_selector(|| "collapsed_popover_section_menu".to_string()),
                 )
             });
@@ -1892,6 +1893,10 @@ impl SidebarPaneView {
         // be focused too, so leaving them out of the total would let the count
         // read "3/2".
         let count = crate::view::history_focus::history_focus_count(repo);
+        let count_label = match Language::current(cx) {
+            Language::English => format!("Focusing {}/{}", count.focused, count.total),
+            Language::TraditionalChinese => format!("聚焦 {}/{}", count.focused, count.total),
+        };
         let accent = theme.colors.accent;
         let store = self.store.clone();
 
@@ -1920,18 +1925,21 @@ impl SidebarPaneView {
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .debug_selector(|| "branch_sidebar_focus_banner_count".to_string())
-                            .child(format!("Focusing {}/{}", count.focused, count.total)),
+                            .child(count_label),
                     )
                     .child(
-                        components::Button::new("branch_sidebar_focus_banner_stop", "Stop focus")
-                            .borderless()
-                            .style(components::ButtonStyle::Subtle)
-                            .on_click(theme, cx, move |_this, _e, _w, _cx| {
-                                store.dispatch(Msg::SetHistoryFocus {
-                                    repo_id,
-                                    focus: gitcomet_core::domain::HistoryFocusSet::default(),
-                                });
-                            }),
+                        components::Button::new(
+                            "branch_sidebar_focus_banner_stop",
+                            text(cx, "Stop focus", "停止聚焦"),
+                        )
+                        .borderless()
+                        .style(components::ButtonStyle::Subtle)
+                        .on_click(theme, cx, move |_this, _e, _w, _cx| {
+                            store.dispatch(Msg::SetHistoryFocus {
+                                repo_id,
+                                focus: gitcomet_core::domain::HistoryFocusSet::default(),
+                            });
+                        }),
                     ),
             ),
         )
@@ -1997,8 +2005,8 @@ impl SidebarPaneView {
                 .children(filter_bar)
                 .child(components::empty_state(
                     theme,
-                    "Branches",
-                    "No repository selected.",
+                    text(cx, "Branches", "分支"),
+                    text(cx, "No repository selected.", "尚未選取儲存庫。"),
                 ))
                 .into_any();
         };
@@ -2229,7 +2237,8 @@ impl Render for SidebarPaneView {
         if self.explorer_name_edit.is_some() {
             let height = ui_scale::UiScale::current(cx).px(sidebar_list_row_height_px(self.theme));
             self.explorer_name_input.update(cx, |input, cx| {
-                input.set_line_height(Some(height - px(4.0)), cx)
+                input.set_line_height(Some(height - px(4.0)), cx);
+                input.set_placeholder(text(cx, "Name", "名稱"), cx);
             });
             if self
                 .explorer_name_edit
