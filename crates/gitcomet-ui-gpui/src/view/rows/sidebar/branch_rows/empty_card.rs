@@ -23,33 +23,45 @@ impl SidebarPaneView {
         let (icon, title, detail, action) = match section {
             EmptySection::Branches => (
                 "icons/git_branch.svg",
-                "No branches yet",
-                "Create one to start working.",
-                "New branch",
+                text(cx, "No branches yet", "還沒有分支"),
+                text(cx, "Create one to start working.", "建立分支以開始工作。"),
+                text(cx, "New branch", "新增分支"),
             ),
             EmptySection::Remotes => (
                 "icons/cloud.svg",
-                "Nothing to sync with",
-                "Add a remote to push and pull.",
-                "Add remote",
+                text(cx, "Nothing to sync with", "尚未設定遠端"),
+                text(
+                    cx,
+                    "Add a remote to push and pull.",
+                    "新增遠端以推送及拉取。",
+                ),
+                text(cx, "Add remote", "新增遠端"),
             ),
             EmptySection::Worktrees => (
                 WORKTREE_ICON_PATH,
-                "Two branches, two folders",
-                "Fix a bug beside your work.",
-                "New worktree",
+                text(cx, "Two branches, two folders", "還沒有其他工作樹"),
+                text(
+                    cx,
+                    "Fix a bug beside your work.",
+                    "在另一個資料夾使用其他分支。",
+                ),
+                text(cx, "New worktree", "新增工作樹"),
             ),
             EmptySection::Submodules => (
                 "icons/box.svg",
-                "Repositories inside repositories",
-                "Track another repo in this one.",
-                "Add submodule",
+                text(cx, "Repositories inside repositories", "還沒有子模組"),
+                text(
+                    cx,
+                    "Track another repo in this one.",
+                    "在這個儲存庫中追蹤其他儲存庫。",
+                ),
+                text(cx, "Add submodule", "新增子模組"),
             ),
             EmptySection::Stashes => (
                 STASH_ICON_PATH,
-                "Set changes aside",
-                "Come back to them later.",
-                "New stash",
+                text(cx, "Set changes aside", "還沒有貯藏"),
+                text(cx, "Come back to them later.", "先收起變更，稍後再繼續。"),
+                text(cx, "New stash", "新增貯藏"),
             ),
         };
         let first = part == 0;

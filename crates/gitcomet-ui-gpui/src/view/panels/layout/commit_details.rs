@@ -2,6 +2,7 @@
 //! commit view when one is selected, otherwise the status view.
 
 use super::*;
+use crate::localization::text;
 
 impl DetailsPaneView {
     pub(in crate::view) fn commit_details_view(
@@ -76,7 +77,7 @@ impl DetailsPaneView {
             .as_ref()
             .is_some_and(|s| s.repo_id == repo_id && s.commit_id == selected_id && s.show_loading);
 
-        let header_title: SharedString = "Commit details".into();
+        let header_title: SharedString = text(cx, "Commit details", "提交詳情").into();
 
         let header = div()
             .flex()
@@ -108,7 +109,10 @@ impl DetailsPaneView {
                     .on_click(theme, cx, |this, _e, window, cx| {
                         this.close_review_details(window, cx);
                     })
-                    .gitcomet_tooltip(theme, "Close commit details".into()),
+                    .gitcomet_tooltip(
+                        theme,
+                        text(cx, "Close commit details", "關閉提交詳情").into(),
+                    ),
             );
 
         let active_commit_details = self.active_repo().map(|repo| {
@@ -125,21 +129,28 @@ impl DetailsPaneView {
             .as_ref()
             .map(|(_, revision)| *revision)
             .unwrap_or_default();
+        let commit_title = text(cx, "Commit", "提交");
+        let loading = text(cx, "Loading", "載入中");
         let body: AnyElement = match active_commit_details.as_ref().map(|(details, _)| details) {
-            None => components::empty_state(theme, "Commit", "No repository.").into_any_element(),
+            None => components::empty_state(
+                theme,
+                commit_title,
+                text(cx, "No repository.", "沒有儲存庫。"),
+            )
+            .into_any_element(),
             Some(Loadable::Loading) => {
                 if show_delayed_loading {
-                    components::empty_state(theme, "Commit", "Loading").into_any_element()
+                    components::empty_state(theme, commit_title, loading).into_any_element()
                 } else {
                     div().into_any_element()
                 }
             }
             Some(Loadable::Error(e)) => {
-                components::empty_state(theme, "Commit", e.clone()).into_any_element()
+                components::empty_state(theme, commit_title, e.clone()).into_any_element()
             }
             Some(Loadable::NotLoaded) => {
                 if show_delayed_loading {
-                    components::empty_state(theme, "Commit", "Loading").into_any_element()
+                    components::empty_state(theme, commit_title, loading).into_any_element()
                 } else {
                     div().into_any_element()
                 }
@@ -147,7 +158,7 @@ impl DetailsPaneView {
             Some(Loadable::Ready(details)) => {
                 let current = details.id == selected_id;
                 if !current && show_delayed_loading {
-                    components::empty_state(theme, "Commit", "Loading").into_any_element()
+                    components::empty_state(theme, commit_title, loading).into_any_element()
                 } else {
                     let find = self.commit_details_find_highlights(details);
 

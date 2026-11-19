@@ -975,7 +975,7 @@ impl PopoverHost {
                 *is_three_way,
             )),
             PopoverKind::HistoryBranchFilter { repo_id } => {
-                Some(history_branch_filter::model(self, *repo_id))
+                Some(history_branch_filter::model(self, *repo_id, cx))
             }
             PopoverKind::DiffActionMenu => Some(diff_actions::model(self, cx)),
             PopoverKind::ExplorerSettingsMenu { repo_id } => {

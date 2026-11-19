@@ -542,7 +542,7 @@ impl GitCometView {
                         this.toggle_sidebar_collapsed_popover(section, cx);
                     }),
                 )
-                .gitcomet_tooltip(theme, section.title().into())
+                .gitcomet_tooltip(theme, section.title(cx).into())
         });
 
         div()

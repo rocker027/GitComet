@@ -4,6 +4,7 @@ use super::history_canvas;
 use super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
 use crate::kit::interaction_paint::InteractionPaint;
+use crate::localization::{Language, text};
 use crate::view::caches::{HistoryListRow, HistoryWorktreeChip};
 use palette::IntoColor;
 
@@ -379,7 +380,11 @@ impl HistoryView {
             .items_center()
             .px_3()
             .text_color(self.theme.colors.foreground.secondary)
-            .child("Could not load commits. Click to retry.")
+            .child(text(
+                cx,
+                "Could not load commits. Click to retry.",
+                "無法載入提交。點擊重試。",
+            ))
             .when(failed, |row| {
                 row.control_interaction(
                     controls::InteractionStyle::new(self.theme),
@@ -729,7 +734,15 @@ fn history_table_row(
                 ui_scale.px(6.0),
             )
             .debug_selector(move || format!("history_worktree_more_{ix}"))
-            .gitcomet_tooltip(theme, "All worktrees on this commit".into())
+            .gitcomet_tooltip(
+                theme,
+                text(
+                    cx,
+                    "All worktrees on this commit",
+                    "使用這筆提交的所有工作樹",
+                )
+                .into(),
+            )
             .on_activate(
                 false,
                 controls::ControlActivation::Nested,
@@ -806,7 +819,11 @@ fn history_worktree_chip(
     cx: &mut gpui::Context<HistoryView>,
 ) -> gpui::Stateful<gpui::Div> {
     let scaled_px = crate::ui_scale::scaler(ui_scale);
-    let tooltip: SharedString = format!("Open this worktree\n{}", path.display()).into();
+    let tooltip: SharedString = match Language::current(cx) {
+        Language::English => format!("Open this worktree\n{}", path.display()),
+        Language::TraditionalChinese => format!("開啟此工作樹\n{}", path.display()),
+    }
+    .into();
     super::sidebar::worktree_origin_chip(
         id,
         theme,
@@ -1081,7 +1098,7 @@ fn worktree_uncommitted_history_row(
                     .text_color(label_color)
                     .line_clamp(1)
                     .whitespace_nowrap()
-                    .child("Worktree changes"),
+                    .child(text(cx, "Worktree changes", "工作樹的變更")),
             );
             if !parts.is_empty() {
                 summary = summary.child(div().flex().items_center().gap_2().children(parts));
@@ -1291,7 +1308,7 @@ fn working_tree_summary_history_row(
                     .text_color(label_color)
                     .line_clamp(1)
                     .whitespace_nowrap()
-                    .child("Uncommitted changes"),
+                    .child(text(cx, "Uncommitted changes", "未提交的變更")),
             );
             if !parts.is_empty() {
                 summary = summary.child(div().flex().items_center().gap_2().children(parts));
@@ -1313,7 +1330,7 @@ fn working_tree_summary_history_row(
                     .font_family(UI_MONOSPACE_FONT_FAMILY)
                     .text_color(theme.colors.foreground.secondary)
                     .whitespace_nowrap()
-                    .child("Click to review"),
+                    .child(text(cx, "Click to review", "點擊檢視")),
             )
         })
         .when(show_sha, |row| row.child(div().w(col_sha).flex_none()))

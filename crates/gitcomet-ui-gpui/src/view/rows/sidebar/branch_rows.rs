@@ -2,6 +2,7 @@
 //! worktrees and submodules.
 
 use super::*;
+use crate::localization::{Language, text};
 
 mod annex;
 mod branch;
@@ -323,7 +324,7 @@ impl SidebarRowContext {
         badge
     }
 
-    fn upstream_badge(&self, debug_selector: Option<String>) -> gpui::Div {
+    fn upstream_badge(&self, debug_selector: Option<String>, cx: &App) -> gpui::Div {
         let theme = self.theme;
         // The active upstream is a ref relationship, but it
         // uses the same compact control-shaped chip as the
@@ -342,7 +343,7 @@ impl SidebarRowContext {
             .border_1()
             .border_color(colors.border)
             .child(self.svg_icon("icons/cloud.svg", colors.icon, 9.0))
-            .child("Upstream");
+            .child(text(cx, "Upstream", "上游"));
         if let Some(debug_selector) = debug_selector {
             badge = badge.debug_selector(move || debug_selector.clone());
         }

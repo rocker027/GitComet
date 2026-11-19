@@ -10,6 +10,7 @@ pub struct UiSettings {
     pub repo_sidebar_collapsed_items: Option<BTreeMap<PathBuf, BTreeSet<String>>>,
     pub repo_sidebar_pinned_branches: Option<BTreeMap<PathBuf, BTreeSet<String>>>,
     pub theme_mode: Option<String>,
+    pub ui_language: Option<String>,
     pub ui_scale_percent: Option<u32>,
     pub image_sampling_mode: Option<String>,
     pub image_smooth_filter: Option<String>,
@@ -153,6 +154,7 @@ pub fn persist_ui_settings_to_path(settings: UiSettings, path: &Path) -> io::Res
             file.repo_sidebar_pinned_branches = (!items.is_empty()).then_some(items);
         }
         apply_setting!(settings, file, theme_mode);
+        apply_setting!(settings, file, ui_language);
         apply_setting!(settings, file, ui_scale_percent);
         apply_setting!(settings, file, image_sampling_mode);
         apply_setting!(settings, file, image_smooth_filter);

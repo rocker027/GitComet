@@ -175,10 +175,11 @@ pub(super) fn status_action_count_label(
 pub(super) fn status_action_all_label(
     labels: StatusActionLabels,
     full: &'static str,
+    compact: &'static str,
 ) -> &'static str {
     match labels {
         StatusActionLabels::Full => full,
-        StatusActionLabels::Compact => "All",
+        StatusActionLabels::Compact => compact,
     }
 }
 
@@ -672,8 +673,11 @@ impl DetailsPaneView {
     ) -> AnyElement {
         let theme = self.theme;
         if count == 0 {
-            return components::empty_state_message(theme, "Working tree clean.")
-                .into_any_element();
+            return components::empty_state_message(
+                theme,
+                crate::localization::text(cx, "Working tree clean.", "工作樹沒有變更。"),
+            )
+            .into_any_element();
         }
         // `count` is the file count the header shows; the list is indexed in
         // display rows, which a tree pads with directories.

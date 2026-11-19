@@ -4,11 +4,66 @@
 
 use super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
+use crate::localization::{Language, text};
 
 /// What the master switch hides, and why it is on by default.
 const HIDDEN_REFS_TOOLTIP: &str = "Refs that coding agents, review systems and Git's own bookkeeping \
      write next to your branches.\nHiding them keeps All branches readable, and new ones no longer \
      rebuild the history index.";
+
+pub(super) fn change_tracking_label(
+    cx: &App,
+    option: ChangeTrackingView,
+    english: &'static str,
+) -> &'static str {
+    let chinese = match option {
+        ChangeTrackingView::Combined => "合併至未暫存",
+        ChangeTrackingView::SplitUntracked => "獨立區塊",
+    };
+    text(cx, english, chinese)
+}
+
+pub(super) fn file_list_layout_label(cx: &App, option: FileListLayout) -> &'static str {
+    let chinese = match option {
+        FileListLayout::Flat => "平面清單",
+        FileListLayout::Tree => "樹狀清單",
+        FileListLayout::Groups => "分組清單",
+    };
+    text(cx, option.label(), chinese)
+}
+
+pub(super) fn file_list_sort_label(
+    cx: &App,
+    sort: crate::view::rows::CommitFileSort,
+) -> &'static str {
+    use crate::view::rows::CommitFileSort::*;
+    let chinese = match sort {
+        PathAscending => "路徑遞增",
+        PathDescending => "路徑遞減",
+        FileTypeAscending => "檔案類型遞增",
+        FileTypeDescending => "檔案類型遞減",
+        EditSizeAscending => "變更行數較少優先",
+        EditSizeDescending => "變更行數較多優先",
+        Edits => "重複變更優先",
+    };
+    text(cx, sort.label(), chinese)
+}
+
+fn browser_open_target_label(cx: &App, target: crate::app::BrowserOpenTarget) -> &'static str {
+    let chinese = match target {
+        crate::app::BrowserOpenTarget::ExistingWindow => "目前視窗",
+        crate::app::BrowserOpenTarget::NewWindow => "新視窗",
+    };
+    text(cx, target.label(), chinese)
+}
+
+fn branch_names_label(cx: &App, mode: HistoryBranchNamesMode) -> &'static str {
+    let chinese = match mode {
+        HistoryBranchNamesMode::SeparateColumn => "獨立欄位",
+        HistoryBranchNamesMode::Inline => "與提交訊息同列",
+    };
+    text(cx, mode.settings_label(), chinese)
+}
 
 impl SettingsWindowView {
     pub(super) fn category_card(
@@ -43,7 +98,11 @@ impl SettingsWindowView {
         theme: AppTheme,
         cx: &mut gpui::Context<Self>,
     ) -> Stateful<gpui::Div> {
-        let card = self.card("settings_window_general", "General", theme);
+        let card = self.card(
+            "settings_window_general",
+            text(cx, "General", "一般"),
+            theme,
+        );
         let card = self.general_integration_rows(card, theme, cx);
         let card = self.general_date_time_rows(card, theme, cx);
         #[cfg(target_os = "windows")]
@@ -61,9 +120,13 @@ impl SettingsWindowView {
         let external_editor_row = self
             .summary_row(
                 "settings_window_external_code_editor",
-                "External code editor",
-                crate::external_editor::label_for_setting(self.external_editor_setting.as_ref())
-                    .into(),
+                text(cx, "External code editor", "外部程式碼編輯器"),
+                match self.external_editor_setting.as_ref() {
+                    Some(setting) => {
+                        crate::external_editor::label_for_setting(Some(setting)).into()
+                    }
+                    None => text(cx, "None", "無").into(),
+                },
                 self.expanded_section == Some(SettingsSection::ExternalCodeEditor),
                 theme,
             )
@@ -79,8 +142,8 @@ impl SettingsWindowView {
         let browser_open_target_row = self
             .summary_row(
                 "settings_window_browser_open_target",
-                "Command-line repository opens",
-                self.browser_open_target.label().into(),
+                text(cx, "Command-line repository opens", "從命令列開啟儲存庫"),
+                browser_open_target_label(cx, self.browser_open_target).into(),
                 self.expanded_section == Some(SettingsSection::BrowserOpenTarget),
                 theme,
             )
@@ -94,7 +157,7 @@ impl SettingsWindowView {
 
         general_card = general_card.child(self.subsection_heading(
             "settings_window_general_integrations",
-            "Integrations",
+            text(cx, "Integrations", "整合"),
             theme,
         ));
         general_card = general_card.child(browser_open_target_row);
@@ -102,11 +165,24 @@ impl SettingsWindowView {
             let mut detail =
                 self.detail_container("settings_window_browser_open_target_container", theme);
             for target in crate::app::BrowserOpenTarget::ALL {
+                let description = match (Language::current(cx), target) {
+                    (Language::English, _) => target.detail(),
+                    (
+                        Language::TraditionalChinese,
+                        crate::app::BrowserOpenTarget::ExistingWindow,
+                    ) => format!(
+                        "在目前的 {} 視窗開啟儲存庫。",
+                        gitcomet_core::identity::current().display_name()
+                    ),
+                    (Language::TraditionalChinese, crate::app::BrowserOpenTarget::NewWindow) => {
+                        "在新視窗開啟儲存庫。".to_string()
+                    }
+                };
                 detail = detail.child(
                     self.option_row(
                         format!("settings_window_browser_open_target_{}", target.key()),
-                        target.label(),
-                        Some(target.detail().into()),
+                        browser_open_target_label(cx, target),
+                        Some(description.into()),
                         self.browser_open_target == target,
                         theme,
                     )
@@ -127,7 +203,14 @@ impl SettingsWindowView {
             let (item_count, list) = if self.external_editor_options_loading() {
                 (
                     1,
-                    self.empty_dropdown_list("Detecting installed editors…", theme),
+                    self.empty_dropdown_list(
+                        text(
+                            cx,
+                            "Detecting installed editors…",
+                            "正在偵測已安裝的編輯器…",
+                        ),
+                        theme,
+                    ),
                 )
             } else {
                 (
@@ -166,35 +249,35 @@ impl SettingsWindowView {
         }
 
         if self.external_editor_is_custom() {
-            let browse_button =
-                components::Button::new("settings_window_external_code_editor_browse", "Browse")
-                    .style(components::ButtonStyle::Outlined)
-                    .on_click(theme, cx, |this, _e, window, cx| {
-                        let view = cx.weak_entity();
-                        let directory = crate::view::path_prompt::folder_of_existing_entry(
-                            this.external_editor_custom_path_input.read(cx).text(),
-                        );
-                        let rx = cx.prompt_for_paths(custom_external_editor_path_prompt_options(
-                            directory,
-                        ));
+            let browse_button = components::Button::new(
+                "settings_window_external_code_editor_browse",
+                text(cx, "Browse", "瀏覽"),
+            )
+            .style(components::ButtonStyle::Outlined)
+            .on_click(theme, cx, |this, _e, window, cx| {
+                let view = cx.weak_entity();
+                let directory = crate::view::path_prompt::folder_of_existing_entry(
+                    this.external_editor_custom_path_input.read(cx).text(),
+                );
+                let rx = cx.prompt_for_paths(custom_external_editor_path_prompt_options(directory));
 
-                        window
-                            .spawn(cx, async move |cx| {
-                                let result = rx.await;
-                                let paths = match result {
-                                    Ok(Ok(Some(paths))) => paths,
-                                    Ok(Ok(None)) => return,
-                                    Ok(Err(_)) | Err(_) => return,
-                                };
-                                let Some(path) = paths.into_iter().next() else {
-                                    return;
-                                };
-                                let _ = view.update(cx, |this, cx| {
-                                    this.apply_browsed_external_editor_path(path, cx);
-                                });
-                            })
-                            .detach();
-                    });
+                window
+                    .spawn(cx, async move |cx| {
+                        let result = rx.await;
+                        let paths = match result {
+                            Ok(Ok(Some(paths))) => paths,
+                            Ok(Ok(None)) => return,
+                            Ok(Err(_)) | Err(_) => return,
+                        };
+                        let Some(path) = paths.into_iter().next() else {
+                            return;
+                        };
+                        let _ = view.update(cx, |this, cx| {
+                            this.apply_browsed_external_editor_path(path, cx);
+                        });
+                    })
+                    .detach();
+            });
 
             general_card = general_card.child(
                 self.detail_container(
@@ -207,7 +290,7 @@ impl SettingsWindowView {
                         .pt_1()
                         .text_size(theme.ui_text(12.0))
                         .text_color(theme.colors.foreground.secondary)
-                        .child("Custom editor executable"),
+                        .child(text(cx, "Custom editor executable", "自訂編輯器的執行檔")),
                 )
                 .child(
                     div()
@@ -232,7 +315,7 @@ impl SettingsWindowView {
                         .pt_1()
                         .text_size(theme.ui_text(12.0))
                         .text_color(theme.colors.foreground.secondary)
-                        .child("Arguments"),
+                        .child(text(cx, "Arguments", "引數")),
                 )
                 .child(
                     div()
@@ -257,7 +340,7 @@ impl SettingsWindowView {
         let date_format_row = self
             .summary_row(
                 "settings_window_date_format",
-                "Date format",
+                text(cx, "Date format", "日期格式"),
                 self.date_time_format.label().into(),
                 self.expanded_section == Some(SettingsSection::DateFormat),
                 theme,
@@ -273,7 +356,7 @@ impl SettingsWindowView {
         let timezone_row = self
             .summary_row(
                 "settings_window_timezone",
-                "Date timezone",
+                text(cx, "Date timezone", "日期時區"),
                 self.timezone.label().into(),
                 self.expanded_section == Some(SettingsSection::Timezone),
                 theme,
@@ -289,7 +372,7 @@ impl SettingsWindowView {
         let show_timezone_row = self
             .toggle_row(
                 "settings_window_show_timezone",
-                "Show timezone",
+                text(cx, "Show timezone", "顯示時區"),
                 self.show_timezone,
                 theme,
             )
@@ -305,7 +388,7 @@ impl SettingsWindowView {
         general_card = general_card
             .child(self.subsection_heading(
                 "settings_window_general_date_time",
-                "Date & Time",
+                text(cx, "Date & Time", "日期與時間"),
                 theme,
             ))
             .child(date_format_row);
@@ -383,7 +466,7 @@ impl SettingsWindowView {
         let terminal_external_row = self
             .summary_row(
                 "settings_window_terminal_external",
-                "External terminal",
+                text(cx, "External terminal", "外部終端機"),
                 self.terminal_preferences.external_summary().into(),
                 self.expanded_section == Some(SettingsSection::TerminalExternal),
                 theme,
@@ -399,7 +482,7 @@ impl SettingsWindowView {
         let terminal_button_row = self
             .summary_row(
                 "settings_window_terminal_button",
-                "Terminal button opens",
+                text(cx, "Terminal button opens", "終端機按鈕開啟"),
                 self.terminal_preferences
                     .terminal_button_target
                     .label()
@@ -416,7 +499,11 @@ impl SettingsWindowView {
                 }),
             );
 
-        let mut terminal_card = self.card("settings_window_terminal_card", "Terminal", theme);
+        let mut terminal_card = self.card(
+            "settings_window_terminal_card",
+            text(cx, "Terminal", "終端機"),
+            theme,
+        );
 
         terminal_card = terminal_card.child(terminal_external_row);
         if self.expanded_section == Some(SettingsSection::TerminalExternal) {
@@ -485,7 +572,7 @@ impl SettingsWindowView {
                             .pt_1()
                             .text_size(theme.ui_text(12.0))
                             .text_color(theme.colors.foreground.secondary)
-                            .child("Program"),
+                            .child(text(cx, "Program", "程式")),
                     )
                     .child(
                         div()
@@ -505,7 +592,7 @@ impl SettingsWindowView {
                             .child(
                                 components::Button::new(
                                     "settings_window_terminal_external_browse",
-                                    "Browse",
+                                    text(cx, "Browse", "瀏覽"),
                                 )
                                 .style(components::ButtonStyle::Outlined)
                                 .on_click(
@@ -527,7 +614,7 @@ impl SettingsWindowView {
                             .pt_1()
                             .text_size(theme.ui_text(12.0))
                             .text_color(theme.colors.foreground.secondary)
-                            .child("Arguments"),
+                            .child(text(cx, "Arguments", "引數")),
                     )
                     .child(
                         div()
@@ -557,7 +644,7 @@ impl SettingsWindowView {
                             .child(
                                 components::Button::new(
                                     "settings_window_terminal_external_save",
-                                    "Save",
+                                    text(cx, "Save", "儲存"),
                                 )
                                 .style(components::ButtonStyle::Filled)
                                 .on_click(
@@ -571,7 +658,7 @@ impl SettingsWindowView {
                             .child(
                                 components::Button::new(
                                     "settings_window_terminal_external_reset",
-                                    "Reset",
+                                    text(cx, "Reset", "重設"),
                                 )
                                 .style(components::ButtonStyle::Outlined)
                                 .on_click(
@@ -585,7 +672,7 @@ impl SettingsWindowView {
                             .child(
                                 components::Button::new(
                                     "settings_window_terminal_external_test",
-                                    "Test launch",
+                                    text(cx, "Test launch", "測試啟動"),
                                 )
                                 .style(components::ButtonStyle::Outlined)
                                 .on_click(
@@ -610,7 +697,7 @@ impl SettingsWindowView {
                         .text_size(theme.ui_text(12.0))
                         .text_color(theme.colors.foreground.secondary)
                         .child(
-                            "Choose what the terminal button opens. Global shortcuts for each can be configured separately.",
+                            text(cx, "Choose what the terminal button opens. Global shortcuts for each can be configured separately.", "選擇終端機按鈕要開啟的項目。可分別設定各項目的全域快捷鍵。"),
                         ),
                 )
                 .child(
@@ -623,7 +710,7 @@ impl SettingsWindowView {
                             self.option_row(
                                 "settings_window_terminal_button_embedded",
                                 TerminalButtonTarget::Embedded.label(),
-                                Some("Toggle the embedded terminal panel".into()),
+                                Some(text(cx, "Toggle the embedded terminal panel", "切換內嵌終端機面板").into()),
                                 self.terminal_preferences.terminal_button_target
                                     == TerminalButtonTarget::Embedded,
                                 theme,
@@ -641,7 +728,7 @@ impl SettingsWindowView {
                             self.option_row(
                                 "settings_window_terminal_button_external",
                                 TerminalButtonTarget::External.label(),
-                                Some("Launch the external terminal".into()),
+                                Some(text(cx, "Launch the external terminal", "啟動外部終端機").into()),
                                 self.terminal_preferences.terminal_button_target
                                     == TerminalButtonTarget::External,
                                 theme,
@@ -684,7 +771,7 @@ impl SettingsWindowView {
         let allowed_remote_protocols_row = self
             .summary_row(
                 "settings_window_allowed_remote_protocols",
-                "Allowed remote protocols",
+                text(cx, "Allowed remote protocols", "允許的遠端通訊協定"),
                 remote_url_policy_settings_label(self.remote_url_policy).into(),
                 self.expanded_section == Some(SettingsSection::AllowedRemoteProtocols),
                 theme,
@@ -700,7 +787,7 @@ impl SettingsWindowView {
         let remote_markdown_images_row = self
             .summary_row(
                 "settings_window_remote_markdown_images",
-                "Remote Markdown images",
+                text(cx, "Remote Markdown images", "遠端 Markdown 圖片"),
                 self.remote_markdown_image_policy.settings_label().into(),
                 self.expanded_section == Some(SettingsSection::RemoteMarkdownImages),
                 theme,
@@ -716,7 +803,11 @@ impl SettingsWindowView {
         let update_check_locked = crate::view::update_checks_disabled_by_environment();
         let update_check_effective = self.check_for_updates_on_startup && !update_check_locked;
         let update_check_id = "settings_window_check_for_updates_on_startup";
-        let update_check_label = "Automatically check for updates on startup";
+        let update_check_label = text(
+            cx,
+            "Automatically check for updates on startup",
+            "啟動時自動檢查更新",
+        );
         let update_check_row = if update_check_locked {
             self.disabled_toggle_row(
                 update_check_id,
@@ -744,7 +835,7 @@ impl SettingsWindowView {
         let mut security_privacy_card = self
             .card(
                 "settings_window_security_privacy_card",
-                "Security / Privacy",
+                text(cx, "Security / Privacy", "安全與隱私"),
                 theme,
             )
             .child(
@@ -755,7 +846,7 @@ impl SettingsWindowView {
                     .text_size(theme.ui_text(12.0))
                     .text_color(theme.colors.foreground.secondary)
                     .child(
-                        "Only selected built-in URL protocols may be passed to Git. Custom remote helpers stay blocked. Local paths and SCP-style SSH locations remain available.",
+                        text(cx, "Only selected built-in URL protocols may be passed to Git. Custom remote helpers stay blocked. Local paths and SCP-style SSH locations remain available.", "只有你選取的內建 URL 通訊協定可傳給 Git。自訂遠端輔助程式仍會被封鎖。本機路徑與 SCP 格式的 SSH 位址仍可使用。"),
                     ),
             )
             .child(allowed_remote_protocols_row);
@@ -871,8 +962,13 @@ impl SettingsWindowView {
         let change_tracking_row = self
             .summary_row(
                 "settings_window_change_tracking",
-                "Untracked files",
-                self.change_tracking_view.settings_label().into(),
+                text(cx, "Untracked files", "未追蹤的檔案"),
+                change_tracking_label(
+                    cx,
+                    self.change_tracking_view,
+                    self.change_tracking_view.settings_label(),
+                )
+                .into(),
                 self.expanded_section == Some(SettingsSection::ChangeTracking),
                 theme,
             )
@@ -888,8 +984,8 @@ impl SettingsWindowView {
         let file_list_layout_row = self
             .summary_row(
                 "settings_window_file_list_layout",
-                "Changed-file lists",
-                self.file_list_layout.label().into(),
+                text(cx, "Changed-file lists", "變更檔案清單"),
+                file_list_layout_label(cx, self.file_list_layout).into(),
                 self.expanded_section == Some(SettingsSection::FileListLayout),
                 theme,
             )
@@ -905,8 +1001,8 @@ impl SettingsWindowView {
         let file_list_sort_row = self
             .summary_row(
                 "settings_window_file_list_sort",
-                "Changed-file sort",
-                self.file_list_sort.label().into(),
+                text(cx, "Changed-file sort", "變更檔案排序"),
+                file_list_sort_label(cx, self.file_list_sort).into(),
                 self.expanded_section == Some(SettingsSection::FileListSort),
                 theme,
             )
@@ -922,7 +1018,7 @@ impl SettingsWindowView {
         let mut change_tracking_card = self
             .card(
                 "settings_window_change_tracking_card",
-                "Change tracking",
+                text(cx, "Change tracking", "變更追蹤"),
                 theme,
             )
             .child(change_tracking_row);
@@ -1030,7 +1126,7 @@ impl SettingsWindowView {
             .child(
                 self.toggle_row(
                     "settings_window_open_next_file_after_last_change",
-                    "Automatically open the next file when the current one has no changes left",
+                    text(cx, "Automatically open the next file when the current one has no changes left", "目前檔案的變更清空後，自動開啟下一個檔案"),
                     self.open_next_file_after_last_change,
                     theme,
                 )
@@ -1056,7 +1152,7 @@ impl SettingsWindowView {
                     .text_size(theme.ui_text(12.0))
                     .text_color(theme.colors.foreground.secondary)
                     .child(
-                        "When S, U, the gutter buttons, a diff menu or Discard leaves the open file with no changes in its list, the diff opens the next file in that list, or the previous one at the end. When off, the diff stays on the file, or closes if you discarded the whole file. Space and the Stage/Unstage button move to the next file either way.",
+                        text(cx, "When S, U, the gutter buttons, a diff menu or Discard leaves the open file with no changes in its list, the diff opens the next file in that list, or the previous one at the end. When off, the diff stays on the file, or closes if you discarded the whole file. Space and the Stage/Unstage button move to the next file either way.", "使用 S、U、行號旁按鈕、差異選單或捨棄操作，使開啟中的檔案從變更清單移除後，差異檢視會開啟清單中的下一個檔案。若已到清單底部，則會開啟上一個檔案。關閉此選項後，差異檢視會留在原檔案。若捨棄整個檔案的變更，則會關閉差異檢視。使用空白鍵或暫存／取消暫存按鈕時，一律會開啟下一個檔案。"),
                     ),
             )
     }
@@ -1066,7 +1162,7 @@ impl SettingsWindowView {
         let diff_scroll_sync_row = self
             .summary_row(
                 "settings_window_diff_scroll_sync",
-                "Scroll sync",
+                text(cx, "Scroll sync", "同步捲動"),
                 self.diff_scroll_sync.label().into(),
                 self.expanded_section == Some(SettingsSection::Diff),
                 theme,
@@ -1083,7 +1179,7 @@ impl SettingsWindowView {
         let diff_content_mode_row = self
             .summary_row(
                 "settings_window_diff_content_mode",
-                "Diff mode",
+                text(cx, "Diff mode", "差異模式"),
                 self.diff_content_mode.settings_label().into(),
                 self.expanded_section == Some(SettingsSection::DiffContentMode),
                 theme,
@@ -1099,7 +1195,7 @@ impl SettingsWindowView {
         let diff_whitespace_mode_row = self
             .toggle_row(
                 "settings_window_diff_whitespace_mode",
-                "Show whitespace changes",
+                text(cx, "Show whitespace changes", "顯示空白字元變更"),
                 self.diff_whitespace_mode == DiffWhitespaceMode::Show,
                 theme,
             )
@@ -1114,7 +1210,7 @@ impl SettingsWindowView {
         let diff_reveal_whitespace_chars_row = self
             .toggle_row(
                 "settings_window_diff_reveal_whitespace_chars",
-                "Reveal whitespace characters",
+                text(cx, "Reveal whitespace characters", "標示空白字元"),
                 self.diff_reveal_whitespace_chars,
                 theme,
             )
@@ -1129,7 +1225,7 @@ impl SettingsWindowView {
         let diff_word_wrap_row = self
             .toggle_row(
                 "settings_window_diff_word_wrap",
-                "Word wrap",
+                text(cx, "Word wrap", "自動換行"),
                 self.diff_word_wrap,
                 theme,
             )
@@ -1144,7 +1240,7 @@ impl SettingsWindowView {
         let diff_tab_size_row = self
             .summary_row(
                 "settings_window_diff_tab_size",
-                "Tab size",
+                text(cx, "Tab size", "定位字元寬度"),
                 format!("{} spaces", self.diff_tab_size).into(),
                 self.expanded_section == Some(SettingsSection::DiffTabSize),
                 theme,
@@ -1160,7 +1256,7 @@ impl SettingsWindowView {
         let diff_show_line_numbers_row = self
             .toggle_row(
                 "settings_window_diff_show_line_numbers",
-                "Show line numbers",
+                text(cx, "Show line numbers", "顯示行號"),
                 self.diff_show_line_numbers,
                 theme,
             )
@@ -1172,22 +1268,24 @@ impl SettingsWindowView {
                 }),
             );
 
-        let mut diff_card = self.card("settings_window_diff_card", "Diff", theme).child(
-            self.summary_row(
-                "settings_window_diff_engine",
-                "Diff engine",
-                self.diff_engine.label().into(),
-                self.expanded_section == Some(SettingsSection::DiffEngine),
-                theme,
-            )
-            .on_activate(
-                false,
-                controls::ControlActivation::Action,
-                cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.toggle_section(SettingsSection::DiffEngine, cx)
-                }),
-            ),
-        );
+        let mut diff_card = self
+            .card("settings_window_diff_card", text(cx, "Diff", "差異"), theme)
+            .child(
+                self.summary_row(
+                    "settings_window_diff_engine",
+                    text(cx, "Diff engine", "差異比對引擎"),
+                    self.diff_engine.label().into(),
+                    self.expanded_section == Some(SettingsSection::DiffEngine),
+                    theme,
+                )
+                .on_activate(
+                    false,
+                    controls::ControlActivation::Action,
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.toggle_section(SettingsSection::DiffEngine, cx)
+                    }),
+                ),
+            );
         if self.expanded_section == Some(SettingsSection::DiffEngine) {
             for engine in DiffEngine::ALL {
                 let detail = match engine {
@@ -1249,7 +1347,7 @@ impl SettingsWindowView {
         let diff_view_mode_row = self
             .summary_row(
                 "settings_window_diff_view_mode",
-                "View mode",
+                text(cx, "View mode", "檢視模式"),
                 self.diff_view_mode.settings_label().into(),
                 self.expanded_section == Some(SettingsSection::DiffViewMode),
                 theme,
@@ -1378,23 +1476,27 @@ impl SettingsWindowView {
         cx: &mut gpui::Context<Self>,
     ) -> Stateful<gpui::Div> {
         let no_separator = gpui::rgba(0x00000000);
-        self.card("settings_window_file_editing_card", "File editing", theme)
-            .child(
-                self.toggle_row(
-                    "settings_window_auto_save_file_edits",
-                    "Auto-save edits",
-                    self.auto_save_file_edits,
-                    theme,
-                )
-                .border_color(no_separator)
-                .on_activate(
-                    false,
-                    controls::ControlActivation::Action,
-                    cx.listener(|this, _e: &ClickEvent, _window, cx| {
-                        this.set_auto_save_file_edits(!this.auto_save_file_edits, cx);
-                    }),
-                ),
+        self.card(
+            "settings_window_file_editing_card",
+            text(cx, "File editing", "檔案編輯"),
+            theme,
+        )
+        .child(
+            self.toggle_row(
+                "settings_window_auto_save_file_edits",
+                text(cx, "Auto-save edits", "自動儲存編輯"),
+                self.auto_save_file_edits,
+                theme,
             )
+            .border_color(no_separator)
+            .on_activate(
+                false,
+                controls::ControlActivation::Action,
+                cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                    this.set_auto_save_file_edits(!this.auto_save_file_edits, cx);
+                }),
+            ),
+        )
     }
 
     fn git_log_card(&self, theme: AppTheme, cx: &mut gpui::Context<Self>) -> Stateful<gpui::Div> {
@@ -1402,8 +1504,12 @@ impl SettingsWindowView {
         let history_default_mode_row = self
             .summary_row(
                 "settings_window_git_log_default_mode",
-                "Default history mode",
-                crate::view::history_mode::history_mode_label(self.default_history_mode).into(),
+                text(cx, "Default history mode", "預設歷史顯示模式"),
+                crate::view::history_mode::localized_history_mode_label(
+                    self.default_history_mode,
+                    cx,
+                )
+                .into(),
                 self.expanded_section == Some(SettingsSection::GitLogDefaultMode),
                 theme,
             )
@@ -1418,8 +1524,9 @@ impl SettingsWindowView {
         let history_columns_row = self
             .summary_row(
                 "settings_window_git_log_columns",
-                "History columns",
+                text(cx, "History columns", "歷史欄位"),
                 history_columns_settings_label(
+                    cx,
                     self.history_show_graph,
                     self.history_show_author,
                     self.history_show_date,
@@ -1443,7 +1550,11 @@ impl SettingsWindowView {
         let highlight_commit_chain_row = self
             .toggle_row(
                 "settings_window_git_log_highlight_commit_chain",
-                "Highlight selected commit lane",
+                text(
+                    cx,
+                    "Highlight selected commit lane",
+                    "醒目顯示選取提交所在的路徑",
+                ),
                 self.history_highlight_commit_chain,
                 theme,
             )
@@ -1461,7 +1572,11 @@ impl SettingsWindowView {
         let files_follow_selected_commit_row = self
             .toggle_row(
                 "settings_window_git_log_files_follow_selected_commit",
-                "Follow selected commit while file browsing",
+                text(
+                    cx,
+                    "Follow selected commit while file browsing",
+                    "瀏覽檔案時跟隨選取的提交",
+                ),
                 self.files_follow_selected_commit,
                 theme,
             )
@@ -1476,7 +1591,11 @@ impl SettingsWindowView {
         let relative_dates_row = self
             .toggle_row(
                 "settings_window_git_log_relative_dates",
-                "Relative dates in history view",
+                text(
+                    cx,
+                    "Relative dates in history view",
+                    "在歷史檢視中顯示相對時間",
+                ),
                 self.history_relative_dates,
                 theme,
             )
@@ -1491,7 +1610,7 @@ impl SettingsWindowView {
         let verify_commit_signatures_row = self
             .toggle_row(
                 "settings_window_git_log_verify_signatures",
-                "Verify commit signatures",
+                text(cx, "Verify commit signatures", "驗證提交簽章"),
                 self.history_verify_commit_signatures,
                 theme,
             )
@@ -1506,7 +1625,7 @@ impl SettingsWindowView {
         let show_history_tags_row = self
             .toggle_row(
                 "settings_window_git_log_show_tags",
-                "Show tags in history view",
+                text(cx, "Show tags in history view", "在歷史檢視中顯示標籤"),
                 self.history_show_tags,
                 theme,
             )
@@ -1520,7 +1639,11 @@ impl SettingsWindowView {
             );
 
         let mut git_log_card = self
-            .card("settings_window_git_log_card", "Git log", theme)
+            .card(
+                "settings_window_git_log_card",
+                text(cx, "Git log", "Git 歷史"),
+                theme,
+            )
             .child(history_default_mode_row);
 
         if self.expanded_section == Some(SettingsSection::GitLogDefaultMode) {
@@ -1531,8 +1654,8 @@ impl SettingsWindowView {
                 mode_container = mode_container.child(
                     self.option_row(
                         spec.settings_row_id,
-                        spec.label,
-                        Some(spec.settings_description.into()),
+                        spec.localized_label(cx),
+                        Some(spec.localized_description(cx).into()),
                         self.default_history_mode == mode,
                         theme,
                     )
@@ -1553,7 +1676,7 @@ impl SettingsWindowView {
                         .text_size(theme.ui_text(12.0))
                         .text_color(theme.colors.foreground.secondary)
                         .child(
-                            "Applies when opening repositories that do not already have a saved history mode.",
+                            text(cx, "Applies when opening repositories that do not already have a saved history mode.", "開啟尚未儲存歷史顯示模式的儲存庫時，會套用此設定。"),
                         ),
                 ),
             );
@@ -1562,8 +1685,8 @@ impl SettingsWindowView {
         git_log_card = git_log_card.child(
             self.summary_row(
                 "settings_window_git_log_branch_names",
-                "Branch names",
-                self.history_branch_names.settings_label().into(),
+                text(cx, "Branch names", "分支名稱"),
+                branch_names_label(cx, self.history_branch_names).into(),
                 self.expanded_section == Some(SettingsSection::GitLogBranchNames),
                 theme,
             )
@@ -1591,7 +1714,7 @@ impl SettingsWindowView {
                 options = options.child(
                     self.option_row(
                         id,
-                        mode.settings_label(),
+                        branch_names_label(cx, mode),
                         None,
                         self.history_branch_names == mode,
                         theme,
@@ -1617,7 +1740,7 @@ impl SettingsWindowView {
                     .child(
                         self.toggle_row(
                             "settings_window_git_log_column_graph",
-                            "Graph",
+                            text(cx, "Graph", "提交圖"),
                             self.history_show_graph,
                             theme,
                         )
@@ -1638,7 +1761,7 @@ impl SettingsWindowView {
                     .child(
                         self.toggle_row(
                             "settings_window_git_log_column_author",
-                            "Author",
+                            text(cx, "Author", "作者"),
                             self.history_show_author,
                             theme,
                         )
@@ -1659,7 +1782,7 @@ impl SettingsWindowView {
                     .child(
                         self.toggle_row(
                             "settings_window_git_log_column_date",
-                            "Commit date",
+                            text(cx, "Commit date", "提交日期"),
                             self.history_show_date,
                             theme,
                         )
@@ -1704,13 +1827,17 @@ impl SettingsWindowView {
                             .pb_1()
                             .text_size(theme.ui_text(12.0))
                             .text_color(theme.colors.foreground.secondary)
-                            .child("Columns may auto-hide in narrow windows."),
+                            .child(text(
+                                cx,
+                                "Columns may auto-hide in narrow windows.",
+                                "在較窄的視窗中，部分欄位可能會自動隱藏。",
+                            )),
                     )
                     .child(
                         self.link_row(
                             "settings_window_git_log_reset_widths",
-                            "Reset column widths",
-                            "Reset".into(),
+                            text(cx, "Reset column widths", "重設欄寬"),
+                            text(cx, "Reset", "重設").into(),
                             theme,
                         )
                         .border_color(no_separator)
@@ -1732,7 +1859,7 @@ impl SettingsWindowView {
         git_log_card = git_log_card.child(
             self.toggle_row(
                 "settings_window_git_log_show_graph_gradient",
-                "Show graph gradient",
+                text(cx, "Show graph gradient", "顯示提交圖漸層"),
                 self.history_show_graph_gradient,
                 theme,
             )
@@ -1767,8 +1894,8 @@ impl SettingsWindowView {
         let card = card.child(
             self.summary_row(
                 "settings_window_git_log_hidden_refs",
-                "Hidden refs",
-                hidden_refs_summary(settings, presets, &self.fixed_hidden_refs),
+                text(cx, "Hidden refs", "隱藏的參照"),
+                hidden_refs_summary(cx, settings, presets, &self.fixed_hidden_refs),
                 expanded,
                 theme,
             )
@@ -1789,11 +1916,19 @@ impl SettingsWindowView {
             .child(
                 self.toggle_row(
                     "settings_window_git_log_hidden_refs_enabled",
-                    "Hide tool and bookkeeping refs",
+                    text(cx, "Hide tool and bookkeeping refs", "隱藏工具與內部管理參照"),
                     settings.enabled,
                     theme,
                 )
-                .gitcomet_tooltip(theme, HIDDEN_REFS_TOOLTIP.into())
+                .gitcomet_tooltip(
+                    theme,
+                    text(
+                        cx,
+                        HIDDEN_REFS_TOOLTIP,
+                        "程式開發代理、審查系統及 Git 會建立供內部管理使用的參照。\n隱藏這些參照可讓「所有分支」更好閱讀，新參照也不會再觸發重建歷史索引。",
+                    )
+                    .into(),
+                )
                 .on_activate(
                     false,
                     controls::ControlActivation::Action,
@@ -1844,10 +1979,12 @@ impl SettingsWindowView {
                     .pb_2()
                     .text_size(theme.ui_text(12.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child(
+                    .child(text(
+                        cx,
                         "Refs in these namespaces do not start the All branches walk. \
                          Commits that a shown branch reaches stay visible.",
-                    ),
+                        "「所有分支」不會從這些命名空間的參照開始追溯。仍可從已顯示的分支追溯到的提交會繼續顯示。",
+                    )),
             ),
         )
     }
@@ -1870,7 +2007,7 @@ impl SettingsWindowView {
                 self.info_row(
                     id.clone(),
                     prefix.as_str().to_owned(),
-                    components::Button::new(format!("{id}_remove"), "Remove")
+                    components::Button::new(format!("{id}_remove"), text(cx, "Remove", "移除"))
                         .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, move |this, _e, _window, cx| {
                             this.remove_hidden_ref_prefix(&remove_prefix, cx);
@@ -1896,11 +2033,14 @@ impl SettingsWindowView {
                         .child(self.hidden_ref_prefix_input.clone()),
                 )
                 .child(
-                    components::Button::new("settings_window_git_log_hidden_ref_add", "Add")
-                        .style(components::ButtonStyle::Outlined)
-                        .on_click(theme, cx, |this, _e, _window, cx| {
-                            this.add_hidden_ref_prefix(cx);
-                        }),
+                    components::Button::new(
+                        "settings_window_git_log_hidden_ref_add",
+                        text(cx, "Add", "新增"),
+                    )
+                    .style(components::ButtonStyle::Outlined)
+                    .on_click(theme, cx, |this, _e, _window, cx| {
+                        this.add_hidden_ref_prefix(cx);
+                    }),
                 ),
         );
         if let Some(error) = self.hidden_ref_prefix_error {
@@ -1916,11 +2056,11 @@ impl SettingsWindowView {
     fn remotes_card(&self, theme: AppTheme, cx: &mut gpui::Context<Self>) -> Stateful<gpui::Div> {
         let no_separator = gpui::rgba(0x00000000);
         self
-            .card("settings_window_remotes_card", "Remotes", theme)
+            .card("settings_window_remotes_card", text(cx, "Remotes", "遠端"), theme)
             .child(
                 self.toggle_row(
                     "settings_window_auto_fetch_enabled",
-                    "Automatically fetch repositories",
+                    text(cx, "Automatically fetch repositories", "自動擷取儲存庫更新"),
                     self.auto_fetch.enabled,
                     theme,
                 )
@@ -1932,7 +2072,7 @@ impl SettingsWindowView {
             )
             .child(self.info_row(
                 "settings_window_auto_fetch_interval",
-                "Fetch interval (minutes)",
+                text(cx, "Fetch interval (minutes)", "擷取間隔（分鐘）"),
                 div()
                     .w(ui_scale::design_px(AUTO_FETCH_INTERVAL_INPUT_WIDTH_PX, cx))
                     .child(self.auto_fetch_interval_input.clone()),
@@ -1960,7 +2100,7 @@ impl SettingsWindowView {
             .child(
                 self.toggle_row(
                     "settings_window_prune_deleted_remote_branches",
-                    "Prune deleted remote branches during Fetch All",
+                    text(cx, "Prune deleted remote branches during Fetch All", "擷取全部更新時清除已刪除的遠端分支參照"),
                     self.prune_deleted_remote_branches_on_fetch,
                     theme,
                 )
@@ -1987,7 +2127,7 @@ impl SettingsWindowView {
             .child(
                 self.toggle_row(
                     "settings_window_auto_fetch_tags",
-                    "Automatically fetch tags",
+                    text(cx, "Automatically fetch tags", "自動擷取標籤"),
                     self.history_tag_fetch_mode == GitLogTagFetchMode::OnRepositoryActivation,
                     theme,
                 )
@@ -2050,10 +2190,10 @@ impl SettingsWindowView {
                 .text_color(theme.colors.foreground.secondary)
                 .child(text)
         };
-        self.card("settings_window_large_files_card", "Large files", theme)
+        self.card("settings_window_large_files_card", text(cx, "Large files", "大型檔案"), theme)
             .child(large_file_toggle(
                 "settings_window_annex_hide_refs",
-                "Hide git-annex bookkeeping branches",
+                text(cx, "Hide git-annex bookkeeping branches", "隱藏 git-annex 內部管理分支"),
                 large_files.hide_annex_refs,
                 |s| s.hide_annex_refs = !s.hide_annex_refs,
             ))
@@ -2062,7 +2202,7 @@ impl SettingsWindowView {
             ))
             .child(large_file_toggle(
                 "settings_window_annex_pull_push",
-                "Use git-annex pull and push on adjusted branches",
+                text(cx, "Use git-annex pull and push on adjusted branches", "在調整分支上使用 git-annex pull 和 push"),
                 large_files.annex_pull_push,
                 |s| s.annex_pull_push = !s.annex_pull_push,
             ))
@@ -2083,11 +2223,11 @@ impl SettingsWindowView {
         cx: &mut gpui::Context<Self>,
     ) -> Stateful<gpui::Div> {
         let no_separator = gpui::rgba(0x00000000);
-        self.card("settings_window_maintenance_card", "Maintenance", theme)
+        self.card("settings_window_maintenance_card", text(cx, "Maintenance", "維護"), theme)
             .child(
                 self.toggle_row(
                     "settings_window_recommend_maintenance",
-                    "Recommend repository maintenance",
+                    text(cx, "Recommend repository maintenance", "建議維護儲存庫"),
                     self.recommend_repo_maintenance,
                     theme,
                 )
@@ -2116,13 +2256,13 @@ impl SettingsWindowView {
 
     fn tags_card(&self, theme: AppTheme, cx: &mut gpui::Context<Self>) -> Stateful<gpui::Div> {
         let no_separator = gpui::rgba(0x00000000);
-        self.card("settings_window_tags_card", "Tags", theme)
+        self.card("settings_window_tags_card", text(cx, "Tags", "標籤"), theme)
             .child(
                 self.setting_option_row(
                     "settings_window_tags_default_lightweight",
-                    "Lightweight",
+                    text(cx, "Lightweight", "輕量標籤"),
                     Some(
-                        "A simple tag pointing directly to a commit. No message, no GPG signing."
+                        text(cx, "A simple tag pointing directly to a commit. No message, no GPG signing.", "直接指向一筆提交的簡易標籤。沒有訊息，也沒有 GPG 簽章。")
                             .into(),
                     ),
                     self.default_tag_type == DefaultTagType::Lightweight,
@@ -2139,9 +2279,9 @@ impl SettingsWindowView {
             .child(
                 self.setting_option_row(
                     "settings_window_tags_default_annotated",
-                    "Annotated",
+                    text(cx, "Annotated", "附註標籤"),
                     Some(
-                        "Stores tag author, date, and an optional message. Supports GPG signing."
+                        text(cx, "Stores tag author, date, and an optional message. Supports GPG signing.", "儲存標籤的作者、日期及選填訊息。支援 GPG 簽章。")
                             .into(),
                     ),
                     self.default_tag_type == DefaultTagType::Annotated,
@@ -2166,8 +2306,15 @@ impl SettingsWindowView {
         let system_git_row = self
             .setting_option_row(
                 "settings_window_git_executable_system",
-                "System PATH",
-                Some("Use the first `git` executable available in the current PATH.".into()),
+                text(cx, "System PATH", "系統 PATH"),
+                Some(
+                    text(
+                        cx,
+                        "Use the first `git` executable available in the current PATH.",
+                        "使用目前 PATH 中找到的第一個 `git` 執行檔。",
+                    )
+                    .into(),
+                ),
                 self.git_executable_mode == GitExecutableMode::SystemPath,
                 theme,
             )
@@ -2182,7 +2329,7 @@ impl SettingsWindowView {
         let custom_git_row = self
         .setting_option_row(
             "settings_window_git_executable_custom",
-            "Custom executable",
+            text(cx, "Custom executable", "自訂執行檔"),
             Some(
                 "Use a specific Git binary and add its directory when Git resolves helper tools."
                     .into(),
@@ -2195,7 +2342,11 @@ impl SettingsWindowView {
         }));
 
         let mut git_executable_card = self
-            .card("settings_window_git_executable", "Executables", theme)
+            .card(
+                "settings_window_git_executable",
+                text(cx, "Executables", "執行檔"),
+                theme,
+            )
             .child(
                 div()
                     .id("settings_window_git_executable_scope_note")
@@ -2208,58 +2359,65 @@ impl SettingsWindowView {
             .child(system_git_row)
             .child(custom_git_row)
             .child(
-                components::Button::new("settings_window_recheck_executables", "Recheck")
-                    .style(components::ButtonStyle::Outlined)
-                    .on_click(theme, cx, |_this, _e, _window, cx| {
-                        super::super::runtime_probe::request(cx, true);
-                    }),
+                components::Button::new(
+                    "settings_window_recheck_executables",
+                    text(cx, "Recheck", "重新檢查"),
+                )
+                .style(components::ButtonStyle::Outlined)
+                .on_click(theme, cx, |_this, _e, _window, cx| {
+                    super::super::runtime_probe::request(cx, true);
+                }),
             );
 
         if self.git_executable_mode == GitExecutableMode::Custom {
-            let browse_button =
-                components::Button::new("settings_window_git_executable_browse", "Browse")
-                    .style(components::ButtonStyle::Outlined)
-                    .on_click(theme, cx, |this, _e, window, cx| {
-                        let view = cx.weak_entity();
-                        let directory = crate::view::path_prompt::folder_of_existing_entry(
-                            this.git_executable_input.read(cx).text(),
-                        );
-                        let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
-                            files: true,
-                            directories: false,
-                            multiple: false,
-                            prompt: Some("Select Git executable".into()),
-                            directory,
+            let browse_button = components::Button::new(
+                "settings_window_git_executable_browse",
+                text(cx, "Browse", "瀏覽"),
+            )
+            .style(components::ButtonStyle::Outlined)
+            .on_click(theme, cx, |this, _e, window, cx| {
+                let view = cx.weak_entity();
+                let directory = crate::view::path_prompt::folder_of_existing_entry(
+                    this.git_executable_input.read(cx).text(),
+                );
+                let rx = cx.prompt_for_paths(gpui::PathPromptOptions {
+                    files: true,
+                    directories: false,
+                    multiple: false,
+                    prompt: Some(text(cx, "Select Git executable", "選取 Git 執行檔").into()),
+                    directory,
+                });
+
+                window
+                    .spawn(cx, async move |cx| {
+                        let result = rx.await;
+                        let paths = match result {
+                            Ok(Ok(Some(paths))) => paths,
+                            Ok(Ok(None)) => return,
+                            Ok(Err(_)) | Err(_) => return,
+                        };
+                        let Some(path) = paths.into_iter().next() else {
+                            return;
+                        };
+                        let _ = view.update(cx, |this, cx| {
+                            let next = path.display().to_string();
+                            this.git_custom_path_draft = next.clone();
+                            this.git_executable_input
+                                .update(cx, |input, cx| input.set_text(next, cx));
+                            this.apply_git_executable_settings(cx);
                         });
+                    })
+                    .detach();
+            });
 
-                        window
-                            .spawn(cx, async move |cx| {
-                                let result = rx.await;
-                                let paths = match result {
-                                    Ok(Ok(Some(paths))) => paths,
-                                    Ok(Ok(None)) => return,
-                                    Ok(Err(_)) | Err(_) => return,
-                                };
-                                let Some(path) = paths.into_iter().next() else {
-                                    return;
-                                };
-                                let _ = view.update(cx, |this, cx| {
-                                    let next = path.display().to_string();
-                                    this.git_custom_path_draft = next.clone();
-                                    this.git_executable_input
-                                        .update(cx, |input, cx| input.set_text(next, cx));
-                                    this.apply_git_executable_settings(cx);
-                                });
-                            })
-                            .detach();
-                    });
-
-            let use_path_button =
-                components::Button::new("settings_window_git_executable_apply", "Use Path")
-                    .style(components::ButtonStyle::Filled)
-                    .on_click(theme, cx, |this, _e, _window, cx| {
-                        this.apply_git_executable_settings(cx);
-                    });
+            let use_path_button = components::Button::new(
+                "settings_window_git_executable_apply",
+                text(cx, "Use Path", "使用路徑"),
+            )
+            .style(components::ButtonStyle::Filled)
+            .on_click(theme, cx, |this, _e, _window, cx| {
+                this.apply_git_executable_settings(cx);
+            });
 
             git_executable_card = git_executable_card.child(
                 self.detail_container("settings_window_git_executable_custom_container", theme)
@@ -2269,7 +2427,7 @@ impl SettingsWindowView {
                             .pt_1()
                             .text_size(theme.ui_text(12.0))
                             .text_color(theme.colors.foreground.secondary)
-                            .child("Custom Git executable"),
+                            .child(text(cx, "Custom Git executable", "自訂 Git 執行檔")),
                     )
                     .child(
                         div()
@@ -2295,7 +2453,11 @@ impl SettingsWindowView {
                             .pb_1()
                             .text_size(theme.ui_text(12.0))
                             .text_color(theme.colors.foreground.secondary)
-                            .child("Press Enter after editing the path to apply it immediately."),
+                            .child(text(
+                                cx,
+                                "Press Enter after editing the path to apply it immediately.",
+                                "編輯路徑後按 Enter 即可立即套用。",
+                            )),
                     ),
             );
         }
@@ -2370,7 +2532,7 @@ impl SettingsWindowView {
             git_executable_card = git_executable_card.child(
                 self.link_row(
                     "settings_window_signature_guide",
-                    "Signature verification guide",
+                    text(cx, "Signature verification guide", "簽章驗證指南"),
                     "docs/commit-signatures.md".into(),
                     theme,
                 )
@@ -2388,12 +2550,12 @@ impl SettingsWindowView {
 
     fn links_card(&self, theme: AppTheme, cx: &mut gpui::Context<Self>) -> Stateful<gpui::Div> {
         let no_separator = gpui::rgba(0x00000000);
-        self.card("settings_window_links", "Links", theme)
+        self.card("settings_window_links", text(cx, "Links", "連結"), theme)
             .when_some(themes_guide_url(), |card, url| {
                 card.child(
                     self.link_row(
                         "settings_window_links_theme_guide",
-                        "Theme guide",
+                        text(cx, "Theme guide", "佈景主題指南"),
                         "docs/themes.md".into(),
                         theme,
                     )
@@ -2410,7 +2572,7 @@ impl SettingsWindowView {
                 let label = if url.contains("://github.com/") {
                     "GitHub"
                 } else {
-                    "Source code"
+                    text(cx, "Source code", "原始碼")
                 };
                 card.child(
                     self.link_row("settings_window_github", label, url_label(url), theme)
@@ -2427,7 +2589,7 @@ impl SettingsWindowView {
                 card.child(
                     self.link_row(
                         "settings_window_license",
-                        "License",
+                        text(cx, "License", "授權條款"),
                         license.name.to_string().into(),
                         theme,
                     )
@@ -2451,7 +2613,7 @@ impl SettingsWindowView {
                 card.child(
                     self.link_row(
                         "settings_window_professional_edition_upgrade",
-                        "Upgrade to Professional edition",
+                        text(cx, "Upgrade to Professional edition", "升級至專業版"),
                         host,
                         theme,
                     )
@@ -2467,8 +2629,8 @@ impl SettingsWindowView {
             .child(
                 self.link_row(
                     "settings_window_open_source_licenses",
-                    "Open source licenses",
-                    "Show".into(),
+                    text(cx, "Open source licenses", "開放原始碼授權"),
+                    text(cx, "Show", "顯示").into(),
                     theme,
                 )
                 .border_color(no_separator)

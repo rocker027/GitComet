@@ -2,6 +2,7 @@
 //! short SHA on one row, and the parent with the refs on this commit below.
 
 use super::*;
+use crate::localization::text;
 use crate::theme::with_alpha;
 use crate::view::branch_sidebar::BranchMenuTarget;
 use gitcomet_core::domain::CommitDetails;
@@ -51,10 +52,10 @@ impl ShaChip {
         }
     }
 
-    fn tooltip(self) -> &'static str {
+    fn tooltip(self, cx: &App) -> &'static str {
         match self {
-            Self::Commit { .. } => "Copy commit SHA",
-            Self::Parent => "Go to parent commit",
+            Self::Commit { .. } => text(cx, "Copy commit SHA", "複製提交的 SHA"),
+            Self::Parent => text(cx, "Go to parent commit", "前往父提交"),
         }
     }
 
@@ -196,7 +197,7 @@ impl DetailsPaneView {
                     }
                 }),
             )
-            .gitcomet_tooltip(theme, chip.tooltip().into());
+            .gitcomet_tooltip(theme, chip.tooltip(cx).into());
 
         let menu = ChipMenu {
             invoker: menu_id.into(),
@@ -568,7 +569,7 @@ impl DetailsPaneView {
                 div()
                     .text_size(theme.ui_text(12.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child("Parent"),
+                    .child(text(cx, "Parent", "父提交")),
             );
         bottom = match parent {
             Some(parent) => bottom.child(self.commit_card_sha_chip(
@@ -582,7 +583,7 @@ impl DetailsPaneView {
                 div()
                     .text_size(theme.ui_text(12.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child("none (root commit)"),
+                    .child(text(cx, "none (root commit)", "無（根提交）")),
             ),
         };
         if !pills.is_empty() {

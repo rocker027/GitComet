@@ -641,6 +641,7 @@ impl GitCometView {
             ),
         }
         .initialize(cx);
+        crate::localization::Language::initialize(ui_session.ui_language.as_deref(), cx);
         crate::session_ui::initialize_appearance(&ui_session, cx);
         ui_preferences.appearance.metrics = crate::appearance::current(cx);
         crate::session_ui::ui_scale(&ui_session, cx);

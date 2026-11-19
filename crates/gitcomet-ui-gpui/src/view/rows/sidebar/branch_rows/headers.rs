@@ -27,8 +27,14 @@ impl SidebarPaneView {
         let repo_id = ctx.repo_id;
         let is_collapsed_popover = ctx.is_collapsed_popover;
         let (icon_path, label): (&'static str, SharedString) = match section {
-            BranchSection::Local => ("icons/computer.svg", "Local Branches".into()),
-            BranchSection::Remote => ("icons/cloud.svg", "Remote Branches".into()),
+            BranchSection::Local => (
+                "icons/computer.svg",
+                CollapsedSidebarSection::Local.title(cx).into(),
+            ),
+            BranchSection::Remote => (
+                "icons/cloud.svg",
+                CollapsedSidebarSection::Remote.title(cx).into(),
+            ),
         };
         let tooltip = label.clone();
         let section_key = match section {
@@ -232,7 +238,7 @@ impl SidebarPaneView {
                     .whitespace_nowrap()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.colors.foreground.primary)
-                    .child("Stashes"),
+                    .child(CollapsedSidebarSection::Stashes.title(cx)),
             )
             .when(show_stash_spinner, |d| {
                 d.child(
@@ -241,7 +247,15 @@ impl SidebarPaneView {
                         .child(ctx.svg_spinner(("stash_spinner", repo_id.0), ctx.icon_muted, 12.0)),
                 )
             })
-            .gitcomet_tooltip(theme, "Stashes (Right-click for actions)".into())
+            .gitcomet_tooltip(
+                theme,
+                text(
+                    cx,
+                    "Stashes (Right-click for actions)",
+                    "貯藏（按右鍵查看操作）",
+                )
+                .into(),
+            )
             .on_activate(
                 false,
                 ctx.header_activation,
@@ -328,7 +342,7 @@ impl SidebarPaneView {
                     .whitespace_nowrap()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.colors.foreground.primary)
-                    .child("Worktrees"),
+                    .child(CollapsedSidebarSection::Worktrees.title(cx)),
             )
             .when(show_worktrees_spinner, |d| {
                 d.child(
@@ -341,7 +355,15 @@ impl SidebarPaneView {
                         )),
                 )
             })
-            .gitcomet_tooltip(theme, "Worktrees (Add / Refresh / Open / Remove)".into())
+            .gitcomet_tooltip(
+                theme,
+                text(
+                    cx,
+                    "Worktrees (Add / Refresh / Open / Remove)",
+                    "工作樹（新增／重新整理／開啟／移除）",
+                )
+                .into(),
+            )
             .on_activate(
                 false,
                 ctx.header_activation,
@@ -426,7 +448,7 @@ impl SidebarPaneView {
                     .whitespace_nowrap()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.colors.foreground.primary)
-                    .child("Submodules"),
+                    .child(CollapsedSidebarSection::Submodules.title(cx)),
             )
             .when(show_submodules_spinner, |d| {
                 d.child(
@@ -439,7 +461,15 @@ impl SidebarPaneView {
                         )),
                 )
             })
-            .gitcomet_tooltip(theme, "Submodules (Add / Update / Open / Remove)".into())
+            .gitcomet_tooltip(
+                theme,
+                text(
+                    cx,
+                    "Submodules (Add / Update / Open / Remove)",
+                    "子模組（新增／更新／開啟／移除）",
+                )
+                .into(),
+            )
             .on_activate(
                 false,
                 ctx.header_activation,
@@ -533,9 +563,9 @@ impl SidebarPaneView {
                     .gitcomet_tooltip(
                         theme,
                         if remote_in_history_focus {
-                            "Stop focus"
+                            text(cx, "Stop focus", "停止聚焦")
                         } else {
-                            "Focus"
+                            text(cx, "Focus", "聚焦")
                         }
                         .into(),
                     )
@@ -616,7 +646,15 @@ impl SidebarPaneView {
                         .debug_selector(move || format!("sidebar_remote_hidden_in_history_{ix}"))
                         .child(ctx.svg_icon("icons/eye_off.svg", ctx.icon_primary, 14.0)),
                 )
-                .gitcomet_tooltip(theme, REMOTE_HIDDEN_IN_HISTORY_TOOLTIP.into())
+                .gitcomet_tooltip(
+                    theme,
+                    text(
+                        cx,
+                        REMOTE_HIDDEN_IN_HISTORY_TOOLTIP,
+                        "已從提交圖隱藏（按右鍵可重新顯示）",
+                    )
+                    .into(),
+                )
             })
             .on_activate(
                 false,
@@ -748,9 +786,9 @@ impl SidebarPaneView {
                     .gitcomet_tooltip(
                         theme,
                         if all_focused {
-                            "Stop focusing group"
+                            text(cx, "Stop focusing group", "停止聚焦此群組")
                         } else {
-                            "Focus group"
+                            text(cx, "Focus group", "聚焦群組")
                         }
                         .into(),
                     )

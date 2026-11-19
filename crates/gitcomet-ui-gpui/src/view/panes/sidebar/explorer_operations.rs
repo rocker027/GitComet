@@ -817,6 +817,7 @@ impl SidebarPaneView {
         &self,
         theme: AppTheme,
         message: &'static str,
+        cx: &App,
     ) -> AnyElement {
         let bounds = self.explorer_empty_bounds.clone();
         let highlighted = self
@@ -847,7 +848,11 @@ impl SidebarPaneView {
                 .absolute()
                 .inset_0(),
             )
-            .child(components::empty_state(theme, "Files", message))
+            .child(components::empty_state(
+                theme,
+                text(cx, "Files", "檔案"),
+                message,
+            ))
             .into_any_element()
     }
 

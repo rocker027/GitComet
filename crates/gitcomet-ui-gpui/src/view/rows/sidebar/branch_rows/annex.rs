@@ -62,7 +62,7 @@ impl SidebarPaneView {
             })
             .gitcomet_tooltip(
                 theme,
-                "git-annex repositories and special remotes (right-click for sync, remotes and more)".into(),
+                text(cx, "git-annex repositories and special remotes (right-click for sync, remotes and more)", "git-annex 儲存庫與特殊遠端（按右鍵查看同步等操作）").into(),
             )
             .on_activate(
                 false,
@@ -119,7 +119,7 @@ impl SidebarPaneView {
                 row.child(
                     components::Button::new(
                         format!("annex_placeholder_init_{}", repo_id.0),
-                        "Initialize",
+                        text(cx, "Initialize", "初始化"),
                     )
                     .borderless()
                     .on_click(theme, cx, move |this, _e, _window, _cx| {
@@ -136,7 +136,7 @@ impl SidebarPaneView {
                 row.child(
                     components::Button::new(
                         format!("annex_placeholder_restage_{}", repo_id.0),
-                        "Refresh",
+                        text(cx, "Refresh", "重新整理"),
                     )
                     .borderless()
                     .on_click(theme, cx, move |this, _e, _window, _cx| {

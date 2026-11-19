@@ -153,9 +153,9 @@ impl SidebarPaneView {
                     .gitcomet_tooltip(
                         theme,
                         if in_history_focus {
-                            "Stop focus"
+                            text(cx, "Stop focus", "停止聚焦")
                         } else {
-                            "Focus"
+                            text(cx, "Focus", "聚焦")
                         }
                         .into(),
                     )
@@ -277,7 +277,7 @@ impl SidebarPaneView {
 
         if is_upstream && section == BranchSection::Remote {
             end_accessories = end_accessories
-                .child(ctx.upstream_badge(Some(format!("branch_upstream_badge_{ix}"))));
+                .child(ctx.upstream_badge(Some(format!("branch_upstream_badge_{ix}")), cx));
         }
 
         if show_worktree_badge {

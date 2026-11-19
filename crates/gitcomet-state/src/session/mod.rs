@@ -40,6 +40,7 @@ pub struct UiSession {
     pub details_width: Option<u32>,
     pub sidebar_collapsed: Option<bool>,
     pub theme_mode: Option<String>,
+    pub ui_language: Option<String>,
     pub ui_scale_percent: Option<u32>,
     pub image_sampling_mode: Option<String>,
     pub image_smooth_filter: Option<String>,
@@ -191,6 +192,12 @@ pub(crate) struct UiSessionFile {
     sidebar_collapsed: Option<bool>,
     #[serde(default, deserialize_with = "lenient")]
     theme_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    ui_language: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     ui_scale_percent: Option<u32>,
     #[serde(default, deserialize_with = "lenient")]
@@ -521,6 +528,7 @@ pub fn load_from_path(path: &Path) -> UiSession {
             .map(|layout| layout.sidebar_collapsed)
             .or(file.sidebar_collapsed),
         theme_mode: file.theme_mode,
+        ui_language: file.ui_language,
         ui_scale_percent: file.ui_scale_percent,
         image_sampling_mode: file.image_sampling_mode,
         image_smooth_filter: file.image_smooth_filter,
