@@ -161,8 +161,7 @@ impl SidebarRowContext {
             + depth as f32 * BRANCH_TREE_DEPTH_STEP_PX)
     }
 
-    /// Section headers sit close to the left edge; only the folder rows below
-    /// them need the toggle slot's room.
+    /// Section headers start closer to the left edge than the folder rows.
     fn header_indent_px(&self) -> Pixels {
         self.px(self.content_inset + BRANCH_TREE_HEADER_PAD_PX)
     }
@@ -232,6 +231,75 @@ impl SidebarRowContext {
             .when_some(collapsed, |this, collapsed| {
                 this.child(self.svg_collapse(collapsed))
             })
+    }
+
+    fn section_toggle_slot(
+        &self,
+        ix: usize,
+        collapsed: bool,
+        section_key: &str,
+        cx: &mut gpui::Context<SidebarPaneView>,
+    ) -> AnyElement {
+        if !self.filter_query.matcher.is_empty() {
+            return self.tree_toggle_slot(None).into_any_element();
+        }
+        let toggle = self
+            .tree_toggle_slot(Some(collapsed))
+            .debug_selector(move || format!("sidebar_header_toggle_{ix}"));
+        if self.is_collapsed_popover {
+            return toggle.into_any_element();
+        }
+        let collapse_key: SharedString =
+            branch_sidebar::sidebar_section_collapse_key(section_key).into();
+        let tooltip = if collapsed {
+            text(cx, "Expand section", "展開區塊")
+        } else {
+            text(cx, "Collapse section", "收合區塊")
+        };
+        toggle
+            .id(("sidebar_header_toggle", ix))
+            .h_full()
+            .gitcomet_tooltip(self.theme, tooltip.into())
+            .on_activate(
+                false,
+                controls::ControlActivation::Nested,
+                cx.listener(move |this, e: &ClickEvent, _, cx| {
+                    if e.standard_click() && e.click_count() == 1 {
+                        this.toggle_active_repo_collapse_key(collapse_key.clone(), cx);
+                    }
+                }),
+            )
+            .into_any_element()
+    }
+
+    fn activate_section_header(
+        &self,
+        row: gpui::Stateful<gpui::Div>,
+        slot: SidebarRowSlot,
+        section_key: SharedString,
+        cx: &mut gpui::Context<SidebarPaneView>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let navigate =
+            !self.is_collapsed_popover && (slot.stuck || !self.filter_query.matcher.is_empty());
+        let collapse_key = if self.is_collapsed_popover {
+            section_key
+        } else {
+            branch_sidebar::sidebar_section_collapse_key(&section_key).into()
+        };
+        row.on_activate(
+            false,
+            self.header_activation,
+            cx.listener(move |this, e: &ClickEvent, _, cx| {
+                if !e.standard_click() || e.click_count() != 1 {
+                    return;
+                }
+                if navigate {
+                    this.navigate_sidebar_row(slot.ix, cx);
+                } else {
+                    this.toggle_active_repo_collapse_key(collapse_key.clone(), cx);
+                }
+            }),
+        )
     }
 
     fn tree_icon_slot(&self, path: &'static str, color: gpui::Rgba, size_px: f32) -> gpui::Div {

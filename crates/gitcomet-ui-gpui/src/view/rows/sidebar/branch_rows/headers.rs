@@ -25,7 +25,6 @@ impl SidebarPaneView {
         } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
-        let is_collapsed_popover = ctx.is_collapsed_popover;
         let (icon_path, label): (&'static str, SharedString) = match section {
             BranchSection::Local => (
                 "icons/computer.svg",
@@ -59,12 +58,7 @@ impl SidebarPaneView {
             .items_center()
             .gap(ctx.px(BRANCH_TREE_GAP_PX))
             .interactive_row(row_style, row_state)
-            .when(is_collapsed_popover, |row| {
-                row.child(
-                    ctx.tree_toggle_slot(Some(collapsed))
-                        .debug_selector(move || format!("sidebar_header_toggle_{ix}")),
-                )
-            })
+            .child(ctx.section_toggle_slot(ix, collapsed, &collapse_key, cx))
             .child(
                 ctx.tree_icon_slot(icon_path, ctx.icon_primary, 14.0)
                     .debug_selector(move || format!("sidebar_header_icon_{ix}")),
@@ -81,20 +75,7 @@ impl SidebarPaneView {
                     .child(label),
             )
             .gitcomet_tooltip(theme, tooltip.clone())
-            .on_activate(
-                false,
-                ctx.header_activation,
-                cx.listener(move |this, e: &ClickEvent, _w, cx| {
-                    if !e.standard_click() || e.click_count() != 1 {
-                        return;
-                    }
-                    if is_collapsed_popover {
-                        this.toggle_active_repo_collapse_key(collapse_key.clone(), cx);
-                    } else {
-                        this.navigate_sidebar_row(ix, cx);
-                    }
-                }),
-            )
+            .map(|row| ctx.activate_section_header(row, slot, collapse_key, cx))
             .on_pointer_click(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, window, cx| {
@@ -112,9 +93,7 @@ impl SidebarPaneView {
             .into_any_element()
     }
 
-    /// Stashes section header, with a spinner while the list loads.
-    /// The Tags section header. Clicking scrolls to it, or toggles it in the
-    /// collapsed rail's flyout, like the other sections.
+    /// Tags section header, with a spinner while the list loads.
     pub(super) fn sidebar_tags_header_row(
         this: &Self,
         ctx: &SidebarRowContext,
@@ -131,7 +110,6 @@ impl SidebarPaneView {
         } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
-        let is_collapsed_popover = ctx.is_collapsed_popover;
         let show_tags_spinner = this
             .active_repo()
             .is_some_and(|r| matches!(r.tags, Loadable::Loading));
@@ -149,9 +127,7 @@ impl SidebarPaneView {
             .items_center()
             .gap(ctx.px(BRANCH_TREE_GAP_PX))
             .interactive_row(row_style, row_state)
-            .when(is_collapsed_popover, |row| {
-                row.child(ctx.tree_toggle_slot(Some(collapsed)))
-            })
+            .child(ctx.section_toggle_slot(ix, collapsed, &collapse_key, cx))
             .child(ctx.tree_icon_slot("icons/tag.svg", ctx.icon_primary, 14.0))
             .child(
                 div()
@@ -168,20 +144,7 @@ impl SidebarPaneView {
                 d.child(ctx.svg_spinner(("tags_spinner", repo_id.0), ctx.icon_muted, 12.0))
             })
             .gitcomet_tooltip(theme, "Tags".into())
-            .on_activate(
-                false,
-                ctx.header_activation,
-                cx.listener(move |this, e: &ClickEvent, _w, cx| {
-                    if !e.standard_click() || e.click_count() != 1 {
-                        return;
-                    }
-                    if is_collapsed_popover {
-                        this.toggle_active_repo_collapse_key(collapse_key.clone(), cx);
-                    } else {
-                        this.navigate_sidebar_row(ix, cx);
-                    }
-                }),
-            )
+            .map(|row| ctx.activate_section_header(row, slot, collapse_key, cx))
             .map(|row| ctx.paint_header(row.into_any_element(), row_surface))
             .into_any_element()
     }
@@ -202,7 +165,6 @@ impl SidebarPaneView {
         } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
-        let is_collapsed_popover = ctx.is_collapsed_popover;
         let show_stash_spinner = this.active_repo().is_some_and(|r| {
             matches!(r.stashes, Loadable::Loading)
                 || (!collapsed && matches!(r.stashes, Loadable::NotLoaded))
@@ -225,9 +187,7 @@ impl SidebarPaneView {
             .items_center()
             .gap(ctx.px(BRANCH_TREE_GAP_PX))
             .interactive_row(row_style, row_state)
-            .when(is_collapsed_popover, |row| {
-                row.child(ctx.tree_toggle_slot(Some(collapsed)))
-            })
+            .child(ctx.section_toggle_slot(ix, collapsed, &collapse_key, cx))
             .child(ctx.tree_icon_slot(STASH_ICON_PATH, ctx.icon_primary, 14.0))
             .child(
                 div()
@@ -256,20 +216,7 @@ impl SidebarPaneView {
                 )
                 .into(),
             )
-            .on_activate(
-                false,
-                ctx.header_activation,
-                cx.listener(move |this, e: &ClickEvent, _w, cx| {
-                    if !e.standard_click() || e.click_count() != 1 {
-                        return;
-                    }
-                    if is_collapsed_popover {
-                        this.toggle_active_repo_collapse_key(collapse_key.clone(), cx);
-                    } else {
-                        this.navigate_sidebar_row(ix, cx);
-                    }
-                }),
-            )
+            .map(|row| ctx.activate_section_header(row, slot, collapse_key, cx))
             .on_pointer_click(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, window, cx| {
@@ -304,7 +251,6 @@ impl SidebarPaneView {
         } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
-        let is_collapsed_popover = ctx.is_collapsed_popover;
         let show_worktrees_spinner = this.active_repo().is_some_and(|r| {
             r.worktrees_in_flight > 0
                 || matches!(r.worktrees, Loadable::Loading)
@@ -329,9 +275,7 @@ impl SidebarPaneView {
             .items_center()
             .gap(ctx.px(BRANCH_TREE_GAP_PX))
             .interactive_row(row_style, row_state)
-            .when(is_collapsed_popover, |row| {
-                row.child(ctx.tree_toggle_slot(Some(collapsed)))
-            })
+            .child(ctx.section_toggle_slot(ix, collapsed, &collapse_key, cx))
             .child(ctx.tree_icon_slot(WORKTREE_ICON_PATH, ctx.icon_primary, 14.0))
             .child(
                 div()
@@ -364,20 +308,7 @@ impl SidebarPaneView {
                 )
                 .into(),
             )
-            .on_activate(
-                false,
-                ctx.header_activation,
-                cx.listener(move |this, e: &ClickEvent, _w, cx| {
-                    if !e.standard_click() || e.click_count() != 1 {
-                        return;
-                    }
-                    if is_collapsed_popover {
-                        this.toggle_active_repo_collapse_key(collapse_key.clone(), cx);
-                    } else {
-                        this.navigate_sidebar_row(ix, cx);
-                    }
-                }),
-            )
+            .map(|row| ctx.activate_section_header(row, slot, collapse_key, cx))
             .on_pointer_click(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, window, cx| {
@@ -412,7 +343,6 @@ impl SidebarPaneView {
         } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
-        let is_collapsed_popover = ctx.is_collapsed_popover;
         let show_submodules_spinner = this
             .active_repo()
             .is_some_and(|r| matches!(r.submodules, Loadable::Loading));
@@ -435,9 +365,7 @@ impl SidebarPaneView {
             .items_center()
             .gap(ctx.px(BRANCH_TREE_GAP_PX))
             .interactive_row(row_style, row_state)
-            .when(is_collapsed_popover, |row| {
-                row.child(ctx.tree_toggle_slot(Some(collapsed)))
-            })
+            .child(ctx.section_toggle_slot(ix, collapsed, &collapse_key, cx))
             .child(ctx.tree_icon_slot("icons/box.svg", ctx.icon_primary, 14.0))
             .child(
                 div()
@@ -470,20 +398,7 @@ impl SidebarPaneView {
                 )
                 .into(),
             )
-            .on_activate(
-                false,
-                ctx.header_activation,
-                cx.listener(move |this, e: &ClickEvent, _w, cx| {
-                    if !e.standard_click() || e.click_count() != 1 {
-                        return;
-                    }
-                    if is_collapsed_popover {
-                        this.toggle_active_repo_collapse_key(collapse_key.clone(), cx);
-                    } else {
-                        this.navigate_sidebar_row(ix, cx);
-                    }
-                }),
-            )
+            .map(|row| ctx.activate_section_header(row, slot, collapse_key, cx))
             .on_pointer_click(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, window, cx| {

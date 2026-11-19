@@ -26,6 +26,7 @@ const ANNEX_SECTION_KEY: &str = "section:annex";
 const STASH_SECTION_KEY: &str = "section:stash";
 const TAGS_SECTION_KEY: &str = "section:tags";
 const EXPANDED_DEFAULT_SECTION_PREFIX: &str = "expanded:";
+const SIDEBAR_SECTION_COLLAPSE_PREFIX: &str = "collapsed:";
 const TRAILING_BOTTOM_SPACERS: usize = 3;
 const REMOTE_HEADER_GROUP_PREFIX: &str = "group:remote-header:";
 const LOCAL_GROUP_PREFIX: &str = "group:local:";
@@ -1103,24 +1104,33 @@ pub(super) fn branch_sidebar_rows(
         &branch_filter.trim().to_ascii_lowercase(),
         Some(collapsed_items),
     );
-    rows.extend(sidebar_rows(repo, collapsed_items, branch_filter, false));
+    rows.extend(sidebar_rows(repo, collapsed_items, branch_filter, |key| {
+        is_collapsed(collapsed_items, key)
+    }));
     rows
 }
 
-/// Base tree with open top-level sections. The shared presentation adds pins,
-/// search results and an optional section scope for a minimized flyout.
+/// The full sidebar defaults to open sections. Search and rail flyouts reveal
+/// their contents even if the full sidebar has collapsed them.
 pub(super) fn expanded_sidebar_rows(
     repo: &RepoState,
     collapsed_items: &BTreeSet<String>,
-    branch_filter: &str,
+    reveal_sections: bool,
 ) -> Vec<BranchSidebarRow> {
-    sidebar_rows(repo, collapsed_items, branch_filter, true)
+    sidebar_rows(repo, collapsed_items, "", |key| {
+        !reveal_sections && collapsed_items.contains(&sidebar_section_collapse_key(key))
+    })
+}
+
+pub(super) fn sidebar_section_collapse_key(section_key: &str) -> String {
+    format!("{SIDEBAR_SECTION_COLLAPSE_PREFIX}{section_key}")
 }
 
 pub(super) fn is_top_level_collapse_key(key: &str) -> bool {
     key.starts_with("section:extension:")
         || matches!(
-            key.strip_prefix(EXPANDED_DEFAULT_SECTION_PREFIX)
+            key.strip_prefix(SIDEBAR_SECTION_COLLAPSE_PREFIX)
+                .or_else(|| key.strip_prefix(EXPANDED_DEFAULT_SECTION_PREFIX))
                 .unwrap_or(key),
             PINNED_LOCAL_SECTION_KEY
                 | PINNED_REMOTE_SECTION_KEY
@@ -1138,7 +1148,7 @@ fn sidebar_rows(
     repo: &RepoState,
     collapsed_items: &BTreeSet<String>,
     branch_filter: &str,
-    always_expanded: bool,
+    is_section_collapsed: impl Fn(&str) -> bool,
 ) -> Vec<BranchSidebarRow> {
     let head = match &repo.head_branch {
         Loadable::Ready(head) => Some(head.as_str()),
@@ -1148,20 +1158,12 @@ fn sidebar_rows(
     // sections; a live query force-expands them so matches are always visible.
     let filter = branch_filter.trim().to_ascii_lowercase();
     let filtering = !filter.is_empty();
-    let local_collapsed = !always_expanded
-        && !filtering
-        && is_collapsed(collapsed_items, local_section_storage_key());
-    let remote_collapsed = !always_expanded
-        && !filtering
-        && is_collapsed(collapsed_items, remote_section_storage_key());
-    let worktrees_collapsed =
-        !always_expanded && is_collapsed(collapsed_items, worktrees_section_storage_key());
-    let submodules_collapsed =
-        !always_expanded && is_collapsed(collapsed_items, submodules_section_storage_key());
-    let stash_collapsed =
-        !always_expanded && is_collapsed(collapsed_items, stash_section_storage_key());
-    let tags_collapsed =
-        !always_expanded && is_collapsed(collapsed_items, tags_section_storage_key());
+    let local_collapsed = !filtering && is_section_collapsed(local_section_storage_key());
+    let remote_collapsed = !filtering && is_section_collapsed(remote_section_storage_key());
+    let worktrees_collapsed = is_section_collapsed(worktrees_section_storage_key());
+    let submodules_collapsed = is_section_collapsed(submodules_section_storage_key());
+    let stash_collapsed = is_section_collapsed(stash_section_storage_key());
+    let tags_collapsed = is_section_collapsed(tags_section_storage_key());
     let visible_rows = if local_collapsed {
         0
     } else {
@@ -1466,7 +1468,11 @@ fn sidebar_rows(
 
     rows.push(BranchSidebarRow::SectionSpacer);
 
-    push_annex_section_rows(repo, collapsed_items, always_expanded, &mut rows);
+    push_annex_section_rows(
+        repo,
+        is_section_collapsed(annex_section_storage_key()),
+        &mut rows,
+    );
 
     rows.push(BranchSidebarRow::StashHeader {
         top_border: true,
@@ -1805,12 +1811,7 @@ fn ensure_remote_group<'a>(
 }
 
 /// Only repositories that use git-annex get the section.
-fn push_annex_section_rows(
-    repo: &RepoState,
-    collapsed_items: &BTreeSet<String>,
-    always_expanded: bool,
-    rows: &mut Vec<BranchSidebarRow>,
-) {
+fn push_annex_section_rows(repo: &RepoState, collapsed: bool, rows: &mut Vec<BranchSidebarRow>) {
     let Loadable::Ready(support) = &repo.large_file_support else {
         return;
     };
@@ -1818,7 +1819,6 @@ fn push_annex_section_rows(
     if !annex.in_use() {
         return;
     }
-    let collapsed = !always_expanded && is_collapsed(collapsed_items, annex_section_storage_key());
     let summary = match (repo.annex_adjusted_branch(), annex.numcopies) {
         (Some((_, mode)), _) => Some(format!("adjusted ({mode})").into()),
         (None, Some(copies)) => Some(format!("numcopies {copies}").into()),

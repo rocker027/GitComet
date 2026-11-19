@@ -135,6 +135,9 @@ fn expand_local_branch_path(collapsed_items: &mut BTreeSet<String>, branch_name:
     };
 
     expand(branch_sidebar::local_section_storage_key());
+    expand(&branch_sidebar::sidebar_section_collapse_key(
+        branch_sidebar::local_section_storage_key(),
+    ));
     let mut group_path = String::new();
     for segment in branch_name.split('/') {
         if !group_path.is_empty() {
@@ -1191,13 +1194,16 @@ impl SidebarPaneView {
 
         let repo_path = repo.spec.workdir.clone();
         let repo_id = repo.id;
-        let should_load_submodules_on_expand = collapse_key.as_ref().trim()
-            == branch_sidebar::submodules_section_storage_key()
-            && matches!(repo.submodules, Loadable::NotLoaded | Loadable::Error(_));
         let collapse_key = collapse_key.as_ref().trim();
         if collapse_key.is_empty() {
             return;
         }
+        let submodules_key = branch_sidebar::submodules_section_storage_key();
+        let should_load_submodules_on_expand =
+            matches!(repo.submodules, Loadable::NotLoaded | Loadable::Error(_))
+                && (collapse_key == submodules_key
+                    || collapse_key
+                        == branch_sidebar::sidebar_section_collapse_key(submodules_key));
 
         let before = self
             .sidebar_collapsed_items_by_repo

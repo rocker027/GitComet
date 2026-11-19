@@ -575,7 +575,7 @@ fn pinned_branches_keep_their_tree_copies_without_extra_headers() {
     ]);
     let pins = expanded_pinned_rows(&repo, &pinned, &BTreeSet::new());
     assert_eq!(pins.len(), 2);
-    let tree = expanded_sidebar_rows(&repo, &BTreeSet::new(), "");
+    let tree = expanded_sidebar_rows(&repo, &BTreeSet::new(), false);
     for pin in pins {
         let BranchSidebarRow::Branch { target, .. } = pin else {
             panic!("expected a branch pin")
@@ -932,7 +932,7 @@ fn tags_section_lists_tags_by_name() {
         tag("beta", "cccccccc"),
     ]));
     repo.tags_rev = 1;
-    let rows = expanded_sidebar_rows(&repo, &BTreeSet::new(), "");
+    let rows = expanded_sidebar_rows(&repo, &BTreeSet::new(), false);
 
     let header_ix = rows
         .iter()
@@ -963,7 +963,7 @@ fn tags_section_appears_only_with_tags() {
     ] {
         let mut repo = populated_repo();
         repo.tags = tags;
-        let rows = expanded_sidebar_rows(&repo, &BTreeSet::new(), "");
+        let rows = expanded_sidebar_rows(&repo, &BTreeSet::new(), false);
         assert!(
             !rows
                 .iter()

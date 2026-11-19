@@ -1682,11 +1682,13 @@ fn active_branch_locate_button_expands_scrolls_and_selects_like_its_row(
     sync_view_snapshot(cx, &view);
 
     let sidebar_pane = cx.update(|_window, app| view.read(app).sidebar_pane.clone());
+    let local_section_key =
+        branch_sidebar::sidebar_section_collapse_key(branch_sidebar::local_section_storage_key());
     cx.update(|_window, app| {
         sidebar_pane.update(app, |pane, _cx| {
             pane.set_branch_filter_query_for_test("does-not-match-head");
             pane.set_collapsed_keys_for_test(&[
-                branch_sidebar::local_section_storage_key(),
+                &local_section_key,
                 "group:local:zzzz",
                 "group:local:zzzz/deep",
                 "group:local:release",
@@ -1723,7 +1725,7 @@ fn active_branch_locate_button_expands_scrolls_and_selects_like_its_row(
 
             let collapsed = pane.collapsed_items_for_test();
             for expanded in [
-                branch_sidebar::local_section_storage_key(),
+                local_section_key.as_str(),
                 "group:local:zzzz",
                 "group:local:zzzz/deep",
             ] {
