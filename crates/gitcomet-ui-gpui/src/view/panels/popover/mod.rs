@@ -32,6 +32,7 @@ mod discard_folder_changes_confirm;
 mod error_details;
 mod extension_dialog;
 pub(in crate::view) use extension_dialog::OnClosed;
+mod destructive_confirms;
 mod file_history_file_picker;
 mod filesystem_conflict_prompt;
 mod filesystem_unsaved_edits_confirm;
@@ -409,6 +410,10 @@ pub(in super::super) struct PopoverHost {
     create_branch_from_ref_focus: DialogFocus,
     create_tag_annotated: bool,
     create_tag_annotated_focus_handle: FocusHandle,
+    /// "Include untracked files" in the stash dialog; on by default, as
+    /// stashes always included them before the option existed.
+    stash_include_untracked: bool,
+    stash_include_untracked_focus_handle: FocusHandle,
     /// "Apply to all remaining" in the open file-collision dialog.
     filesystem_conflict_apply_to_all: bool,
     filesystem_conflict_apply_to_all_focus_handle: FocusHandle,
@@ -663,11 +668,16 @@ fn popover_is_context_menu(kind: &PopoverKind) -> bool {
             | PopoverKind::StatusFileMenu { .. }
             | PopoverKind::StatusConflictMenu { .. }
             | PopoverKind::BranchMenu { .. }
+            | PopoverKind::BranchDropMenu { .. }
+            | PopoverKind::RefPickerMenu { .. }
             | PopoverKind::BranchSectionMenu { .. }
             | PopoverKind::SubmoduleInnerDiffMenu { .. }
             | PopoverKind::Repo {
                 kind: RepoPopoverKind::Remote(
-                    RemotePopoverKind::Menu { .. } | RemotePopoverKind::OpenInBrowserMenu,
+                    RemotePopoverKind::Menu { .. }
+                        | RemotePopoverKind::OpenInBrowserMenu
+                        | RemotePopoverKind::EditUrlMenu
+                        | RemotePopoverKind::RemoveMenu,
                 ),
                 ..
             }
@@ -710,6 +720,8 @@ fn popover_is_confirm_dialog(kind: &PopoverKind) -> bool {
     matches!(
         kind,
         PopoverKind::StashDropConfirm { .. }
+            | PopoverKind::DeleteTagConfirm { .. }
+            | PopoverKind::DiscardAllConfirm { .. }
             | PopoverKind::Repo {
                 kind: RepoPopoverKind::DisableBareModeConfirm,
                 ..
@@ -1030,6 +1042,8 @@ fn popover_anchor_corner(kind: &PopoverKind) -> Anchor {
         | PopoverKind::RenameBranchPrompt { .. }
         | PopoverKind::StashPrompt
         | PopoverKind::StashDropConfirm { .. }
+        | PopoverKind::DeleteTagConfirm { .. }
+        | PopoverKind::DiscardAllConfirm { .. }
         | PopoverKind::CloneRepo
         | PopoverKind::ResetPrompt { .. }
         | PopoverKind::CreateTagPrompt { .. }
@@ -1112,7 +1126,10 @@ pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<Popover
         } => Some(DIALOG_540_WIDTH),
         PopoverKind::RepoPicker { .. }
         | PopoverKind::BranchPicker {
-            purpose: BranchPickerPurpose::Delete | BranchPickerPurpose::RebaseOnto,
+            purpose:
+                BranchPickerPurpose::Delete
+                | BranchPickerPurpose::RebaseOnto
+                | BranchPickerPurpose::Merge,
         } => Some(PICKER_WIDTH),
         PopoverKind::BranchPicker {
             purpose: BranchPickerPurpose::Checkout,
@@ -1133,6 +1150,8 @@ pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<Popover
         | PopoverKind::RenameBranchPrompt { .. }
         | PopoverKind::CheckoutRemoteBranchPrompt { .. } => Some(DIALOG_540_WIDTH),
         PopoverKind::StashDropConfirm { .. }
+        | PopoverKind::DeleteTagConfirm { .. }
+        | PopoverKind::DiscardAllConfirm { .. }
         | PopoverKind::Repo {
             kind:
                 RepoPopoverKind::Remote(
@@ -1243,6 +1262,8 @@ pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<Popover
         | PopoverKind::StatusFileMenu { .. }
         | PopoverKind::StatusConflictMenu { .. }
         | PopoverKind::BranchMenu { .. }
+        | PopoverKind::BranchDropMenu { .. }
+        | PopoverKind::RefPickerMenu { .. }
         | PopoverKind::BranchSectionMenu { .. }
         | PopoverKind::SubmoduleInnerDiffMenu { .. }
         | PopoverKind::Repo {
@@ -1286,7 +1307,12 @@ pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<Popover
         | PopoverKind::BrowseHistoryMenu { .. } => Some(DEFAULT_CONTEXT_MENU_WIDTH),
         PopoverKind::RepoTabMenu { .. } => Some(REPO_TAB_MENU_WIDTH),
         PopoverKind::Repo {
-            kind: RepoPopoverKind::Remote(RemotePopoverKind::OpenInBrowserMenu),
+            kind:
+                RepoPopoverKind::Remote(
+                    RemotePopoverKind::OpenInBrowserMenu
+                    | RemotePopoverKind::EditUrlMenu
+                    | RemotePopoverKind::RemoveMenu,
+                ),
             ..
         } => Some(REMOTE_WEB_PICKER_WIDTH),
         PopoverKind::CommitFileSortMenu { .. } => Some(SORT_CONTEXT_MENU_WIDTH),

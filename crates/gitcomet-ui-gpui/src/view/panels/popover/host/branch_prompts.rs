@@ -180,6 +180,29 @@ impl PopoverHost {
                     cx,
                 );
             }
+            Some(PopoverKind::BranchPicker {
+                purpose: BranchPickerPurpose::Merge,
+            }) => {
+                // The same gate as the branch menu's "Merge into current".
+                let repo = self.state.repos.iter().find(|repo| repo.id == repo_id);
+                if super::super::merge_commit_confirm::merge_commit_is_allowed(
+                    repo,
+                    &self.state.large_file_settings,
+                ) {
+                    self.store.dispatch(Msg::MergeRef {
+                        repo_id,
+                        reference: name,
+                    });
+                } else {
+                    let reason = if repo.is_some_and(|repo| repo.history_rewrite_busy()) {
+                        "Finish the merge, rebase, cherry-pick or revert in progress first"
+                    } else {
+                        "Merging is off while git-annex manages pull and push for this branch"
+                    };
+                    self.push_toast(components::ToastKind::Warning, reason.to_string(), cx);
+                }
+                self.close_popover(cx);
+            }
             _ => {
                 self.store.dispatch(Msg::CheckoutBranch { repo_id, name });
                 self.close_popover(cx);

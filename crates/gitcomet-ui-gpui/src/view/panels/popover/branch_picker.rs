@@ -526,10 +526,18 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
             purpose: BranchPickerPurpose::RebaseOnto
         })
     );
+    let is_merge = matches!(
+        this.popover,
+        Some(PopoverKind::BranchPicker {
+            purpose: BranchPickerPurpose::Merge
+        })
+    );
     let title = if is_delete {
         "Delete Branch"
     } else if is_rebase_onto {
         "Rebase Onto"
+    } else if is_merge {
+        "Merge into Current Branch"
     } else {
         "Checkout Branch"
     };
@@ -627,9 +635,9 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
             Loadable::Ready(branches) => {
                 if let Some(search) = this.branch_picker_search_input.clone() {
                     let repo_id = repo.id;
-                    // The current branch cannot be rebased onto itself; deleting
-                    // it is impossible too.
-                    let spec = RefRowsSpec::branches(is_delete || is_rebase_onto);
+                    // The current branch cannot be rebased onto or merged into
+                    // itself; deleting it is impossible too.
+                    let spec = RefRowsSpec::branches(is_delete || is_rebase_onto || is_merge);
                     let query = search.read(cx).text().trim().to_string();
                     let built = ref_rows_cached(this, spec, &query);
                     let names = Rc::clone(&built.payloads);

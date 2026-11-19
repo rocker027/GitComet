@@ -24,6 +24,11 @@ pub(crate) struct MainPaneView {
     view_mode: GitCometViewMode,
     active_context_menu_invoker: Option<SharedString>,
     pub(in crate::view) interactive_rebase_states: FxHashMap<RepoId, IRebaseViewState>,
+    /// Focus for the interactive rebase / cherry-pick editor, so its rows
+    /// accept single-key actions.
+    irebase_focus_handle: gpui::FocusHandle,
+    /// The editor row last clicked, which single keys act on.
+    irebase_key_target: Option<(RepoId, String)>,
     _subscription: gpui::Subscription,
 }
 
@@ -99,6 +104,8 @@ impl MainPaneView {
             view_mode,
             active_context_menu_invoker: None,
             interactive_rebase_states: FxHashMap::default(),
+            irebase_focus_handle: cx.focus_handle(),
+            irebase_key_target: None,
             _subscription: subscription,
         }
     }

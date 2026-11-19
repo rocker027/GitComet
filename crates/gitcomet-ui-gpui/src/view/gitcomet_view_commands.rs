@@ -4,9 +4,10 @@ use super::commands::Command;
 use super::{
     AnnexPopoverKind, AnnexPrompt, BranchPickerPurpose, CloseWindow, DecreaseUiScale, DiffArea,
     DiffViewMode, GitCometView, IncreaseUiScale, Loadable, Msg, NewWindow, OpenRepository,
-    PopoverKind, PullMode, PushRequest, RemotePopoverKind, RepoPopoverKind, ResetUiScale,
-    StashPickerPurpose, SubmodulePopoverKind, ToggleRevealCommit, Window, WorktreePopoverKind,
-    command_palette, components, head_branch_has_live_upstream, head_is_detached, push_request,
+    PopoverKind, PullMode, PushRequest, RefPickerPurpose, RemotePopoverKind, RepoPopoverKind,
+    ResetUiScale, StashPickerPurpose, SubmodulePopoverKind, ToggleRevealCommit, Window,
+    WorktreePopoverKind, command_palette, components, head_branch_has_live_upstream,
+    head_is_detached, push_request,
 };
 use crate::kit::search_keys::OpenActiveViewSearch;
 
@@ -462,7 +463,42 @@ impl GitCometView {
                     );
                 }
             }
-            Command::Commit => {
+            Command::UndoGitOperation | Command::RedoGitOperation => {
+                if let Some(repo_id) = self.active_repo_id() {
+                    self.store
+                        .dispatch(if command == Command::UndoGitOperation {
+                            Msg::UndoGitOperation { repo_id }
+                        } else {
+                            Msg::RedoGitOperation { repo_id }
+                        });
+                }
+            }
+            Command::FocusCommitMessage => {
+                if let Some(window) = window
+                    && self.focused_terminal_viewport(window, cx).is_none()
+                {
+                    // The working-copy changes, with the commit box, replace
+                    // any commit details; then the message takes the focus.
+                    self.navigate_review(
+                        crate::view::review_navigation::ReviewNavigation::WorkingCopy,
+                        window,
+                        cx,
+                    );
+                    // Asking for the commit box shows it, like toggling the
+                    // details pane, even while a clean working copy hides it.
+                    self.set_details_hide_when_clean(false, cx);
+                    let focus = self
+                        .details_pane
+                        .read(cx)
+                        .commit_message_input
+                        .read(cx)
+                        .focus_handle();
+                    window.focus(&focus, cx);
+                }
+            }
+            // The commit prompt stages every change first when nothing is
+            // staged, so both open it.
+            Command::Commit | Command::StageAllAndCommit => {
                 if let Some(repo_id) = self.active_repo_id()
                     && let Some(window) = window
                 {
@@ -574,6 +610,22 @@ impl GitCometView {
                     );
                 }
             }
+            Command::Merge => {
+                if let Some(window) = window {
+                    self.open_popover_centered(
+                        PopoverKind::BranchPicker {
+                            purpose: BranchPickerPurpose::Merge,
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            }
+            Command::SearchCommits => {
+                if let Some(window) = window {
+                    self.open_commit_search(window, cx);
+                }
+            }
             Command::Rebase => {
                 if let Some(window) = window {
                     self.open_popover_centered(
@@ -613,6 +665,29 @@ impl GitCometView {
                     );
                 }
             }
+            Command::EditRemoteUrl => {
+                if let Some(repo) = self.active_repo()
+                    && let Some(window) = window
+                {
+                    // One remote goes straight to its fetch URL; several are
+                    // listed first.
+                    let only_remote = repo
+                        .remotes
+                        .ready()
+                        .filter(|remotes| remotes.len() == 1)
+                        .and_then(|remotes| remotes.first())
+                        .map(|remote| remote.name.clone());
+                    let kind = match only_remote {
+                        Some(name) => RemotePopoverKind::EditUrlPrompt {
+                            name,
+                            kind: gitcomet_core::services::RemoteUrlKind::Fetch,
+                        },
+                        None => RemotePopoverKind::EditUrlMenu,
+                    };
+                    let repo_id = repo.id;
+                    self.open_popover_centered(PopoverKind::remote(repo_id, kind), window, cx);
+                }
+            }
             Command::AddRemote => {
                 if let Some(repo_id) = self.active_repo_id()
                     && let Some(window) = window
@@ -644,6 +719,56 @@ impl GitCometView {
             Command::UpdateSubmodules => {
                 if let Some(repo_id) = self.active_repo_id() {
                     self.store.dispatch(Msg::UpdateSubmodules { repo_id });
+                }
+            }
+            // Deletions open a picker or confirmation; nothing is deleted here.
+            Command::DeleteTag | Command::DeleteRemoteBranch | Command::DiscardAll => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && let Some(window) = window
+                {
+                    let kind = match command {
+                        Command::DeleteTag => PopoverKind::RefPickerMenu {
+                            repo_id,
+                            purpose: RefPickerPurpose::DeleteTag,
+                        },
+                        Command::DeleteRemoteBranch => PopoverKind::RefPickerMenu {
+                            repo_id,
+                            purpose: RefPickerPurpose::DeleteRemoteBranch,
+                        },
+                        _ => {
+                            // The dialog leaves submodules out, so it needs their list.
+                            if self.active_repo().is_some_and(|repo| {
+                                matches!(repo.submodules, Loadable::NotLoaded | Loadable::Error(_))
+                            }) {
+                                self.store.dispatch(Msg::LoadSubmodules { repo_id });
+                            }
+                            PopoverKind::DiscardAllConfirm { repo_id }
+                        }
+                    };
+                    self.open_popover_centered(kind, window, cx);
+                }
+            }
+            Command::RemoveWorktree | Command::RemoveSubmodule => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && let Some(window) = window
+                {
+                    let kind = if command == Command::RemoveWorktree {
+                        PopoverKind::worktree(repo_id, WorktreePopoverKind::RemovePicker)
+                    } else {
+                        PopoverKind::submodule(repo_id, SubmodulePopoverKind::RemovePicker)
+                    };
+                    self.open_popover_centered(kind, window, cx);
+                }
+            }
+            Command::RemoveRemote => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && let Some(window) = window
+                {
+                    self.open_popover_centered(
+                        PopoverKind::remote(repo_id, RemotePopoverKind::RemoveMenu),
+                        window,
+                        cx,
+                    );
                 }
             }
             Command::AddWorktree => {

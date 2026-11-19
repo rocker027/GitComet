@@ -367,6 +367,11 @@ pub(in crate::view) enum ContextMenuAction {
         repo_id: RepoId,
         commit_id: CommitId,
     },
+    /// Shows the commit in the details pane with its message editor open.
+    EditCommitMessage {
+        repo_id: RepoId,
+        commit_id: CommitId,
+    },
     /// Expands or collapses a file list folder; `recursive` takes every folder
     /// below it along.
     SetFileListFolderCollapsed {
@@ -867,6 +872,7 @@ mod repo_tabs_bar;
 pub(in crate::view) use action_bar::action_bar_breakpoints;
 pub(super) use action_bar::{ActionBarView, action_bar_density, action_bar_height};
 pub(super) use bottom_status_bar::{BottomStatusBarView, bottom_status_bar_height};
+pub(in crate::view) use layout::commit_reword_availability_for_commit;
 pub(in crate::view) use layout::commit_reword_submittable;
 #[cfg(test)]
 pub(in crate::view) use layout::{commit_reword_availability, commit_reword_blocker};

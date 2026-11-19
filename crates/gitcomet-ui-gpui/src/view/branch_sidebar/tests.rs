@@ -914,3 +914,78 @@ fn a_remote_hidden_from_history_marks_its_header_and_changes_the_cache_source() 
     );
     assert!(branch_sidebar_source_matches_cached(&repo, &parts));
 }
+
+fn tag(name: &str, target: &str) -> gitcomet_core::domain::Tag {
+    gitcomet_core::domain::Tag {
+        name: name.into(),
+        target: commit_id(target),
+    }
+}
+
+/// GitKraken's Tags section: tags listed by name after the stashes.
+#[test]
+fn tags_section_lists_tags_by_name() {
+    let mut repo = populated_repo();
+    repo.tags = Loadable::Ready(Arc::new(vec![
+        tag("v2.0", "bbbbbbbb"),
+        tag("V1.10", "aaaaaaaa"),
+        tag("beta", "cccccccc"),
+    ]));
+    repo.tags_rev = 1;
+    let rows = expanded_sidebar_rows(&repo, &BTreeSet::new(), "");
+
+    let header_ix = rows
+        .iter()
+        .position(|row| matches!(row, BranchSidebarRow::TagsHeader { .. }))
+        .expect("a Tags header");
+    let stash_ix = rows
+        .iter()
+        .position(|row| matches!(row, BranchSidebarRow::StashHeader { .. }))
+        .expect("a Stashes header");
+    assert!(header_ix > stash_ix, "Tags follow the stashes");
+    let names: Vec<&str> = rows
+        .iter()
+        .filter_map(|row| match row {
+            BranchSidebarRow::TagItem { name, .. } => Some(name.as_ref()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, vec!["beta", "V1.10", "v2.0"]);
+}
+
+/// Without tags, or before they load, there is no Tags section at all.
+#[test]
+fn tags_section_appears_only_with_tags() {
+    for tags in [
+        Loadable::Ready(Arc::new(Vec::new())),
+        Loadable::NotLoaded,
+        Loadable::Loading,
+    ] {
+        let mut repo = populated_repo();
+        repo.tags = tags;
+        let rows = expanded_sidebar_rows(&repo, &BTreeSet::new(), "");
+        assert!(
+            !rows
+                .iter()
+                .any(|row| matches!(row, BranchSidebarRow::TagsHeader { .. }))
+        );
+    }
+}
+
+#[test]
+fn source_fingerprint_follows_tags_and_reuses_other_partitions() {
+    let mut repo = populated_repo();
+    let (before_fingerprint, before_parts) = branch_sidebar_source_fingerprint(&repo, None);
+
+    repo.tags = Loadable::Ready(Arc::new(vec![tag("v1.0", "aaaaaaaa")]));
+    repo.tags_rev = repo.tags_rev.wrapping_add(1);
+    let (after_fingerprint, after_parts) =
+        branch_sidebar_source_fingerprint(&repo, Some(&before_parts));
+
+    assert_ne!(after_fingerprint, before_fingerprint);
+    assert_ne!(after_parts.tag_hash, before_parts.tag_hash);
+    assert_eq!(after_parts.local_hash, before_parts.local_hash);
+    assert_eq!(after_parts.stash_hash, before_parts.stash_hash);
+    assert!(!branch_sidebar_source_matches_cached(&repo, &before_parts));
+    assert!(branch_sidebar_source_matches_cached(&repo, &after_parts));
+}

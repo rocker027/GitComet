@@ -281,6 +281,34 @@ fn review_close_commit_details_allows_manually_reopening_clean_working_copy(
     assert!(cx.debug_bounds("details_pane").is_some());
 }
 
+/// Focus Commit Message asks for the commit box, so it shows the pane a
+/// clean working copy hid, and the message takes the focus.
+#[gpui::test]
+fn focus_commit_message_shows_the_pane_a_clean_working_copy_hid(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    close_commit_details(cx, &view, None);
+    assert!(cx.debug_bounds("details_pane").is_none());
+
+    cx.update(|window, app| {
+        view.update(app, |root, cx| {
+            root.execute_command("focus-commit-message", Some(window), cx)
+        })
+    });
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_some());
+    assert!(cx.update(|window, app| {
+        view.read(app)
+            .details_pane
+            .read(app)
+            .commit_message_input
+            .read(app)
+            .focus_handle()
+            .is_focused(window)
+    }));
+}
+
 fn working_copy_repo(staged: &[&str], unstaged: &[&str]) -> RepoState {
     let mut repo = review_repo();
     repo.history_state.selected_commit = None;

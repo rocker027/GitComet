@@ -5,6 +5,15 @@ use super::*;
 type ExtensionWindowAction =
     std::rc::Rc<dyn Fn(gitcomet_extension_api::WindowHost, &mut Window, &mut App)>;
 
+/// Why Undo (or Redo) of a Git operation cannot run now, or `None` when it
+/// can; the toolbar buttons and the palette say the same as the store.
+pub(in crate::view) fn git_undo_unavailable(
+    repo: &RepoState,
+    direction: gitcomet_state::model::GitUndoDirection,
+) -> Option<&'static str> {
+    repo.git_undo_block(direction).map(|block| block.reason())
+}
+
 impl GitCometView {
     fn hook_activity_workflow_repo(kind: &PopoverKind) -> Option<RepoId> {
         match kind {
@@ -229,6 +238,15 @@ impl GitCometView {
             update_check: !super::manual_update_check_unavailable(
                 super::extension_host::provides_update_check(cx),
             ),
+            git_undo_unavailable: repo.map_or(Some("Open a repository first"), |repo| {
+                git_undo_unavailable(repo, gitcomet_state::model::GitUndoDirection::Undo)
+            }),
+            git_redo_unavailable: repo.map_or(Some("Open a repository first"), |repo| {
+                git_undo_unavailable(repo, gitcomet_state::model::GitUndoDirection::Redo)
+            }),
+            stage_all_commit_unavailable: repo.map_or(Some("Open a repository first"), |repo| {
+                stage_all_commit_paths(repo, false).err()
+            }),
         }
     }
 
@@ -2489,6 +2507,36 @@ impl GitCometView {
     /// diff search, or the hosted diff pane in the extension view or overlay
     /// over History. With no pane there it opens nothing, rather than
     /// History's hidden find, and the key goes on to the focused view.
+    /// Search Commits: History's find bar, whatever the main canvas shows.
+    /// History is brought back first and an open diff closed, so the bar
+    /// searches the graph as GitKraken's commit search does.
+    pub(super) fn open_commit_search(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if !self.shell_action_allowed(super::shell_policy::ShellAction::Repository) {
+            return;
+        }
+        // The rebase / cherry-pick editor holds the canvas, also under a diff
+        // shown above it; a hidden find bar would only take its focus.
+        if self.active_repo().is_some_and(|repo| {
+            repo.interactive_rebase_setup.is_some() || repo.interactive_cherry_pick_setup.is_some()
+        }) {
+            return;
+        }
+        let content = self.main_pane.read(cx).active_content(cx);
+        self.show_history_view(window, cx);
+        if content == crate::view::panes::main::MainPaneContent::Diff
+            && let Some(repo_id) = self.active_repo_id()
+        {
+            // The diff's own close path, which also ends its engine override.
+            self.diff_renderer.update(cx, |pane, cx| {
+                pane.clear_diff_selection_or_exit(repo_id, cx)
+            });
+        }
+        self.main_pane.update(cx, |pane, cx| {
+            pane.history_view
+                .update(cx, |history, cx| history.open_history_find(window, cx));
+        });
+    }
+
     pub(super) fn open_main_slot_search(
         &mut self,
         window: &mut Window,

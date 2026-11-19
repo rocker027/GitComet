@@ -249,6 +249,9 @@ fn repo_for_popover<'a>(
         | PopoverKind::SquashPrompt { repo_id }
         | PopoverKind::CheckoutRemoteBranchPrompt { repo_id, .. }
         | PopoverKind::StashDropConfirm { repo_id, .. }
+        | PopoverKind::DeleteTagConfirm { repo_id, .. }
+        | PopoverKind::DiscardAllConfirm { repo_id }
+        | PopoverKind::RefPickerMenu { repo_id, .. }
         | PopoverKind::StashMenu { repo_id, .. }
         | PopoverKind::RepoTabMenu { repo_id }
         | PopoverKind::CreateTagPrompt { repo_id, .. }
@@ -284,6 +287,7 @@ fn repo_for_popover<'a>(
         | PopoverKind::StatusFileMenu { repo_id, .. }
         | PopoverKind::StatusConflictMenu { repo_id, .. }
         | PopoverKind::BranchMenu { repo_id, .. }
+        | PopoverKind::BranchDropMenu { repo_id, .. }
         | PopoverKind::BranchSectionMenu { repo_id, .. }
         | PopoverKind::BranchGroupMenu { repo_id, .. }
         | PopoverKind::SidebarPinnedOverflow { repo_id, .. }
@@ -329,6 +333,7 @@ fn hash_repo_for_popover<H: Hasher>(
         | PopoverKind::CreateBranchFromRefPrompt { .. }
         | PopoverKind::RenameBranchPrompt { .. }
         | PopoverKind::BranchMenu { .. }
+        | PopoverKind::BranchDropMenu { .. }
         | PopoverKind::BranchSectionMenu { .. }
         // The group menu's branch count and the pinned menu's "Unpin all (N)"
         // both read the live branch lists, so a refresh landing while the menu
@@ -431,6 +436,18 @@ fn hash_repo_for_popover<H: Hasher>(
         | PopoverKind::StashPickerPrompt { .. } => {
             repo.stashes_rev.hash(hasher);
         }
+        PopoverKind::DeleteTagConfirm { .. } => {
+            repo.tags_rev.hash(hasher);
+        }
+        PopoverKind::DiscardAllConfirm { .. } => {
+            repo.status_cache_rev().hash(hasher);
+            repo.submodules_rev.hash(hasher);
+            repo.ops_rev.hash(hasher);
+        }
+        PopoverKind::RefPickerMenu { .. } => {
+            repo.tags_rev.hash(hasher);
+            repo.remote_branches_rev.hash(hasher);
+        }
         PopoverKind::FileHistoryFilePicker { .. } => {
             repo.file_browser.file_browser_rev.hash(hasher);
             repo.status_rev.hash(hasher);
@@ -523,6 +540,8 @@ fn hash_repo_for_popover<H: Hasher>(
             repo.history_state.log_rev.hash(hasher);
             repo.ops_rev.hash(hasher);
             repo.worktrees_rev.hash(hasher);
+            // A stash node's menu lists the stash by index.
+            repo.stashes_rev.hash(hasher);
         }
         PopoverKind::FileHistoryCommitMenu { .. } => {
             repo.head_branch_rev.hash(hasher);
@@ -720,6 +739,22 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
             repo_id.hash(hasher);
             index.hash(hasher);
             message.hash(hasher);
+        }
+        PopoverKind::DeleteTagConfirm {
+            repo_id,
+            name,
+            remote,
+        } => {
+            repo_id.hash(hasher);
+            name.hash(hasher);
+            remote.hash(hasher);
+        }
+        PopoverKind::DiscardAllConfirm { repo_id } => {
+            repo_id.hash(hasher);
+        }
+        PopoverKind::RefPickerMenu { repo_id, purpose } => {
+            repo_id.hash(hasher);
+            purpose.hash(hasher);
         }
         PopoverKind::StashMenu {
             repo_id,
@@ -1043,6 +1078,15 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
             repo_id.hash(hasher);
             target.hash(hasher);
         }
+        PopoverKind::BranchDropMenu {
+            repo_id,
+            source,
+            target,
+        } => {
+            repo_id.hash(hasher);
+            source.hash(hasher);
+            target.hash(hasher);
+        }
         PopoverKind::BranchSectionMenu { repo_id, section } => {
             repo_id.hash(hasher);
             hash_branch_section(*section, hasher);
@@ -1257,6 +1301,14 @@ fn hash_repo_popover_kind<H: Hasher>(repo_id: RepoId, kind: &RepoPopoverKind, ha
             }
             RemotePopoverKind::OpenInBrowserMenu => {
                 108u8.hash(hasher);
+                repo_id.hash(hasher);
+            }
+            RemotePopoverKind::EditUrlMenu => {
+                109u8.hash(hasher);
+                repo_id.hash(hasher);
+            }
+            RemotePopoverKind::RemoveMenu => {
+                110u8.hash(hasher);
                 repo_id.hash(hasher);
             }
         },

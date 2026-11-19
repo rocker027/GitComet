@@ -441,7 +441,7 @@ impl PopoverHost {
         let stash_message_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Stash message".into(),
+                    placeholder: "Stash message (optional)".into(),
                     ..Default::default()
                 },
                 window,
@@ -815,6 +815,7 @@ impl PopoverHost {
         let clone_repo_focus = DialogFocus::new(cx);
         let create_tag_focus = DialogFocus::new(cx);
         let create_tag_annotated_focus_handle = cx.focus_handle().tab_index(0).tab_stop(true);
+        let stash_include_untracked_focus_handle = cx.focus_handle().tab_index(0).tab_stop(true);
         let filesystem_conflict_apply_to_all_focus_handle =
             cx.focus_handle().tab_index(0).tab_stop(true);
         let worktree_remove_delete_branch_focus_handle =
@@ -992,6 +993,8 @@ impl PopoverHost {
             create_branch_from_ref_focus,
             create_tag_annotated: false,
             create_tag_annotated_focus_handle,
+            stash_include_untracked: true,
+            stash_include_untracked_focus_handle,
             filesystem_conflict_apply_to_all: false,
             filesystem_conflict_apply_to_all_focus_handle,
             worktree_remove_delete_branch: false,
@@ -1896,7 +1899,11 @@ impl PopoverHost {
         let opened_from_row = !matches!(
             &kind,
             PopoverKind::Repo {
-                kind: RepoPopoverKind::Remote(RemotePopoverKind::OpenInBrowserMenu),
+                kind: RepoPopoverKind::Remote(
+                    RemotePopoverKind::OpenInBrowserMenu
+                        | RemotePopoverKind::EditUrlMenu
+                        | RemotePopoverKind::RemoveMenu
+                ),
                 ..
             }
         );
@@ -2098,6 +2105,7 @@ impl PopoverHost {
                     window.focus(&focus, cx);
                 }
                 PopoverKind::StashPrompt => {
+                    self.stash_include_untracked = true;
                     self.stash_message_input.update(cx, |input, cx| {
                         input.clear_transient_key_presses();
                         input.set_text("", cx);

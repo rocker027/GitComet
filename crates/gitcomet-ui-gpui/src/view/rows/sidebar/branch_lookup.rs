@@ -136,6 +136,46 @@ pub(super) fn local_branch_double_click_action(
     }
 }
 
+/// What double-clicking a remote branch does, as in GitKraken: check out the
+/// local branch already tracking it, or create one of the same name, and only
+/// ask for a name when that name is taken by an unrelated branch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum RemoteBranchDoubleClickAction {
+    CheckoutTracking { name: String },
+    CreateTracking { name: String },
+    PromptForName,
+}
+
+pub(super) fn remote_branch_double_click_action(
+    branches: Option<&[gitcomet_core::domain::Branch]>,
+    remote: &str,
+    branch: &str,
+) -> RemoteBranchDoubleClickAction {
+    // Without the local branch list the name check cannot be made; the
+    // prompt makes it when the user submits.
+    let Some(branches) = branches else {
+        return RemoteBranchDoubleClickAction::PromptForName;
+    };
+    let tracking = branches.iter().find(|local| {
+        local
+            .upstream
+            .as_ref()
+            .is_some_and(|upstream| upstream.remote == remote && upstream.branch == branch)
+    });
+    if let Some(local) = tracking {
+        return RemoteBranchDoubleClickAction::CheckoutTracking {
+            name: local.name.clone(),
+        };
+    }
+    if branches.iter().any(|local| local.name == branch) {
+        RemoteBranchDoubleClickAction::PromptForName
+    } else {
+        RemoteBranchDoubleClickAction::CreateTracking {
+            name: branch.to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::view) struct BranchHistoryRevealTarget {
     pub(in crate::view) commit_id: CommitId,

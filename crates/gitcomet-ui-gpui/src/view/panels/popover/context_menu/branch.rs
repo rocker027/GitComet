@@ -14,6 +14,7 @@ pub(super) fn model(
         BranchSection::Remote => "Remote branch".into(),
     };
     let mut items = vec![ContextMenuItem::Header(header.into())];
+    let mut branch_entry_tooltips: FxHashMap<usize, SharedString> = FxHashMap::default();
     items.push(ContextMenuItem::Label(name.clone().into()));
     items.push(ContextMenuItem::Separator);
 
@@ -131,6 +132,29 @@ pub(super) fn model(
             },
         }),
     });
+    // Tag the branch tip, as GitKraken's branch menu offers. The commit
+    // menu's "Add tag…" gate applies: tags only show while history shows them.
+    if let Some(tip) = branch_commit_id.as_ref() {
+        let tag_disabled = !this.state.git_log_settings.show_history_tags;
+        if tag_disabled {
+            branch_entry_tooltips.insert(
+                items.len(),
+                "Enable “Show tags in history view” in Settings > Git log to add tags.".into(),
+            );
+        }
+        items.push(ContextMenuItem::Entry {
+            label: "Create tag…".into(),
+            icon: Some("icons/tag.svg".into()),
+            shortcut: None,
+            disabled: tag_disabled,
+            action: Box::new(ContextMenuAction::OpenPopover {
+                kind: PopoverKind::CreateTagPrompt {
+                    repo_id,
+                    target: tip.as_ref().to_string(),
+                },
+            }),
+        });
+    }
     if let Some(repo) = repo {
         items.extend(worktree_entries(repo, repo_id, target));
     }
@@ -406,7 +430,7 @@ pub(super) fn model(
         });
     }
 
-    ContextMenuModel::new(items)
+    ContextMenuModel::new(items).with_entry_tooltips(branch_entry_tooltips)
 }
 
 /// What a new worktree for the branch starts from.

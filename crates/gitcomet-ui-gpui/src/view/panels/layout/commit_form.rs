@@ -8,6 +8,28 @@ pub(super) fn commit_allowed(is_merge_active: bool, staged_count: usize) -> bool
     staged_count > 0 || is_merge_active
 }
 
+/// What a commit would record and where, for the commit buttons' tooltips:
+/// "3 staged files on main", or "3 changed files on main" when the commit
+/// stages them first. `None` when there are none.
+pub(super) fn commit_target_summary(
+    count: usize,
+    kind: &str,
+    branch: Option<&str>,
+) -> Option<String> {
+    if count == 0 {
+        return None;
+    }
+    let files = if count == 1 {
+        format!("1 {kind} file")
+    } else {
+        format!("{count} {kind} files")
+    };
+    Some(match branch.filter(|name| *name != "HEAD") {
+        Some(branch) => format!("{files} on {branch}"),
+        None => format!("{files} on a detached HEAD"),
+    })
+}
+
 /// The commit options a submit carries.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct CommitOptions {
@@ -17,7 +39,13 @@ pub(super) struct CommitOptions {
 }
 
 impl CommitOptions {
-    pub(super) fn msg(self, repo_id: RepoId, message: String) -> Msg {
+    /// The commit message; `stage_paths` are staged first in the same run.
+    pub(super) fn msg(
+        self,
+        repo_id: RepoId,
+        message: String,
+        stage_paths: Vec<std::path::PathBuf>,
+    ) -> Msg {
         let hooks = GitHooks::from_skip(self.skip_hooks);
         Msg::Commit {
             repo_id,
@@ -26,7 +54,24 @@ impl CommitOptions {
                 amend: self.amend,
                 push_after_commit: self.push_after,
                 hooks,
+                stage_paths,
             },
+        }
+    }
+
+    /// The Commit button's label and tooltip when it stages every change
+    /// first. Commit & Push never does: it stays with what is staged.
+    pub(super) fn stage_all_button_text(self) -> (&'static str, &'static str) {
+        if self.skip_hooks {
+            (
+                "Stage All & Commit without Hooks",
+                "Stage all changes, untracked files included, and commit them without running the pre-commit and commit-msg hooks",
+            )
+        } else {
+            (
+                "Stage All & Commit",
+                "Stage all changes, untracked files included, and commit them",
+            )
         }
     }
 
@@ -62,19 +107,21 @@ impl CommitOptions {
 }
 
 impl DetailsPaneView {
-    pub(super) fn can_submit_commit(&self, message: &str) -> bool {
-        let Some(repo) = self.active_repo() else {
-            return false;
-        };
-        if repo.is_bare()
+    /// The active repository, when a commit with `message` may start at all.
+    fn commit_submit_repo(&self, message: &str) -> Option<&RepoState> {
+        let repo = self.active_repo()?;
+        let blocked = repo.is_bare()
             || self.pending_commits.contains_key(&repo.id)
             || repo.commit_in_flight > 0
-        {
+            || message.trim().is_empty();
+        (!blocked).then_some(repo)
+    }
+
+    /// Whether `message` can commit what is staged (or amend).
+    pub(super) fn can_submit_commit(&self, message: &str) -> bool {
+        let Some(repo) = self.commit_submit_repo(message) else {
             return false;
-        }
-        if message.trim().is_empty() {
-            return false;
-        }
+        };
         if self.commit_amend_enabled {
             return amend_allowed(repo);
         }
@@ -85,6 +132,13 @@ impl DetailsPaneView {
         commit_allowed(is_merge_active, staged_count)
     }
 
+    /// What the Commit button stages before committing `message`: every
+    /// change, when nothing is staged. `None` when it commits the index as is.
+    pub(super) fn stage_all_submit_paths(&self, message: &str) -> Option<Vec<std::path::PathBuf>> {
+        let repo = self.commit_submit_repo(message)?;
+        stage_all_commit_paths(repo, self.commit_amend_enabled).ok()
+    }
+
     fn submit_commit(&mut self, push_after_commit: bool, cx: &mut gpui::Context<Self>) -> bool {
         let Some(repo_id) = self.active_repo_id() else {
             return false;
@@ -93,9 +147,16 @@ impl DetailsPaneView {
             .commit_message_input
             .read_with(cx, |input, _| input.text().to_string());
         let options = self.commit_options();
-        if !self.can_submit_commit(&message) {
+        let stage_paths = if self.can_submit_commit(&message) {
+            Vec::new()
+        } else if push_after_commit {
             return false;
-        }
+        } else {
+            let Some(paths) = self.stage_all_submit_paths(&message) else {
+                return false;
+            };
+            paths
+        };
 
         self.pending_commits.insert(
             repo_id,
@@ -111,7 +172,7 @@ impl DetailsPaneView {
                 push_after: push_after_commit,
                 ..options
             }
-            .msg(repo_id, message.trim().to_string()),
+            .msg(repo_id, message.trim().to_string(), stage_paths),
         );
         cx.notify();
         true
@@ -156,6 +217,13 @@ impl DetailsPaneView {
             .is_some_and(|repo| repo.commit_in_flight > 0);
         let commit_message_text = self.commit_message_input.read(cx).text().to_string();
         let can_submit_commit = self.can_submit_commit(&commit_message_text);
+        // With nothing staged, the Commit button stages every change first.
+        let stage_all_count = if can_submit_commit {
+            None
+        } else {
+            self.stage_all_submit_paths(&commit_message_text)
+                .map(|paths| paths.len())
+        };
         let repo_key = self.active_repo_id().map(|id| id.0).unwrap_or(0);
         let icon_color = theme.colors.accent.foreground;
         let icon = |path: &'static str| svg_icon(path, icon_color, scaled_px(14.0));
@@ -164,16 +232,51 @@ impl DetailsPaneView {
         };
         let options = self.commit_options();
         let amend = options.amend;
-        let (commit_label, commit_tooltip) = CommitOptions {
+        let commit_options = CommitOptions {
             push_after: false,
             ..options
-        }
-        .button_text();
+        };
+        let (commit_label, commit_tooltip) = if stage_all_count.is_some() {
+            commit_options.stage_all_button_text()
+        } else {
+            commit_options.button_text()
+        };
         let (push_label, push_tooltip) = CommitOptions {
             push_after: true,
             ..options
         }
         .button_text();
+        // Like GitKraken's "Commit changes to N files", the buttons show how
+        // many files the commit takes and the tooltips name the branch.
+        let staged_count = self
+            .active_repo()
+            .and_then(|repo| repo.staged_status_entries().map(|entries| entries.len()))
+            .unwrap_or(0);
+        let head_branch = self
+            .active_repo()
+            .and_then(|repo| repo.head_branch.ready().cloned());
+        let with_target = |tooltip: &'static str, count: usize, kind: &str| -> SharedString {
+            match commit_target_summary(count, kind, head_branch.as_deref()) {
+                Some(summary) => format!("{tooltip} · {summary}").into(),
+                None => tooltip.into(),
+            }
+        };
+        let commit_tooltip = match stage_all_count {
+            Some(count) => with_target(commit_tooltip, count, "changed"),
+            None => with_target(commit_tooltip, staged_count, "staged"),
+        };
+        let push_tooltip = with_target(push_tooltip, staged_count, "staged");
+        let badge = move |count: usize| -> Option<components::ButtonSlot> {
+            (count > 0).then(|| {
+                components::ButtonSlot::custom(move |disabled| {
+                    div()
+                        .text_size(theme.ui_text(12.0))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(theme.disabled_color_if(disabled, icon_color))
+                        .child(count.to_string())
+                })
+            })
+        };
         let previous_messages_invoker: SharedString = "previous_commit_messages".into();
         let previous_messages_active = self
             .active_context_menu_invoker
@@ -200,25 +303,33 @@ impl DetailsPaneView {
                         .into()
                 }
             };
-        let commit = components::Button::new("commit", commit_label)
+        let mut commit = components::Button::new("commit", commit_label)
             .start_slot(start_slot("commit_spinner", "commit_button_icon"))
-            .style(components::ButtonStyle::Subtle)
-            .disabled(!can_submit_commit)
+            .style(components::ButtonStyle::Subtle);
+        if let Some(badge) = badge(stage_all_count.unwrap_or(staged_count)) {
+            commit = commit.end_slot(badge);
+        }
+        let commit = commit
+            .disabled(!can_submit_commit && stage_all_count.is_none())
             .on_click(theme, cx, |this, _e, _w, cx| {
                 let _ = this.submit_commit(false, cx);
             })
             .debug_selector(|| "commit_button".to_string())
             .gitcomet_tooltip_keyed(
                 theme,
-                commit_tooltip.into(),
+                commit_tooltip,
                 vec![components::secondary_shortcut("Enter").into()],
             );
-        let commit_and_push = components::Button::new("commit_and_push", push_label)
+        let mut commit_and_push = components::Button::new("commit_and_push", push_label)
             .start_slot(start_slot(
                 "commit_push_spinner",
                 "commit_and_push_button_icon",
             ))
-            .style(components::ButtonStyle::Subtle)
+            .style(components::ButtonStyle::Subtle);
+        if let Some(badge) = badge(staged_count) {
+            commit_and_push = commit_and_push.end_slot(badge);
+        }
+        let commit_and_push = commit_and_push
             .disabled(!can_submit_commit)
             .on_click(theme, cx, |this, _e, _w, cx| {
                 let _ = this.submit_commit(true, cx);
@@ -226,7 +337,7 @@ impl DetailsPaneView {
             .debug_selector(|| "commit_and_push_button".to_string())
             .gitcomet_tooltip_keyed(
                 theme,
-                push_tooltip.into(),
+                push_tooltip,
                 vec![components::secondary_shortcut("Shift+Enter").into()],
             );
         // The frame and raised fill the old split Commit button used.
@@ -401,5 +512,31 @@ impl DetailsPaneView {
                     .child(framed("commit_button_frame", commit))
                     .child(framed("commit_and_push_button_frame", commit_and_push)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_target_summary;
+
+    #[test]
+    fn commit_target_summary_counts_files_and_names_the_branch() {
+        assert_eq!(commit_target_summary(0, "staged", Some("main")), None);
+        assert_eq!(
+            commit_target_summary(1, "staged", Some("main")).as_deref(),
+            Some("1 staged file on main")
+        );
+        assert_eq!(
+            commit_target_summary(3, "staged", Some("feature/x")).as_deref(),
+            Some("3 staged files on feature/x")
+        );
+        assert_eq!(
+            commit_target_summary(2, "changed", Some("HEAD")).as_deref(),
+            Some("2 changed files on a detached HEAD")
+        );
+        assert_eq!(
+            commit_target_summary(2, "staged", None).as_deref(),
+            Some("2 staged files on a detached HEAD")
+        );
     }
 }

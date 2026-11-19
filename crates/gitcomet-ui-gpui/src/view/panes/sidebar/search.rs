@@ -15,6 +15,7 @@ fn is_searchable_branch_row(row: &BranchSidebarRow) -> bool {
             | BranchSidebarRow::SubmoduleItem { .. }
             | BranchSidebarRow::AnnexRepositoryItem { .. }
             | BranchSidebarRow::StashItem { .. }
+            | BranchSidebarRow::TagItem { .. }
     )
 }
 

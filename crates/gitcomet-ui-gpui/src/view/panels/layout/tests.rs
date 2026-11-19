@@ -453,7 +453,7 @@ fn commit_options_carry_the_hook_choice_to_commit_and_amend() {
                 } else {
                     GitHooks::Run
                 };
-                match options.msg(repo_id, "message".to_string()) {
+                match options.msg(repo_id, "message".to_string(), Vec::new()) {
                     Msg::Commit {
                         repo_id: id,
                         request:
@@ -462,8 +462,10 @@ fn commit_options_carry_the_hook_choice_to_commit_and_amend() {
                                 amend: sent_amend,
                                 push_after_commit,
                                 hooks,
+                                stage_paths,
                             },
                     } => {
+                        assert!(stage_paths.is_empty());
                         assert_eq!(sent_amend, amend, "{options:?}");
                         assert_eq!((id, message.as_str()), (repo_id, "message"));
                         assert_eq!((push_after_commit, hooks), (push_after, expected_hooks));

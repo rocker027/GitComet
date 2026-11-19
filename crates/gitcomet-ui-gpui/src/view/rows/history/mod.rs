@@ -662,6 +662,17 @@ fn history_table_row(
             controls::ControlActivation::Composite,
             cx.listener(move |this, e: &ClickEvent, _w, cx| {
                 let modifiers = e.modifiers();
+                // GitKraken checks out a branch double-clicked in the graph.
+                if e.standard_click()
+                    && e.click_count() == 2
+                    && modifiers.number_of_modifiers() == 0
+                    && let Some(repo) = this.active_repo().filter(|repo| repo.id == repo_id)
+                    && let Some(name) = history_double_click_checkout(repo, &commit_id)
+                {
+                    this.store.dispatch(Msg::CheckoutBranch { repo_id, name });
+                    cx.notify();
+                    return;
+                }
                 let mode = if modifiers.shift {
                     CommitSelectMode::Range
                 } else if modifiers.secondary() || modifiers.control || modifiers.platform {
@@ -1315,6 +1326,29 @@ fn working_tree_summary_history_row(
         );
 
     place_history_row(row, row_top).into_any_element()
+}
+
+/// The branch a double-click on a commit row checks out, as GitKraken does
+/// for a branch label: the one local branch at that commit, unless it is
+/// already checked out here or held by another worktree. Several branches,
+/// or none, leave the double-click as a selection.
+pub(in crate::view) fn history_double_click_checkout(
+    repo: &RepoState,
+    commit_id: &CommitId,
+) -> Option<String> {
+    if repo.is_bare() {
+        return None;
+    }
+    let branches = repo.branches.ready()?;
+    let mut at_commit = branches.iter().filter(|branch| branch.target == *commit_id);
+    let branch = at_commit.next()?;
+    if at_commit.next().is_some() {
+        return None;
+    }
+    if crate::view::rows::branch_checked_out_at(repo, &branch.name).is_some() {
+        return None;
+    }
+    Some(branch.name.clone())
 }
 
 mod markdown_preview_rows;

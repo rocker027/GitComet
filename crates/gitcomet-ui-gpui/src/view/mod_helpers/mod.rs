@@ -185,6 +185,40 @@ pub(in crate::view) fn amend_allowed(repo: &RepoState) -> bool {
     }
 }
 
+/// What "Stage All & Commit" stages: every unstaged change, untracked files
+/// included, when nothing is staged and the commit is an ordinary one, as
+/// GitKraken's commit button does. Otherwise why not: an amend, a merge or
+/// rebase in progress, or a conflict needs the user to pick what to stage.
+pub(in crate::view) fn stage_all_commit_paths(
+    repo: &RepoState,
+    amend: bool,
+) -> Result<Vec<std::path::PathBuf>, &'static str> {
+    if repo.is_bare() {
+        return Err(gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE);
+    }
+    if amend {
+        return Err("An amend commits only what is staged");
+    }
+    if merge_in_progress(repo) || matches!(repo.rebase_in_progress, Loadable::Ready(true)) {
+        return Err("Stage what the merge or rebase should record first");
+    }
+    let (Some(staged), Some(unstaged)) =
+        (repo.staged_status_entries(), repo.worktree_status_entries())
+    else {
+        return Err("Wait for the file status to load");
+    };
+    if !staged.is_empty() {
+        return Err("Some changes are already staged: use Commit Changes");
+    }
+    if unstaged.iter().any(|entry| entry.conflict.is_some()) {
+        return Err("Resolve the conflicts first");
+    }
+    if unstaged.is_empty() {
+        return Err("No changes to commit");
+    }
+    Ok(unstaged.iter().map(|entry| entry.path.clone()).collect())
+}
+
 /// The rebase, apply, cherry-pick, or revert the repository is part-way
 /// through, if any. `rebase_in_progress` stands in until the sequencer state loads.
 pub(in crate::view) fn active_sequencer_state(

@@ -321,6 +321,17 @@ pub(super) fn bind_app_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-w", CloseWindow, None),
         KeyBinding::new("secondary-pageup", PreviousRepository, None),
         KeyBinding::new("secondary-pagedown", NextRepository, None),
+        // GitKraken's Cmd-1…9, handled by the repository window, which lets
+        // the conflict resolver keep Cmd-1…3 for picking a side while shown.
+        KeyBinding::new("secondary-1", ActivateRepositoryTab { index: 0 }, None),
+        KeyBinding::new("secondary-2", ActivateRepositoryTab { index: 1 }, None),
+        KeyBinding::new("secondary-3", ActivateRepositoryTab { index: 2 }, None),
+        KeyBinding::new("secondary-4", ActivateRepositoryTab { index: 3 }, None),
+        KeyBinding::new("secondary-5", ActivateRepositoryTab { index: 4 }, None),
+        KeyBinding::new("secondary-6", ActivateRepositoryTab { index: 5 }, None),
+        KeyBinding::new("secondary-7", ActivateRepositoryTab { index: 6 }, None),
+        KeyBinding::new("secondary-8", ActivateRepositoryTab { index: 7 }, None),
+        KeyBinding::new("secondary-9", ActivateRepositoryTab { index: 8 }, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-tab", PreviousRepository, None),
         #[cfg(not(target_os = "macos"))]

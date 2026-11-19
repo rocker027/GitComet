@@ -509,6 +509,44 @@ fn model_with_header(
             }),
         });
     }
+    // The commit-details pencil, offered here too. Its rules decide: HEAD
+    // amends; an older commit must be on HEAD's linear first-parent history.
+    // The first-parent position is prepared for HEAD and the selected commit
+    // only; other rows are judged once their details load.
+    let reword_blocker = this
+        .active_repo()
+        .filter(|repo| repo.id == repo_id)
+        .and_then(|repo| {
+            let judged = repo.head_commit_id().as_ref() == Some(commit_id)
+                || repo.history_state.selected_commit.as_ref() == Some(commit_id);
+            if !judged {
+                return None;
+            }
+            let parent_count = repo
+                .log
+                .ready()
+                .and_then(|page| page.commits.iter().find(|c| c.id == *commit_id))
+                .map(|commit| commit.parent_ids.len())?;
+            crate::view::panels::commit_reword_availability_for_commit(
+                repo,
+                commit_id,
+                parent_count,
+            )
+            .blocker
+        });
+    if let Some(blocker) = reword_blocker {
+        entry_tooltips.insert(items.len(), blocker.into());
+    }
+    items.push(ContextMenuItem::Entry {
+        label: "Edit commit message…".into(),
+        icon: Some("icons/pencil.svg".into()),
+        shortcut: Some("E".into()),
+        disabled: reword_blocker.is_some(),
+        action: Box::new(ContextMenuAction::EditCommitMessage {
+            repo_id,
+            commit_id: commit_id.clone(),
+        }),
+    });
     items.push(ContextMenuItem::Entry {
         label: format!("Revert {short}…").into(),
         icon: Some("icons/undo.svg".into()),
@@ -625,6 +663,36 @@ fn model_with_header(
     });
 
     items.push(ContextMenuItem::Separator);
+    // Undo the last commit: a soft reset to its parent, through the usual
+    // reset confirmation. Its changes stay staged for a new commit.
+    if is_head_commit {
+        let parent = this
+            .active_repo()
+            .filter(|repo| repo.id == repo_id)
+            .and_then(|repo| repo.log.ready())
+            .and_then(|page| page.commits.iter().find(|c| c.id == *commit_id))
+            .filter(|commit| commit.parent_ids.len() == 1)
+            .and_then(|commit| commit.parent_ids.first().cloned());
+        if let Some(parent) = parent {
+            entry_tooltips.insert(
+                items.len(),
+                "Soft reset to the parent commit; the changes stay staged".into(),
+            );
+            items.push(ContextMenuItem::Entry {
+                label: "Undo commit…".into(),
+                icon: Some("icons/undo.svg".into()),
+                shortcut: Some("U".into()),
+                disabled: history_rewrite_disabled,
+                action: Box::new(ContextMenuAction::OpenPopover {
+                    kind: PopoverKind::ResetPrompt {
+                        repo_id,
+                        target: parent.as_ref().to_string(),
+                        mode: ResetMode::Soft,
+                    },
+                }),
+            });
+        }
+    }
     for (label, icon, mode) in [
         (
             "Reset (--soft) to here",

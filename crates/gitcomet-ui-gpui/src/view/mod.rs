@@ -883,6 +883,7 @@ pub(in crate::view) fn diff_split_column_widths(
 pub(crate) use crate::bundled_fonts::UI_MONOSPACE_FONT_FAMILY;
 
 mod gitcomet_view;
+pub(in crate::view) use gitcomet_view::git_undo_unavailable;
 mod gitcomet_view_commands;
 mod gitcomet_view_render;
 mod gitcomet_view_requests;

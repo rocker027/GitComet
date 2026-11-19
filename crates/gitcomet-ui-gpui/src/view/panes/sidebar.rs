@@ -2192,6 +2192,21 @@ impl SidebarPaneView {
         });
     }
 
+    /// Selects a tag's commit and scrolls the history to it.
+    pub(in super::super) fn reveal_tag_commit_in_history(
+        &mut self,
+        repo_id: RepoId,
+        commit_id: CommitId,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let root_view = self.root_view.clone();
+        cx.defer(move |cx| {
+            let _ = root_view.update(cx, |root, cx| {
+                root.reveal_commit_in_history(repo_id, commit_id, cx);
+            });
+        });
+    }
+
     pub(in super::super) fn reveal_branch_commit_in_history(
         &mut self,
         repo_id: RepoId,

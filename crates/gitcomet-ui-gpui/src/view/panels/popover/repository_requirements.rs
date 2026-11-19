@@ -10,6 +10,7 @@ impl PopoverKind {
             Self::CheckoutRemoteBranchPrompt { repo_id, .. }
             | Self::CommitPrompt { repo_id }
             | Self::StashDropConfirm { repo_id, .. }
+            | Self::DiscardAllConfirm { repo_id }
             | Self::StashPickerPrompt { repo_id, .. }
             | Self::CherryPickCommitConfirm { repo_id, .. }
             | Self::InteractiveCherryPickConfirm { repo_id, .. }
@@ -24,7 +25,10 @@ impl PopoverKind {
             | Self::DiscardFolderChangesConfirm { repo_id, .. }
             | Self::RebaseOntoConfirm { repo_id, .. } => Some(*repo_id),
             Self::BranchPicker {
-                purpose: BranchPickerPurpose::Checkout | BranchPickerPurpose::RebaseOnto,
+                purpose:
+                    BranchPickerPurpose::Checkout
+                    | BranchPickerPurpose::RebaseOnto
+                    | BranchPickerPurpose::Merge,
             }
             | Self::StashPrompt
             | Self::RebaseReword { .. } => active,
@@ -127,6 +131,9 @@ impl PopoverKind {
             | Self::StatusFileMenu { .. }
             | Self::StatusConflictMenu { .. }
             | Self::BranchMenu { .. }
+            | Self::BranchDropMenu { .. }
+            | Self::RefPickerMenu { .. }
+            | Self::DeleteTagConfirm { .. }
             | Self::BranchSectionMenu { .. }
             | Self::BranchGroupMenu { .. }
             | Self::SidebarPinnedOverflow { .. }
@@ -203,6 +210,7 @@ impl PopoverHost {
             | ContextMenuAction::CheckoutCommit { repo_id, .. }
             | ContextMenuAction::CherryPickCommit { repo_id, .. }
             | ContextMenuAction::RevertCommit { repo_id, .. }
+            | ContextMenuAction::EditCommitMessage { repo_id, .. }
             | ContextMenuAction::StageStatusFolder { repo_id, .. }
             | ContextMenuAction::ApplyFileChange { repo_id, .. }
             | ContextMenuAction::CheckoutBranch { repo_id, .. }

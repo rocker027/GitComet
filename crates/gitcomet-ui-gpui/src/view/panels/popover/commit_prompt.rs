@@ -7,6 +7,14 @@ pub(super) fn panel(
 ) -> gpui::Div {
     let theme = this.theme;
     let can_commit = this.can_submit_commit_prompt(cx);
+    let submit_label = if this
+        .active_repo()
+        .is_some_and(|repo| stage_all_commit_paths(repo, false).is_ok())
+    {
+        "Stage All & Commit"
+    } else {
+        "Commit"
+    };
     let scaled_px = super::popover_scaled_px_fn(cx);
 
     div()
@@ -34,7 +42,7 @@ pub(super) fn panel(
                         }),
                 )
                 .child(
-                    components::Button::new("commit_prompt_submit", "Commit")
+                    components::Button::new("commit_prompt_submit", submit_label)
                         .focus_handle(this.commit_prompt_focus.submit.clone())
                         .separated_end_slot(super::hotkey_hint(
                             theme,

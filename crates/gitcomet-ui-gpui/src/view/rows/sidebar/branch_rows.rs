@@ -5,6 +5,7 @@ use super::*;
 
 mod annex;
 mod branch;
+mod branch_drag;
 mod empty_card;
 mod headers;
 mod items;
@@ -493,6 +494,14 @@ impl SidebarPaneView {
                 } => Self::sidebar_stash_header_row(this, &ctx, slot, collapsed, collapse_key, cx),
                 BranchSidebarRow::StashPlaceholder { message } => {
                     ctx.placeholder_row("stash_placeholder", slot.ix, message)
+                }
+                BranchSidebarRow::TagsHeader {
+                    top_border: _,
+                    collapsed,
+                    collapse_key,
+                } => Self::sidebar_tags_header_row(this, &ctx, slot, collapsed, collapse_key, cx),
+                BranchSidebarRow::TagItem { name, target } => {
+                    Self::sidebar_tag_item_row(this, &ctx, slot, name, target, cx)
                 }
                 BranchSidebarRow::StashItem {
                     index,

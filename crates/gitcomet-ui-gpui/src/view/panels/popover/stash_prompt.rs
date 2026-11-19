@@ -1,4 +1,5 @@
 use super::*;
+use crate::kit::interaction as controls;
 
 pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> gpui::Div {
     let theme = this.theme;
@@ -18,6 +19,25 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 .w_full()
                 .min_w(px(0.0))
                 .child(this.stash_message_input.clone()),
+        )
+        .child(
+            super::checkbox_row(
+                "stash_include_untracked_toggle",
+                "stash_include_untracked_toggle",
+                "Include untracked files",
+                this.stash_include_untracked,
+                &this.stash_include_untracked_focus_handle,
+                theme,
+                cx,
+            )
+            .on_activate(
+                false,
+                controls::ControlActivation::Action,
+                cx.listener(|this, _e: &ClickEvent, _w, cx| {
+                    this.stash_include_untracked = !this.stash_include_untracked;
+                    cx.notify();
+                }),
+            ),
         )
         .child(
             super::prompt_footer_row()

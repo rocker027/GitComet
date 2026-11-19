@@ -52,6 +52,7 @@ mod dialog;
 mod file_actions;
 mod file_history_file_picker;
 mod focus;
+mod gitkraken_parity;
 mod interaction;
 mod layout;
 mod menu_placement;

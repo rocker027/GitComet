@@ -966,7 +966,10 @@ fn file_and_diff_context_menu_shortcuts_match_expected_actions(cx: &mut gpui::Te
             },
         )
     });
-    assert_declared_shortcuts(&commit_model, &["C", "T", "D", "P", "R", "B", "I", "M"]);
+    assert_declared_shortcuts(
+        &commit_model,
+        &["C", "T", "D", "P", "E", "R", "B", "I", "M"],
+    );
     assert_shortcut_action!(
         commit_model,
         "Enter",

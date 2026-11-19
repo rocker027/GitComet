@@ -2013,6 +2013,11 @@ impl Render for KeyBindingProbe {
             .on_action(record_action_listener!(CloseWindow))
             .on_action(record_action_listener!(PreviousRepository))
             .on_action(record_action_listener!(NextRepository))
+            .on_action(
+                cx.listener(|this, action: &ActivateRepositoryTab, _window, _cx| {
+                    this.record_action(action.name());
+                }),
+            )
             .on_action(record_action_listener!(TerminalCopy))
             .on_action(record_action_listener!(TerminalPaste))
             .on_action(record_action_listener!(TerminalSelectAll))
@@ -2046,8 +2051,10 @@ impl Render for KeyBindingProbe {
 fn repository_command_shortcuts_resolve_from_views_and_text_inputs(cx: &mut gpui::TestAppContext) {
     let cases = [
         ("secondary-alt-enter", "commit"),
+        ("secondary-shift-m", "focus-commit-message"),
         ("secondary-alt-s", "stage-all"),
         ("secondary-alt-u", "unstage-all"),
+        ("secondary-shift-u", "unstage-all"),
         ("secondary-alt-n", "create-branch"),
         ("secondary-alt-c", "checkout-branch"),
         #[cfg(target_os = "macos")]
@@ -2058,6 +2065,7 @@ fn repository_command_shortcuts_resolve_from_views_and_text_inputs(cx: &mut gpui
         ("secondary-r", "reload-repository"),
         ("f5", "reload-repository"),
         ("secondary-shift-f", "fetch-all"),
+        ("secondary-l", "fetch-all"),
         #[cfg(target_os = "macos")]
         ("cmd-alt-t", "open-external-terminal"),
         ("secondary-b", "toggle-sidebar"),
@@ -2104,6 +2112,44 @@ fn repository_command_shortcuts_resolve_from_views_and_text_inputs(cx: &mut gpui
                 "reserved keys in {context:?}"
             );
         }
+    }
+}
+
+/// Cmd/Ctrl-Z undoes a Git operation only outside text editing and the
+/// Files explorer, which keep the key for their own undo.
+#[gpui::test]
+fn git_undo_keys_leave_text_inputs_and_the_files_explorer_alone(cx: &mut gpui::TestAppContext) {
+    for (context, expect_git_undo) in [
+        (None, true),
+        (Some("TextInput"), false),
+        (Some("FileExplorer"), false),
+    ] {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let (view, cx) =
+            cx.add_window_view(|_, cx| KeyBindingProbe::new(context, Arc::clone(&observed), cx));
+        cx.update(|window, app| {
+            app.clear_key_bindings();
+            bind_app_keys(app);
+            bind_text_input_keys(app);
+            window.focus(&view.read(app).focus_handle(), app);
+            let _ = window.draw(app);
+        });
+        for (chord, id) in [("secondary-z", "undo"), ("secondary-shift-z", "redo")] {
+            observed.lock().unwrap().clear();
+            cx.simulate_keystrokes(chord);
+            let dispatched = observed.lock().unwrap().contains(&format!("command:{id}"));
+            assert_eq!(dispatched, expect_git_undo, "{chord} in {context:?}");
+        }
+        // Cmd/Ctrl-Y is the conflict resolver's manual alignment, never Redo.
+        observed.lock().unwrap().clear();
+        cx.simulate_keystrokes("secondary-y");
+        assert!(
+            !observed
+                .lock()
+                .unwrap()
+                .contains(&"command:redo".to_string()),
+            "secondary-y in {context:?}"
+        );
     }
 }
 
@@ -2665,6 +2711,8 @@ fn app_keybindings_resolve_expected_actions(cx: &mut gpui::TestAppContext) {
         ("secondary-shift-w", CloseWindow.name()),
         ("secondary-pageup", PreviousRepository.name()),
         ("secondary-pagedown", NextRepository.name()),
+        ("secondary-1", ActivateRepositoryTab { index: 0 }.name()),
+        ("secondary-9", ActivateRepositoryTab { index: 8 }.name()),
         ("secondary-+", IncreaseUiScale.name()),
         ("secondary-=", IncreaseUiScale.name()),
         ("secondary--", DecreaseUiScale.name()),

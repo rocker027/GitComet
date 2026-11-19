@@ -583,6 +583,39 @@ impl Render for GitCometView {
                 });
                 cx.stop_propagation();
             }))
+            // GitKraken's Cmd/Ctrl-1…9, except that the conflict resolver keeps
+            // Cmd/Ctrl-1…3 for picking a side while it is shown.
+            .on_action(cx.listener(
+                |this, action: &crate::app::ActivateRepositoryTab, window, cx| {
+                    cx.stop_propagation();
+                    let digit = action.index + 1;
+                    let resolver_shown =
+                        digit <= 3 && this.diff_renderer.read(cx).is_conflict_resolver_active();
+                    if !resolver_shown {
+                        this.activate_repo_tab_at(action.index, cx);
+                        return;
+                    }
+                    // Typing in another field, a menu, a dialog or the
+                    // terminal leaves the resolver alone, as its own key
+                    // handling does; the key still never switches tabs.
+                    let in_diff = this
+                        .diff_renderer
+                        .read(cx)
+                        .diff_panel_focus_handle
+                        .contains_focused(window, cx);
+                    let typing_elsewhere = !in_diff
+                        && window.context_stack().iter().any(|context| {
+                            ["TextInput", "ContextMenu", "PopoverPrompt", "Terminal"]
+                                .iter()
+                                .any(|name| context.contains(name))
+                        });
+                    if !typing_elsewhere {
+                        this.diff_renderer.update(cx, |pane, cx| {
+                            pane.conflict_resolver_claims_digit_pick(digit, cx)
+                        });
+                    }
+                },
+            ))
             .on_action(cx.listener(|this, _: &OpenActiveViewSearch, window, cx| {
                 if !this.shell_action_allowed(super::shell_policy::ShellAction::Repository) {
                     cx.stop_propagation();

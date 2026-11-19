@@ -380,6 +380,7 @@ pub(in crate::view) fn build_sidebar_presentation_scoped(
                     | BranchSidebarRow::SubmoduleItem { .. }
                     | BranchSidebarRow::AnnexRepositoryItem { .. }
                     | BranchSidebarRow::StashItem { .. }
+                    | BranchSidebarRow::TagItem { .. }
             )
         })
         .count();

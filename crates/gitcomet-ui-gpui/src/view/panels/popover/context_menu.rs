@@ -4,6 +4,7 @@ use gitcomet_core::domain::Upstream;
 mod activate;
 mod annex;
 mod branch;
+mod branch_drop;
 mod branch_group;
 mod branch_section;
 mod browse_history;
@@ -37,8 +38,10 @@ mod previous_commit_messages;
 pub(super) mod pull;
 mod push;
 mod ref_menu;
+mod ref_picker;
 mod reflog_entry;
 mod remote;
+mod remote_edit_url_picker;
 mod remote_web_picker;
 mod repo_picker_row;
 mod repo_tab;
@@ -653,7 +656,12 @@ impl PopoverHost {
                 repo_id,
                 commit_id,
                 refs,
-            } => Some(history_refs::model(self, *repo_id, commit_id, refs)),
+            } => Some(
+                // A stash in the graph gets the stash menu, as in GitKraken:
+                // Apply, Pop, and Drop through its confirmation.
+                stash_menu_for_graph_node(self, *repo_id, commit_id, refs)
+                    .unwrap_or_else(|| history_refs::model(self, *repo_id, commit_id, refs)),
+            ),
             PopoverKind::ReflogEntryMenu {
                 repo_id,
                 target,
@@ -680,6 +688,14 @@ impl PopoverHost {
             PopoverKind::BranchMenu { repo_id, target } => {
                 Some(branch::model(self, *repo_id, target))
             }
+            PopoverKind::BranchDropMenu {
+                repo_id,
+                source,
+                target,
+            } => Some(branch_drop::model(self, *repo_id, source, target)),
+            PopoverKind::RefPickerMenu { repo_id, purpose } => {
+                Some(ref_picker::model(self, *repo_id, *purpose))
+            }
             PopoverKind::BranchSectionMenu { repo_id, section } => {
                 Some(branch_section::model(self, *repo_id, *section))
             }
@@ -691,6 +707,14 @@ impl PopoverHost {
                 repo_id,
                 kind: RepoPopoverKind::Remote(RemotePopoverKind::OpenInBrowserMenu),
             } => Some(remote_web_picker::model(self, *repo_id)),
+            PopoverKind::Repo {
+                repo_id,
+                kind: RepoPopoverKind::Remote(RemotePopoverKind::EditUrlMenu),
+            } => Some(remote_edit_url_picker::model(self, *repo_id)),
+            PopoverKind::Repo {
+                repo_id,
+                kind: RepoPopoverKind::Remote(RemotePopoverKind::RemoveMenu),
+            } => Some(remote_edit_url_picker::remove_model(self, *repo_id)),
             PopoverKind::WebLinkMenu {
                 url,
                 load_remote_image_url,
@@ -1775,6 +1799,29 @@ fn group_context_menu_rows(
     out
 }
 
+/// The stash menu for a stash's node in the history graph; `None` for any
+/// other commit, or for a menu narrowed to one of the row's refs.
+fn stash_menu_for_graph_node(
+    host: &PopoverHost,
+    repo_id: RepoId,
+    commit_id: &CommitId,
+    refs: &CommitMenuRefs,
+) -> Option<ContextMenuModel> {
+    if !matches!(refs, CommitMenuRefs::All) {
+        return None;
+    }
+    let stash = host
+        .state
+        .repos
+        .iter()
+        .find(|repo| repo.id == repo_id)?
+        .stashes
+        .ready()?
+        .iter()
+        .find(|stash| stash.id == *commit_id)?;
+    Some(stash::model(repo_id, stash.index, &stash.message))
+}
+
 fn interactive_rebase_action_menu_model(
     ix: usize,
     can_squash: bool,
@@ -1785,7 +1832,7 @@ fn interactive_rebase_action_menu_model(
         ContextMenuItem::Entry {
             label: "pick".into(),
             icon: None,
-            shortcut: None,
+            shortcut: Some("P".into()),
             // A squash run's target is auto-managed: it stays Reword while
             // commits squash into it, and a dropped entry in target position
             // would re-promote the instant it were picked back — so `pick`
@@ -1800,7 +1847,7 @@ fn interactive_rebase_action_menu_model(
         ContextMenuItem::Entry {
             label: "reword".into(),
             icon: None,
-            shortcut: None,
+            shortcut: Some("R".into()),
             disabled: false,
             action: Box::new(ContextMenuAction::SetInteractiveRebaseAction {
                 ix,
@@ -1810,7 +1857,7 @@ fn interactive_rebase_action_menu_model(
         ContextMenuItem::Entry {
             label: "drop".into(),
             icon: None,
-            shortcut: None,
+            shortcut: Some("D".into()),
             disabled: !can_drop,
             action: Box::new(ContextMenuAction::SetInteractiveRebaseAction {
                 ix,
@@ -1822,7 +1869,7 @@ fn interactive_rebase_action_menu_model(
         items.push(ContextMenuItem::Entry {
             label: "squash".into(),
             icon: None,
-            shortcut: None,
+            shortcut: Some("S".into()),
             disabled: !can_squash,
             action: Box::new(ContextMenuAction::SetInteractiveRebaseAction {
                 ix,

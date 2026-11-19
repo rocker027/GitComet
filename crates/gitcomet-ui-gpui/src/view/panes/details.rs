@@ -86,7 +86,7 @@ pub(in super::super) struct DetailsPaneView {
     /// The history find bar's query, highlighted in the commit details. It
     /// lives on the history view, so this copy is what repaints the pane.
     pub(in super::super) history_find_query: Option<HistoryFindQuery>,
-    root_view: WeakEntity<GitCometView>,
+    pub(in crate::view) root_view: WeakEntity<GitCometView>,
     diff_renderer: WeakEntity<DiffRenderer>,
     pub(in crate::view) tooltip_host: WeakEntity<TooltipHost>,
     notify_fingerprint: u64,
@@ -140,6 +140,11 @@ pub(in super::super) struct DetailsPaneView {
     pub(in super::super) commit_reword_input: Entity<components::TextInput>,
     pub(in super::super) commit_reword_scroll: ScrollHandle,
     pub(in super::super) commit_reword: Option<CommitRewordDraft>,
+    /// An edit asked for from the history row's menu, waiting for the
+    /// commit's details to load: `(repo, commit, selection when asked)`.
+    pub(in super::super) pending_commit_reword: Option<(RepoId, CommitId, Option<CommitId>)>,
+    /// The editor opened outside a render; focus it on the next one.
+    pub(in super::super) commit_reword_focus_pending: bool,
     pub(in super::super) commit_details_message_link_menu: Entity<components::CommitLinkMenu>,
     pub(in super::super) commit_message_drafts: FxHashMap<RepoId, SharedString>,
     pub(in super::super) commit_amend_enabled: bool,
@@ -430,9 +435,16 @@ impl DetailsPaneView {
             }
             if next_fingerprint == this.notify_fingerprint {
                 this.state = next;
+                // A requested edit waits on details the fingerprint may not
+                // cover; check it on every snapshot.
+                if this.pending_commit_reword.is_some() {
+                    this.resolve_pending_commit_reword(cx);
+                    cx.notify();
+                }
             } else {
                 this.notify_fingerprint = next_fingerprint;
                 this.apply_state_snapshot(next, cx);
+                this.resolve_pending_commit_reword(cx);
                 cx.notify();
             }
 
@@ -637,6 +649,8 @@ impl DetailsPaneView {
             commit_reword_input,
             commit_reword_scroll,
             commit_reword: None,
+            pending_commit_reword: None,
+            commit_reword_focus_pending: false,
             commit_details_message_link_menu,
             commit_message_drafts: FxHashMap::default(),
             commit_amend_enabled: false,
@@ -3149,6 +3163,10 @@ impl Render for DetailsPaneView {
         #[cfg(any(test, feature = "benchmarks"))]
         {
             self.render_count += 1;
+        }
+        if std::mem::take(&mut self.commit_reword_focus_pending) {
+            let focus = self.commit_reword_input.read(cx).focus_handle();
+            window.focus(&focus, cx);
         }
         div()
             .size_full()

@@ -59,6 +59,14 @@ impl TrackingRepo {
             .insert(name.to_string());
     }
 
+    /// Checks out `name` behind the store's back, as another tool would.
+    pub(super) fn set_current_branch_externally(&self, name: &str) {
+        *self
+            .current_branch
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = name.to_string();
+    }
+
     pub(super) fn block_worktree_removal(&self, blocker: WorktreeRemovalBlocker) {
         *self
             .worktree_removal_blocker
@@ -458,6 +466,35 @@ impl GitRepository for TrackingRepo {
         Ok(CommandOutput::empty_success("git cherry-pick"))
     }
 
+    fn update_refs_with_output(
+        &self,
+        updates: &[gitcomet_core::services::RefUpdate],
+    ) -> Result<CommandOutput> {
+        for update in updates {
+            let expected = update
+                .expected
+                .as_ref()
+                .map_or("absent".to_string(), |id| id.as_ref().to_string());
+            self.actions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(format!(
+                    "update-ref:{}:{expected}->{}",
+                    update.reference,
+                    update.new.as_ref()
+                ));
+        }
+        Ok(CommandOutput::empty_success("git update-ref"))
+    }
+
+    fn merge_ref_with_output(&self, reference: &str) -> Result<CommandOutput> {
+        self.actions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(format!("merge:{reference}"));
+        Ok(CommandOutput::empty_success("git merge"))
+    }
+
     fn stash_create(&self, message: &str, include_untracked: bool) -> Result<()> {
         self.actions
             .lock()
@@ -477,15 +514,28 @@ impl GitRepository for TrackingRepo {
         Ok(result)
     }
 
-    fn stash_apply(&self, _index: usize) -> Result<()> {
+    fn stash_apply(&self, index: usize) -> Result<()> {
+        self.actions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(format!("stash-apply:{index}"));
         Ok(())
     }
 
-    fn stash_drop(&self, _index: usize) -> Result<()> {
+    fn stash_drop(&self, index: usize) -> Result<()> {
+        self.actions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(format!("stash-drop:{index}"));
         Ok(())
     }
 
-    fn stage(&self, _paths: &[&Path]) -> Result<()> {
+    fn stage(&self, paths: &[&Path]) -> Result<()> {
+        let paths: Vec<_> = paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        self.record(format!("stage:{}", paths.join(",")));
         Ok(())
     }
 
@@ -495,8 +545,9 @@ impl GitRepository for TrackingRepo {
 
     fn commit_with_outcome(
         &self,
-        _message: &str,
+        message: &str,
     ) -> Result<gitcomet_core::services::CommitOperationOutcome> {
+        self.record(format!("commit:{message}"));
         Ok(gitcomet_core::services::CommitOperationOutcome::default())
     }
 
@@ -549,8 +600,22 @@ impl GitRepository for TrackingRepo {
         ))
     }
 
-    fn discard_worktree_changes(&self, _paths: &[&Path]) -> Result<()> {
+    fn discard_worktree_changes(&self, paths: &[&Path]) -> Result<()> {
+        let mut paths: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+        paths.sort();
+        self.actions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(format!("discard:{}", paths.join(",")));
         Ok(())
+    }
+
+    fn delete_tag_with_output(&self, name: &str) -> Result<CommandOutput> {
+        self.actions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(format!("delete-tag:{name}"));
+        Ok(CommandOutput::empty_success("git tag -d"))
     }
 
     fn create_tag_with_output(
@@ -4152,4 +4217,48 @@ fn pinned_branch_group_actions_use_the_shared_branch_filter(cx: &mut gpui::TestA
         |_| {},
     );
     assert_eq!(remote, vec!["feat/a".to_string()]);
+}
+
+/// The palette's "Merge into Current Branch": picking a branch merges it.
+#[gpui::test]
+fn the_merge_picker_merges_the_chosen_branch(cx: &mut gpui::TestAppContext) {
+    let (store, events, repo, _workdir) = create_tracking_store("merge-picker");
+    repo.add_branch("feature");
+    let repo_id = store.snapshot().active_repo.expect("active repository");
+    store.dispatch(Msg::RefreshBranches { repo_id });
+    wait_until("feature branch listed", || {
+        store.snapshot().repos.iter().any(|r| {
+            r.id == repo_id
+                && matches!(&r.branches, Loadable::Ready(list) if list.iter().any(|b| b.name == "feature"))
+        })
+    });
+    let store_for_view = store.clone();
+    let (view, cx) = cx
+        .add_window_view(|window, cx| GitCometView::new(store_for_view, events, None, window, cx));
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            crate::view::test_support::sync_store_snapshot(this, cx);
+            this.popover_host.update(cx, |host, cx| {
+                host.open_popover_at(
+                    PopoverKind::BranchPicker {
+                        purpose: BranchPickerPurpose::Merge,
+                    },
+                    gpui::point(gpui::px(120.0), gpui::px(72.0)),
+                    window,
+                    cx,
+                );
+            });
+        });
+    });
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+
+    // The current branch is left out, so the one row is "feature".
+    assert!(cx.debug_bounds("picker_prompt_item_1").is_none());
+    click_debug_selector(cx, "picker_prompt_item_0");
+    cx.run_until_parked();
+    wait_until("merge dispatched", || {
+        repo.actions() == vec!["merge:feature".to_string()]
+    });
 }

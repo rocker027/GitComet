@@ -106,6 +106,8 @@ impl SidebarPaneView {
                 cx.listener(|this, _, window, cx| this.explorer_background_click(window, cx)),
             )
             .track_focus(&self.explorer_focus)
+            // The Files explorer keeps Cmd/Ctrl-Z for its own file undo.
+            .key_context("FileExplorer")
             .capture_key_down(cx.listener(Self::explorer_key_down))
             .on_pointer_click(
                 MouseButton::Right,

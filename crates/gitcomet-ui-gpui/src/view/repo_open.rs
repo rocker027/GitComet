@@ -338,6 +338,21 @@ impl GitCometView {
         self.activate_repo_tab_in_direction(RepoTabDirection::Next, cx)
     }
 
+    /// Activates the `index`th repository tab (0-based), if there is one.
+    pub(crate) fn activate_repo_tab_at(
+        &mut self,
+        index: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(repo_id) = self.state.repos.get(index).map(|repo| repo.id) else {
+            return false;
+        };
+        if self.state.active_repo == Some(repo_id) {
+            return true;
+        }
+        self.activate_repo(repo_id, cx)
+    }
+
     fn repo_id_for_path(&self, path: &std::path::Path) -> Option<RepoId> {
         self.state
             .repos

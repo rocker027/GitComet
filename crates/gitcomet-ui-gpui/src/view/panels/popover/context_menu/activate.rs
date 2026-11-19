@@ -654,6 +654,15 @@ impl PopoverHost {
                 );
                 return;
             }
+            ContextMenuAction::EditCommitMessage { repo_id, commit_id } => {
+                let _ = self.root_view.request(
+                    RootRequest::EditCommitMessage { repo_id, commit_id },
+                    Some(window),
+                    cx,
+                );
+                // The editor takes the focus; the invoker must not take it back.
+                restore_invoker_focus_after_action = false;
+            }
             ContextMenuAction::RevertCommit { repo_id, commit_id } => {
                 let anchor = self.popover_anchor_point();
                 self.open_popover_at(
@@ -1479,8 +1488,20 @@ impl PopoverHost {
                     );
                 }
             }
+            // Deleting a tag asks first, from every menu that offers it.
             ContextMenuAction::DeleteTag { repo_id, name } => {
-                self.store.dispatch(Msg::DeleteTag { repo_id, name });
+                let anchor = self.popover_anchor_point();
+                self.open_popover_at(
+                    PopoverKind::DeleteTagConfirm {
+                        repo_id,
+                        name,
+                        remote: None,
+                    },
+                    anchor,
+                    window,
+                    cx,
+                );
+                return;
             }
             ContextMenuAction::PushTag {
                 repo_id,
@@ -1498,11 +1519,18 @@ impl PopoverHost {
                 remote,
                 name,
             } => {
-                self.store.dispatch(Msg::DeleteRemoteTag {
-                    repo_id,
-                    remote,
-                    name,
-                });
+                let anchor = self.popover_anchor_point();
+                self.open_popover_at(
+                    PopoverKind::DeleteTagConfirm {
+                        repo_id,
+                        name,
+                        remote: Some(remote),
+                    },
+                    anchor,
+                    window,
+                    cx,
+                );
+                return;
             }
         }
         // A menu floating over a picker is not the popover: it closed itself on

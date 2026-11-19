@@ -122,6 +122,26 @@ fn semantic_conflict_navigation_handles_automatic_deltas_and_projection_rebuilds
             )
         },
     );
+    // Cmd/Ctrl-3 is also the third repository tab's shortcut; while the
+    // resolver is shown it still picks, toggling Theirs back off.
+    cx.simulate_keystrokes("secondary-3");
+    wait_for_main_pane_condition(
+        cx,
+        &view,
+        "secondary-3 picks instead of switching repository tabs",
+        |pane| {
+            pane.conflict_resolver_active_pick_state()
+                .is_some_and(|(_, selected)| {
+                    !selected.contains(&crate::view::conflict_resolver::ConflictChoice::Theirs)
+                })
+        },
+        |pane| {
+            format!(
+                "active pick state={:?}",
+                pane.conflict_resolver_active_pick_state()
+            )
+        },
+    );
     assert!(!can_prev_conflict);
     assert!(can_next_conflict);
     assert!(!can_first);

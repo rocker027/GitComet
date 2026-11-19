@@ -23,6 +23,16 @@ pub(in crate::view) fn commit_reword_availability(
     repo: &RepoState,
     details: &CommitDetails,
 ) -> CommitRewordAvailability {
+    commit_reword_availability_for_commit(repo, &details.id, details.parent_ids.len())
+}
+
+/// [`commit_reword_availability`] from a commit's id and parent count, so a
+/// history row's menu can offer the edit before the details have loaded.
+pub(in crate::view) fn commit_reword_availability_for_commit(
+    repo: &RepoState,
+    commit_id: &CommitId,
+    parent_count: usize,
+) -> CommitRewordAvailability {
     // The reducer refuses a bare repository's reword before recording the
     // request, which would leave the submitted editor waiting.
     if repo.is_bare() {
@@ -37,13 +47,13 @@ pub(in crate::view) fn commit_reword_availability(
             published_on: None,
         };
     }
-    let position = repo.first_parent_position_from_head(&details.id);
+    let position = repo.first_parent_position_from_head(commit_id);
     let blocker = match position {
         FirstParentPosition::Linear { distance: 0 } => None,
-        _ if details.parent_ids.len() > 1 => {
+        _ if parent_count > 1 => {
             Some("A merge commit's message can only be edited while it is HEAD")
         }
-        FirstParentPosition::Linear { .. } if details.parent_ids.is_empty() => {
+        FirstParentPosition::Linear { .. } if parent_count == 0 => {
             Some("The root commit's message can only be edited while it is HEAD")
         }
         FirstParentPosition::Linear { .. } => uncommitted_changes_blocker(repo),
@@ -252,8 +262,24 @@ impl DetailsPaneView {
         if availability.blocker.is_some() {
             return;
         }
-        let Some(details) = self.loaded_commit_details(repo_id, commit_id) else {
+        if !self.start_commit_reword_draft(repo_id, commit_id, cx) {
             return;
+        }
+        let focus = self.commit_reword_input.read(cx).focus_handle();
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Opens the editor on the loaded details of `commit_id`; false when they
+    /// have not loaded yet.
+    fn start_commit_reword_draft(
+        &mut self,
+        repo_id: RepoId,
+        commit_id: &CommitId,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(details) = self.loaded_commit_details(repo_id, commit_id) else {
+            return false;
         };
         let message = details.message.clone();
         self.commit_reword = Some(CommitRewordDraft {
@@ -271,9 +297,72 @@ impl DetailsPaneView {
         });
         self.commit_reword_scroll
             .set_offset(point(px(0.0), px(0.0)));
-        let focus = self.commit_reword_input.read(cx).focus_handle();
-        window.focus(&focus, cx);
-        cx.notify();
+        true
+    }
+
+    fn selected_commit(&self, repo_id: RepoId) -> Option<CommitId> {
+        self.state
+            .repos
+            .iter()
+            .find(|repo| repo.id == repo_id)
+            .and_then(|repo| repo.history_state.selected_commit.clone())
+    }
+
+    /// Edit `commit_id`'s message from elsewhere, such as the history row's
+    /// menu: at once when its details are shown, otherwise once they load.
+    pub(in crate::view) fn request_commit_reword(
+        &mut self,
+        repo_id: RepoId,
+        commit_id: CommitId,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.commit_reword_is_editing(repo_id, &commit_id) {
+            // Already open: keep the draft and just return to it.
+            self.pending_commit_reword = None;
+            let focus = self.commit_reword_input.read(cx).focus_handle();
+            window.focus(&focus, cx);
+        } else if self.loaded_commit_details(repo_id, &commit_id).is_some() {
+            self.pending_commit_reword = None;
+            self.begin_commit_reword(repo_id, &commit_id, window, cx);
+        } else {
+            // Snapshots published before the store selects the commit still
+            // show this selection; only a third commit cancels the request.
+            let selected_when_asked = self.selected_commit(repo_id);
+            self.pending_commit_reword = Some((repo_id, commit_id, selected_when_asked));
+        }
+    }
+
+    /// Starts a requested edit once its commit's details arrive; a different
+    /// selection drops the request. Focus moves on the next render.
+    pub(in crate::view) fn resolve_pending_commit_reword(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some((repo_id, commit_id, selected_when_asked)) = self.pending_commit_reword.clone()
+        else {
+            return;
+        };
+        let selected = self.selected_commit(repo_id);
+        if selected.as_ref() != Some(&commit_id) {
+            if selected != selected_when_asked {
+                self.pending_commit_reword = None;
+            }
+            return;
+        }
+        // Not loaded yet: keep waiting. Loaded but blocked: the details show
+        // the disabled edit button with the reason, so stop waiting.
+        let Some(availability) = self.commit_reword_availability_for(repo_id, &commit_id) else {
+            return;
+        };
+        self.pending_commit_reword = None;
+        if let Some(blocker) = availability.blocker {
+            use crate::view::gitcomet_view_requests::{RootRequest, RootRequests as _};
+            let _ = self.root_view.request(
+                RootRequest::Toast(components::ToastKind::Warning, blocker.to_string()),
+                None,
+                cx,
+            );
+        } else if self.start_commit_reword_draft(repo_id, &commit_id, cx) {
+            self.commit_reword_focus_pending = true;
+        }
     }
 
     /// Drops the draft and hands focus back to the history list, where the

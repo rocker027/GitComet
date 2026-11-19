@@ -34,13 +34,20 @@ macro_rules! commands {
 
 commands! {
     Commit => "commit",
+    StageAllAndCommit => "stage-all-and-commit",
+    UndoGitOperation => "undo",
+    RedoGitOperation => "redo",
+    FocusCommitMessage => "focus-commit-message",
     StageAll => "stage-all",
     UnstageAll => "unstage-all",
+    DiscardAll => "discard-all",
     CreateBranch => "create-branch",
     CheckoutBranch => "checkout-branch",
     DeleteBranch => "delete-branch",
+    DeleteRemoteBranch => "delete-remote-branch",
     RenameBranch => "rename-branch",
     Rebase => "rebase",
+    Merge => "merge",
     PruneMergedBranches => "prune-merged-branches",
     AbortMerge => "abort-merge",
     ContinueRebase => "continue-rebase",
@@ -77,9 +84,11 @@ commands! {
     LocateFileInExplorer => "locate-file-in-explorer",
     RevealCommit => "reveal-commit",
     OpenActiveViewSearch => "open-active-view-search",
+    SearchCommits => "search-commits",
     Back => "back",
     Forward => "forward",
     CreateTag => "create-tag",
+    DeleteTag => "delete-tag",
     PruneLocalTags => "prune-local-tags",
     NewWindow => "new-window",
     OpenWorkspace => "open-workspace",
@@ -97,10 +106,14 @@ commands! {
     CheckForUpdates => "check-for-updates",
     InstallDesktopIntegration => "install-desktop-integration",
     AddRemote => "add-remote",
+    EditRemoteUrl => "edit-remote-url",
     OpenRemoteInBrowser => "open-remote-in-browser",
     AddSubmodule => "add-submodule",
     UpdateSubmodules => "update-submodules",
     AddWorktree => "add-worktree",
+    RemoveWorktree => "remove-worktree",
+    RemoveSubmodule => "remove-submodule",
+    RemoveRemote => "remove-remote",
     Blame => "blame",
     ShowReflog => "show-reflog",
     FileHistory => "file-history",
@@ -129,10 +142,14 @@ impl Command {
         use gitcomet_core::domain::RepositoryRequirement::{Repository, WorkingTree};
         match self {
             Self::Commit
+            | Self::StageAllAndCommit
+            | Self::FocusCommitMessage
             | Self::StageAll
             | Self::UnstageAll
+            | Self::DiscardAll
             | Self::CheckoutBranch
             | Self::Rebase
+            | Self::Merge
             | Self::AbortMerge
             | Self::ContinueRebase
             | Self::AbortRebase
@@ -142,6 +159,7 @@ impl Command {
             | Self::StashDrop
             | Self::ApplyPatch
             | Self::AddSubmodule
+            | Self::RemoveSubmodule
             | Self::UpdateSubmodules
             | Self::LfsDownloadAll
             | Self::AnnexAdjustUnlocked
@@ -149,6 +167,10 @@ impl Command {
             | Self::AnnexWebapp => WorkingTree,
             Self::CreateBranch
             | Self::DeleteBranch
+            | Self::DeleteRemoteBranch
+            | Self::UndoGitOperation
+            | Self::RedoGitOperation
+            | Self::DeleteTag
             | Self::RenameBranch
             | Self::PruneMergedBranches
             // Bare git-annex repositories pull through git-annex; `Needs::Pull` decides.
@@ -157,6 +179,7 @@ impl Command {
             | Self::ForcePush
             | Self::PushWithAnnotatedTags
             | Self::PushWithAllTags
+            | Self::SearchCommits
             | Self::OpenRepository
             | Self::SwitchRepository
             | Self::CloneRepository
@@ -199,8 +222,11 @@ impl Command {
             | Self::CheckForUpdates
             | Self::InstallDesktopIntegration
             | Self::AddRemote
+            | Self::EditRemoteUrl
             | Self::OpenRemoteInBrowser
             | Self::AddWorktree
+            | Self::RemoveWorktree
+            | Self::RemoveRemote
             | Self::Blame
             | Self::ShowReflog
             | Self::FileHistory
@@ -243,6 +269,6 @@ mod tests {
     #[test]
     fn extension_and_unknown_ids_are_not_commands() {
         assert_eq!(Command::from_id("extension:review/mark"), None);
-        assert_eq!(Command::from_id("merge"), None);
+        assert_eq!(Command::from_id("not-a-command"), None);
     }
 }

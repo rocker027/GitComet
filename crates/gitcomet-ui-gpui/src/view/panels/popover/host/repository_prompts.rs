@@ -256,12 +256,11 @@ impl PopoverHost {
 
     pub(in crate::view::panels::popover) fn can_submit_stash(
         &self,
-        cx: &mut gpui::Context<Self>,
+        _cx: &mut gpui::Context<Self>,
     ) -> bool {
+        // The message is optional, as in GitKraken: Git names an unnamed
+        // stash "WIP on <branch>".
         self.active_repo_id().is_some()
-            && self
-                .stash_message_input
-                .read_with(cx, |input, _| !input.text().trim().is_empty())
     }
 
     pub(in crate::view::panels::popover) fn submit_commit_prompt(
@@ -281,6 +280,12 @@ impl PopoverHost {
         if message.is_empty() {
             return;
         }
+        // Like the Commit button: with nothing staged, every change is
+        // staged first.
+        let stage_paths = self
+            .active_repo()
+            .and_then(|repo| stage_all_commit_paths(repo, false).ok())
+            .unwrap_or_default();
         let pending = PendingCommit::new(&self.state, repo_id, false, message.clone().into());
         self.store.dispatch(Msg::Commit {
             repo_id,
@@ -289,6 +294,7 @@ impl PopoverHost {
                 amend: false,
                 push_after_commit: false,
                 hooks: gitcomet_core::services::GitHooks::Run,
+                stage_paths,
             },
         });
         self.pending_commit_prompts.insert(repo_id, pending);
@@ -368,7 +374,8 @@ impl PopoverHost {
                 && (repo
                     .staged_status_entries()
                     .is_some_and(|entries| !entries.is_empty())
-                    || merge_in_progress(repo))
+                    || merge_in_progress(repo)
+                    || stage_all_commit_paths(repo, false).is_ok())
         }) && self
             .commit_prompt_message_input
             .read_with(cx, |input, _| !input.text().trim().is_empty())
@@ -385,14 +392,11 @@ impl PopoverHost {
         let message = self
             .stash_message_input
             .read_with(cx, |input, _| input.text().trim().to_string());
-        if message.is_empty() {
-            return;
-        }
 
         self.store.dispatch(Msg::Stash {
             repo_id,
             message,
-            include_untracked: true,
+            include_untracked: self.stash_include_untracked,
         });
         self.dismiss_inline_popover(window, cx);
     }

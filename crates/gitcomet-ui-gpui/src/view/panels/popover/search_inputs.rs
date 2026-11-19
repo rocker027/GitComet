@@ -905,7 +905,10 @@ fn ref_rows_spec(this: &PopoverHost) -> branch_picker::RefRowsSpec {
             ..
         }) => branch_picker::RefRowsSpec::source_ref(),
         Some(PopoverKind::BranchPicker {
-            purpose: BranchPickerPurpose::Delete | BranchPickerPurpose::RebaseOnto,
+            purpose:
+                BranchPickerPurpose::Delete
+                | BranchPickerPurpose::RebaseOnto
+                | BranchPickerPurpose::Merge,
         }) => branch_picker::RefRowsSpec::branches(true),
         _ => branch_picker::RefRowsSpec::branches(false),
     }

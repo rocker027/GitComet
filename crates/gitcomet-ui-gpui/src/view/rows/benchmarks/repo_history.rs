@@ -593,7 +593,12 @@ pub(in crate::view) fn hash_branch_sidebar_rows(rows: &[BranchSidebarRow]) -> u6
             | BranchSidebarRow::AnnexPlaceholder { .. }
             | BranchSidebarRow::AnnexRepositoryItem { .. }
             | BranchSidebarRow::StashHeader { .. }
-            | BranchSidebarRow::StashPlaceholder { .. } => {}
+            | BranchSidebarRow::StashPlaceholder { .. }
+            | BranchSidebarRow::TagsHeader { .. } => {}
+            BranchSidebarRow::TagItem { name, target } => {
+                name.len().hash(&mut h);
+                target.hash(&mut h);
+            }
         }
     }
     h.finish()

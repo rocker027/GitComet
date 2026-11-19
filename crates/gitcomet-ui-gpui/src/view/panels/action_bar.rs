@@ -106,6 +106,47 @@ fn secondary_action_label(
     }
 }
 
+/// What the toolbar Pop button would restore: the newest stash
+/// (`stash@{0}`), or why there is nothing it can pop. The list only shapes
+/// the tooltip: it loads with the sidebar, and `stash@{0}` is the newest
+/// stash whether or not the list has loaded, so only a loaded empty list
+/// disables the button.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum StashPopTarget {
+    Ready { index: usize, tooltip: String },
+    Unavailable(&'static str),
+}
+
+fn stash_pop_target(repo: Option<&RepoState>) -> StashPopTarget {
+    let Some(repo) = repo else {
+        return StashPopTarget::Unavailable("No stashes to pop");
+    };
+    if repo.is_bare() {
+        return StashPopTarget::Unavailable(gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE);
+    }
+    let Loadable::Ready(stashes) = &repo.stashes else {
+        return StashPopTarget::Ready {
+            index: 0,
+            tooltip: "Pop the newest stash".to_string(),
+        };
+    };
+    match stashes.iter().min_by_key(|entry| entry.index) {
+        Some(entry) => {
+            let reference = format!("stash@{{{}}}", entry.index);
+            let tooltip = if entry.message.is_empty() {
+                format!("Pop {reference}")
+            } else {
+                format!("Pop {reference}: {}", entry.message)
+            };
+            StashPopTarget::Ready {
+                index: entry.index,
+                tooltip,
+            }
+        }
+        None => StashPopTarget::Unavailable("No stashes to pop"),
+    }
+}
+
 pub(in super::super) fn action_bar_height<C>(cx: &mut C) -> Pixels
 where
     C: std::borrow::BorrowMut<gpui::App>,
@@ -285,6 +326,10 @@ impl ActionBarView {
             repo.upstream_divergence_rev.hash(&mut hasher);
             repo.merge_message_rev.hash(&mut hasher);
             repo.ops_rev.hash(&mut hasher);
+            // Undo / Redo follow the operation journal.
+            repo.git_undo.summary().hash(&mut hasher);
+            // Pop's availability and tooltip follow the stash list.
+            repo.stashes_rev.hash(&mut hasher);
             repo.status_cache_rev().hash(&mut hasher);
             // The historical-browse badge keys off the file browser source. Not
             // `file_browser_rev`: that moves on every sidebar search keystroke.
@@ -832,6 +877,76 @@ impl BarItemOwner for ActionBarView {
                 )
                 .into(),
             );
+        // Undo / Redo of Git operations, as in GitKraken's toolbar.
+        let git_undo_repo = self.active_repo_id();
+        let git_undo_button = |id: &'static str,
+                               direction: gitcomet_state::model::GitUndoDirection,
+                               cx: &mut gpui::Context<Self>| {
+            let (icon_path, keys) = match direction {
+                gitcomet_state::model::GitUndoDirection::Undo => ("icons/undo.svg", "Z"),
+                gitcomet_state::model::GitUndoDirection::Redo => ("icons/redo.svg", "Shift+Z"),
+            };
+            let repo = self.active_repo();
+            let unavailable = repo.map_or(Some("Open a repository first"), |repo| {
+                crate::view::git_undo_unavailable(repo, direction)
+            });
+            let label = repo
+                .and_then(|repo| repo.git_undo.next(direction))
+                .map(|entry| entry.label.clone());
+            let verb = match direction {
+                gitcomet_state::model::GitUndoDirection::Undo => "Undo",
+                gitcomet_state::model::GitUndoDirection::Redo => "Redo",
+            };
+            let tooltip: SharedString = match (unavailable, label) {
+                (Some(reason), _) => reason.into(),
+                (None, Some(label)) => format!(
+                    "{verb} {label} ({})",
+                    crate::kit::components::secondary_shortcut(keys)
+                )
+                .into(),
+                (None, None) => verb.into(),
+            };
+            div().debug_selector(move || id.to_string()).child(
+                components::Button::new(id, "")
+                    .start_slot(icon(
+                        icon_path,
+                        if unavailable.is_none() {
+                            theme.colors.foreground.primary
+                        } else {
+                            theme.colors.foreground.secondary
+                        },
+                    ))
+                    .style(components::ButtonStyle::Transparent)
+                    .disabled(unavailable.is_some())
+                    .on_click(theme, cx, move |this, e, _w, cx| {
+                        if e.click_count() > 1 {
+                            return;
+                        }
+                        if let Some(repo_id) = git_undo_repo {
+                            this.store.dispatch(match direction {
+                                gitcomet_state::model::GitUndoDirection::Undo => {
+                                    Msg::UndoGitOperation { repo_id }
+                                }
+                                gitcomet_state::model::GitUndoDirection::Redo => {
+                                    Msg::RedoGitOperation { repo_id }
+                                }
+                            });
+                            cx.notify();
+                        }
+                    })
+                    .gitcomet_tooltip(theme, tooltip),
+            )
+        };
+        let git_undo = git_undo_button(
+            "git_undo",
+            gitcomet_state::model::GitUndoDirection::Undo,
+            cx,
+        );
+        let git_redo = git_undo_button(
+            "git_redo",
+            gitcomet_state::model::GitUndoDirection::Redo,
+            cx,
+        );
         let global_nav = div()
             .id("global_nav")
             .debug_selector(|| "global_nav".to_string())
@@ -840,7 +955,9 @@ impl BarItemOwner for ActionBarView {
             .gap(scaled_px(2.0))
             .flex_none()
             .child(nav_back)
-            .child(nav_forward);
+            .child(nav_forward)
+            .child(git_undo)
+            .child(git_redo);
 
         // Workspace (worktree) and branch badges show the current state at a
         // glance, with each opening a filterable picker.
@@ -1168,32 +1285,72 @@ impl BarItemOwner for ActionBarView {
             .active_context_menu_invoker
             .as_ref()
             .is_some_and(|id| id.as_ref() == stash_prompt_invoker.as_ref());
-        let stash = div().debug_selector(|| "stash".to_string()).child(
-            components::Button::new("stash", action_label("Stash"))
-                .start_slot(icon(crate::view::icons::STASH_ICON_PATH, icon_primary))
+        // Pop restores the newest stash in one click, beside Stash, so saving
+        // and restoring work in progress use the same toolbar group.
+        let pop_target = stash_pop_target(self.active_repo());
+        let pop_repo_id = self.active_repo_id();
+        // Like the status panel's buttons, wait for the running local action.
+        let pop_busy = self
+            .active_repo()
+            .is_some_and(|repo| repo.local_actions_in_flight > 0);
+        let pop_index = match &pop_target {
+            StashPopTarget::Ready { index, .. } => Some(*index),
+            StashPopTarget::Unavailable(_) => None,
+        };
+        let pop_tooltip: SharedString = match pop_target {
+            StashPopTarget::Ready { tooltip, .. } => tooltip.into(),
+            StashPopTarget::Unavailable(reason) => reason.into(),
+        };
+        let stash_pop = div().debug_selector(|| "stash_pop".to_string()).child(
+            components::Button::new("stash_pop", action_label("Pop"))
+                .start_slot(icon("icons/arrow_up.svg", icon_primary))
                 .style(components::ButtonStyle::Subtle)
-                .open(stash_prompt_active)
-                .selected_bg(menu_selected_bg)
-                .disabled(!can_stash)
-                .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
-                    this.open_popover_for_bounds(
-                        PopoverKind::StashPrompt.invoked_by(stash_prompt_invoker.clone()),
-                        bounds,
-                        window,
-                        cx,
-                    );
+                .disabled(pop_index.is_none() || pop_repo_id.is_none() || pop_busy)
+                .on_click(theme, cx, move |this, e, _window, cx| {
+                    // A double click must not pop twice before the list reloads.
+                    if e.click_count() > 1 {
+                        return;
+                    }
+                    if let (Some(repo_id), Some(index)) = (pop_repo_id, pop_index) {
+                        this.store.dispatch(Msg::PopStash { repo_id, index });
+                        this.store.dispatch(Msg::LoadStashes { repo_id });
+                        cx.notify();
+                    }
                 })
-                .gitcomet_tooltip(
-                    theme,
-                    if is_bare {
-                        gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE.into()
-                    } else if can_stash {
-                        "Create stash".into()
-                    } else {
-                        "No changes to stash".into()
-                    },
-                ),
+                .gitcomet_tooltip(theme, pop_tooltip),
         );
+        let stash = div()
+            .debug_selector(|| "stash".to_string())
+            .flex()
+            .items_center()
+            .gap(tracking_action_gap)
+            .child(
+                components::Button::new("stash", action_label("Stash"))
+                    .start_slot(icon(crate::view::icons::STASH_ICON_PATH, icon_primary))
+                    .style(components::ButtonStyle::Subtle)
+                    .open(stash_prompt_active)
+                    .selected_bg(menu_selected_bg)
+                    .disabled(!can_stash)
+                    .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
+                        this.open_popover_for_bounds(
+                            PopoverKind::StashPrompt.invoked_by(stash_prompt_invoker.clone()),
+                            bounds,
+                            window,
+                            cx,
+                        );
+                    })
+                    .gitcomet_tooltip(
+                        theme,
+                        if is_bare {
+                            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE.into()
+                        } else if can_stash {
+                            "Create stash".into()
+                        } else {
+                            "No changes to stash".into()
+                        },
+                    ),
+            )
+            .child(stash_pop);
 
         let create_branch_invoker: SharedString = "create_branch_btn".into();
         let create_branch_active = self
@@ -1555,6 +1712,73 @@ mod tests {
     use gitcomet_core::domain::Upstream;
     use std::path::PathBuf;
 
+    fn stash_entry(index: usize, message: &str) -> gitcomet_core::domain::StashEntry {
+        gitcomet_core::domain::StashEntry {
+            index,
+            id: gitcomet_core::domain::CommitId(format!("{index:040x}").into()),
+            message: message.into(),
+            created_at: None,
+        }
+    }
+
+    fn repo_with_stashes(
+        stashes: Loadable<Arc<Vec<gitcomet_core::domain::StashEntry>>>,
+    ) -> RepoState {
+        let mut repo = RepoState::new_opening(
+            RepoId(7),
+            RepoSpec {
+                workdir: PathBuf::from("/tmp/stash-pop"),
+            },
+        );
+        repo.stashes = stashes;
+        repo
+    }
+
+    #[test]
+    fn stash_pop_targets_the_newest_stash() {
+        let repo = repo_with_stashes(Loadable::Ready(Arc::new(vec![
+            stash_entry(1, "older"),
+            stash_entry(0, "WIP on main"),
+        ])));
+        assert_eq!(
+            stash_pop_target(Some(&repo)),
+            StashPopTarget::Ready {
+                index: 0,
+                tooltip: "Pop stash@{0}: WIP on main".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn stash_pop_is_unavailable_without_stashes_or_a_working_tree() {
+        assert_eq!(
+            stash_pop_target(None),
+            StashPopTarget::Unavailable("No stashes to pop")
+        );
+        let empty = repo_with_stashes(Loadable::Ready(Arc::new(Vec::new())));
+        assert_eq!(
+            stash_pop_target(Some(&empty)),
+            StashPopTarget::Unavailable("No stashes to pop")
+        );
+        // An unloaded list (the sidebar loads it) still pops stash@{0}.
+        for unloaded in [Loadable::Loading, Loadable::NotLoaded] {
+            let repo = repo_with_stashes(unloaded);
+            assert_eq!(
+                stash_pop_target(Some(&repo)),
+                StashPopTarget::Ready {
+                    index: 0,
+                    tooltip: "Pop the newest stash".to_string(),
+                }
+            );
+        }
+        let mut bare = repo_with_stashes(Loadable::Ready(Arc::new(vec![stash_entry(0, "WIP")])));
+        bare.repository_mode = Some(gitcomet_core::domain::RepositoryMode::Bare);
+        assert_eq!(
+            stash_pop_target(Some(&bare)),
+            StashPopTarget::Unavailable(gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE)
+        );
+    }
+
     #[test]
     fn sequencer_banner_names_each_paused_operation() {
         use gitcomet_core::services::SequencerState;
@@ -1782,6 +2006,24 @@ mod tests {
             "Push 2 ahead\norigin/main"
         );
         assert_eq!(push_tooltip_text(0, None).as_ref(), "Push 0 ahead");
+    }
+
+    #[test]
+    fn notify_fingerprint_follows_the_stash_list() {
+        let repo_id = RepoId(1);
+        let mut state = AppState {
+            active_repo: Some(repo_id),
+            ..AppState::test_default()
+        };
+        state.repos.push(RepoState::new_opening(
+            repo_id,
+            RepoSpec {
+                workdir: PathBuf::from("/tmp/repo"),
+            },
+        ));
+        let before = ActionBarView::notify_fingerprint(&state);
+        state.repos[0].stashes_rev = state.repos[0].stashes_rev.wrapping_add(1);
+        assert_ne!(before, ActionBarView::notify_fingerprint(&state));
     }
 
     #[test]

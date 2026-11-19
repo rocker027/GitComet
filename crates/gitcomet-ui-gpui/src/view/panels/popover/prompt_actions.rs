@@ -113,6 +113,14 @@ impl PopoverHost {
                 index,
                 message,
             } => stash_drop_confirm::panel(self, repo_id, index, message, cx),
+            PopoverKind::DeleteTagConfirm {
+                repo_id,
+                name,
+                remote,
+            } => destructive_confirms::delete_tag_panel(self, repo_id, name, remote, cx),
+            PopoverKind::DiscardAllConfirm { repo_id } => {
+                destructive_confirms::discard_all_panel(self, repo_id, cx)
+            }
             PopoverKind::CloneRepo => clone_repo::panel(self, cx),
             PopoverKind::ResetPrompt {
                 repo_id,
@@ -149,6 +157,14 @@ impl PopoverHost {
                     ),
                     RemotePopoverKind::OpenInBrowserMenu => self.context_menu_view(
                         PopoverKind::remote(repo_id, RemotePopoverKind::OpenInBrowserMenu),
+                        cx,
+                    ),
+                    RemotePopoverKind::EditUrlMenu => self.context_menu_view(
+                        PopoverKind::remote(repo_id, RemotePopoverKind::EditUrlMenu),
+                        cx,
+                    ),
+                    RemotePopoverKind::RemoveMenu => self.context_menu_view(
+                        PopoverKind::remote(repo_id, RemotePopoverKind::RemoveMenu),
                         cx,
                     ),
                 },
@@ -515,6 +531,21 @@ impl PopoverHost {
             PopoverKind::BranchMenu { repo_id, target } => {
                 self.context_menu_view(PopoverKind::BranchMenu { repo_id, target }, cx)
             }
+            PopoverKind::RefPickerMenu { repo_id, purpose } => {
+                self.context_menu_view(PopoverKind::RefPickerMenu { repo_id, purpose }, cx)
+            }
+            PopoverKind::BranchDropMenu {
+                repo_id,
+                source,
+                target,
+            } => self.context_menu_view(
+                PopoverKind::BranchDropMenu {
+                    repo_id,
+                    source,
+                    target,
+                },
+                cx,
+            ),
             PopoverKind::BranchSectionMenu { repo_id, section } => {
                 self.context_menu_view(PopoverKind::BranchSectionMenu { repo_id, section }, cx)
             }

@@ -63,6 +63,11 @@ pub(crate) enum Needs {
     RemoteWebPage,
     /// "Check for updates" has a check to run.
     UpdateCheck,
+    /// There is a recorded Git operation to undo (or redo) and nothing runs.
+    GitUndo,
+    GitRedo,
+    /// Nothing is staged and every change can be staged and committed.
+    StageAllAndCommit,
     MacOs,
     Linux,
     /// Git can run `git lfs`.
@@ -108,6 +113,11 @@ pub(crate) struct PaletteContext {
     pub(crate) annex_adjusted: bool,
     /// "Check for updates" has a check to run, as the menus decide.
     pub(crate) update_check: bool,
+    /// Why Undo / Redo cannot run, as the toolbar buttons say.
+    pub(crate) git_undo_unavailable: Option<&'static str>,
+    pub(crate) git_redo_unavailable: Option<&'static str>,
+    /// Why "Stage All and Commit" cannot run, as the commit form decides.
+    pub(crate) stage_all_commit_unavailable: Option<&'static str>,
 }
 
 const GIT_LFS_MISSING: &str = "Install Git LFS where Git can find it first";
@@ -153,6 +163,9 @@ pub(crate) fn unavailable_reason(needs: Needs, ctx: &PaletteContext) -> Option<&
         Needs::Push => ctx.push_unavailable,
         Needs::RemoteWebPage => ctx.remote_web_page_unavailable,
         Needs::UpdateCheck => (!ctx.update_check).then_some("Update checks are not available here"),
+        Needs::GitUndo => ctx.git_undo_unavailable,
+        Needs::GitRedo => ctx.git_redo_unavailable,
+        Needs::StageAllAndCommit => ctx.stage_all_commit_unavailable,
         Needs::MacOs => (!cfg!(target_os = "macos")).then_some("Only available on macOS"),
         Needs::Linux => (!cfg!(any(target_os = "linux", target_os = "freebsd")))
             .then_some("Only available on Linux"),
@@ -206,6 +219,45 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::StageAllAndCommit.id(),
+        label: "Stage All and Commit",
+        shortcut: Shortcut::None,
+        category: "Commit",
+        keywords: "stage all changes commit untracked",
+        requires_repo: true,
+        needs: Needs::StageAllAndCommit,
+    },
+    CommandEntry {
+        id: Command::UndoGitOperation.id(),
+        label: "Undo Git Operation",
+        // Bound in `command_shortcuts`, away from text editing and the
+        // Files explorer's own undo.
+        shortcut: Shortcut::Secondary("Z"),
+        category: "Commit",
+        keywords: "undo revert last commit branch reset",
+        requires_repo: true,
+        needs: Needs::GitUndo,
+    },
+    CommandEntry {
+        id: Command::RedoGitOperation.id(),
+        label: "Redo Git Operation",
+        shortcut: Shortcut::Secondary("Shift+Z"),
+        category: "Commit",
+        keywords: "redo",
+        requires_repo: true,
+        needs: Needs::GitRedo,
+    },
+    CommandEntry {
+        id: Command::FocusCommitMessage.id(),
+        label: "Focus Commit Message",
+        // GitKraken's key for the commit message box.
+        shortcut: Shortcut::Keystrokes("secondary-shift-m"),
+        category: "Commit",
+        keywords: "commit message summary write type",
+        requires_repo: true,
+        needs: Needs::WorkingTree,
+    },
+    CommandEntry {
         id: Command::StageAll.id(),
         label: "Stage All Changes",
         shortcut: Shortcut::Keystrokes("secondary-alt-s"),
@@ -224,6 +276,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::DiscardAll.id(),
+        label: "Discard All Unstaged Changes…",
+        shortcut: Shortcut::None,
+        category: "Working Copy",
+        keywords: "discard all changes reset working tree revert clean",
+        requires_repo: true,
+        needs: Needs::WorkingTree,
+    },
+    CommandEntry {
         id: Command::CreateBranch.id(),
         label: "Create Branch",
         shortcut: Shortcut::Keystrokes("secondary-alt-n"),
@@ -237,7 +298,9 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         label: "Checkout Branch",
         shortcut: Shortcut::Keystrokes("secondary-alt-c"),
         category: "Branch",
-        keywords: "",
+        // The picker lists remote branches too, and checking one out creates
+        // its tracking branch.
+        keywords: "checkout remote branch tracking switch",
         requires_repo: true,
         needs: Needs::Nothing,
     },
@@ -247,6 +310,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         shortcut: Shortcut::None,
         category: "Branch",
         keywords: "",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::DeleteRemoteBranch.id(),
+        label: "Delete Remote Branch…",
+        shortcut: Shortcut::None,
+        category: "Branch",
+        keywords: "delete remote branch origin push",
         requires_repo: true,
         needs: Needs::Nothing,
     },
@@ -267,6 +339,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         keywords: "rebase onto history rewrite",
         requires_repo: true,
         needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::Merge.id(),
+        label: "Merge into Current Branch",
+        shortcut: Shortcut::None,
+        category: "Branch",
+        keywords: "merge branch ref integrate join",
+        requires_repo: true,
+        needs: Needs::WorkingTree,
     },
     CommandEntry {
         id: Command::PruneMergedBranches.id(),
@@ -606,6 +687,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::SearchCommits.id(),
+        label: "Search Commits",
+        shortcut: Shortcut::None,
+        category: "Navigation",
+        keywords: "find commit history message author sha graph",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
         id: Command::OpenActiveViewSearch.id(),
         label: "Search in Current View",
         shortcut: Shortcut::Secondary("F"),
@@ -638,6 +728,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         shortcut: Shortcut::None,
         category: "Tags",
         keywords: "",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::DeleteTag.id(),
+        label: "Delete Tag…",
+        shortcut: Shortcut::None,
+        category: "Tags",
+        keywords: "delete tag remove",
         requires_repo: true,
         needs: Needs::Nothing,
     },
@@ -798,6 +897,24 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::EditRemoteUrl.id(),
+        label: "Edit Remote URL",
+        shortcut: Shortcut::None,
+        category: "Remotes",
+        keywords: "remote url fetch change origin address",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::RemoveRemote.id(),
+        label: "Remove Remote…",
+        shortcut: Shortcut::None,
+        category: "Remotes",
+        keywords: "delete remote origin",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
         id: Command::OpenRemoteInBrowser.id(),
         label: crate::menu_labels::OPEN_REMOTE_IN_BROWSER,
         shortcut: Shortcut::Secondary("K"),
@@ -825,11 +942,31 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::RemoveSubmodule.id(),
+        label: "Remove Submodule…",
+        shortcut: Shortcut::None,
+        category: "Submodules",
+        keywords: "delete submodule",
+        requires_repo: true,
+        needs: Needs::WorkingTree,
+    },
+    CommandEntry {
         id: Command::AddWorktree.id(),
         label: "Add Worktree",
         shortcut: Shortcut::None,
         category: "Worktrees",
         keywords: "",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    // The removals below open the same picker and confirmation as their
+    // section menus; nothing is removed before that confirmation.
+    CommandEntry {
+        id: Command::RemoveWorktree.id(),
+        label: "Remove Worktree…",
+        shortcut: Shortcut::None,
+        category: "Worktrees",
+        keywords: "delete worktree",
         requires_repo: true,
         needs: Needs::Nothing,
     },
@@ -863,8 +1000,6 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         requires_repo: true,
         needs: Needs::Nothing,
     },
-    // TODO: "undo"              - Undo (Edit)
-    // TODO: "redo"              - Redo (Edit)
     CommandEntry {
         id: Command::KeyboardShortcuts.id(),
         label: "Keyboard Shortcuts",
@@ -874,16 +1009,6 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         requires_repo: false,
         needs: Needs::Nothing,
     },
-    // TODO: "search-commits"   - Search Commits (Navigation)
-    // TODO: "checkout-remote-branch" - Checkout Remote Branch
-    // TODO: "delete-remote-branch"   - Delete Remote Branch
-    // TODO: "merge"                  - Merge Branch/Ref
-    // TODO: "delete-tag"             - Delete Tag
-    // TODO: "remove-remote"          - Remove Remote
-    // TODO: "edit-remote-url"        - Edit Remote URL
-    // TODO: "remove-submodule"       - Remove Submodule
-    // TODO: "remove-worktree"        - Remove Worktree
-    // TODO: "discard-all"        - Discard All Changes (Working Copy)
     CommandEntry {
         id: Command::LfsDownloadAll.id(),
         label: "Download All LFS Content",
@@ -1863,6 +1988,22 @@ mod tests {
             ..ctx
         };
         assert_eq!(unavailable_reason(Needs::Sequencer, &idle), None);
+    }
+
+    #[test]
+    fn gitkraken_command_names_find_their_commands() {
+        for (query, id) in [
+            ("checkout remote", "checkout-branch"),
+            ("search commits", "search-commits"),
+            ("merge", "merge"),
+            ("edit remote url", "edit-remote-url"),
+        ] {
+            let ids = filtered_commands(true, query)
+                .iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>();
+            assert!(ids.contains(&id), "{query:?} should find {id}, got {ids:?}");
+        }
     }
 
     #[test]

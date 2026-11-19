@@ -1121,3 +1121,69 @@ fn distinct_non_utf8_worktree_paths_keep_distinct_row_keys() {
     }
     assert_eq!(keys[3].as_ref(), "w-a");
 }
+
+#[test]
+fn double_clicking_a_commit_checks_out_its_one_local_branch() {
+    use super::history_double_click_checkout;
+    use gitcomet_core::domain::{Branch, CommitId, RepoSpec, RepositoryMode, Worktree};
+    use gitcomet_state::model::{Loadable, RepoId, RepoState};
+    use std::sync::Arc;
+
+    let commit = |id: &str| CommitId(id.into());
+    let branch = |name: &str, target: &str| Branch {
+        name: name.to_string(),
+        target: commit(target),
+        upstream: None,
+        divergence: None,
+    };
+    let mut repo = RepoState::new_opening(
+        RepoId(4),
+        RepoSpec {
+            workdir: "/tmp/history-double-click".into(),
+        },
+    );
+    repo.repository_mode = Some(RepositoryMode::WorkingTree);
+    repo.head_branch = Loadable::Ready("main".to_string());
+    repo.branches = Loadable::Ready(Arc::new(vec![
+        branch("main", "c-main"),
+        branch("feature", "c-feature"),
+        branch("left", "c-shared"),
+        branch("right", "c-shared"),
+        branch("elsewhere", "c-elsewhere"),
+    ]));
+    repo.worktrees = Loadable::Ready(Arc::new(vec![Worktree {
+        bare: false,
+        path: "/tmp/history-double-click-other".into(),
+        head: None,
+        branch: Some("elsewhere".to_string()),
+        detached: false,
+    }]));
+
+    assert_eq!(
+        history_double_click_checkout(&repo, &commit("c-feature")).as_deref(),
+        Some("feature")
+    );
+    // Already checked out, several branches, none, or held by another worktree.
+    assert_eq!(
+        history_double_click_checkout(&repo, &commit("c-main")),
+        None
+    );
+    assert_eq!(
+        history_double_click_checkout(&repo, &commit("c-shared")),
+        None
+    );
+    assert_eq!(
+        history_double_click_checkout(&repo, &commit("c-none")),
+        None
+    );
+    assert_eq!(
+        history_double_click_checkout(&repo, &commit("c-elsewhere")),
+        None
+    );
+
+    repo.repository_mode = Some(RepositoryMode::Bare);
+    assert_eq!(
+        history_double_click_checkout(&repo, &commit("c-feature")),
+        None
+    );
+}
