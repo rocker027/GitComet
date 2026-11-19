@@ -85,7 +85,7 @@ const STATUS_HEADER_TITLE_CHAR_WIDTH_PX: f32 = 7.4;
 /// The header's own `px_2`, and the `gap_2` between the title and the action
 /// group and between the buttons themselves.
 const STATUS_HEADER_PAD_X_PX: f32 = 8.0;
-const STATUS_HEADER_GAP_PX: f32 = 8.0;
+pub(super) const STATUS_HEADER_GAP_PX: f32 = 8.0;
 /// A change-tracking dropdown title's `px_1` either side, its `gap_1`, and the
 /// 12px chevron.
 const STATUS_HEADER_DROPDOWN_EXTRA_PX: f32 = 24.0;

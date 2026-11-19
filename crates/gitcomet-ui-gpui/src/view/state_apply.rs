@@ -607,7 +607,13 @@ impl GitCometView {
         // does, takes the main slot back from the document viewer or an overlay.
         let uncover = (self.documents_active || self.canvas_overlay_shown())
             && canvas_requested(&self.state, next.as_ref());
+        let commit_selected = newly_selected_commit(&self.state, next.as_ref());
         self.state = next;
+        if commit_selected {
+            // The details pane shows the highlighted commit: a selection
+            // opens it, as closing it drops the selection.
+            self.set_details_collapsed(false, cx);
+        }
         if uncover {
             if self.documents_active {
                 self.show_repository_canvas(cx);
@@ -952,4 +958,18 @@ mod tests {
             vec![PathBuf::from("/tmp/repo-new")]
         );
     }
+}
+
+/// Whether `next` selects a commit in the active repository that `prev` did
+/// not: a new commit, the same one selected again, or another repository's
+/// selection after switching to it.
+fn newly_selected_commit(prev: &AppState, next: &AppState) -> bool {
+    let selection = |state: &AppState| {
+        let repo_id = state.active_repo?;
+        let repo = state.repos.iter().find(|repo| repo.id == repo_id)?;
+        repo.history_state.selected_commit.as_ref()?;
+        Some((repo_id, repo.history_state.selected_commit_rev))
+    };
+    let next_selection = selection(next);
+    next_selection.is_some() && next_selection != selection(prev)
 }

@@ -1937,6 +1937,18 @@ impl GitCometView {
         }
 
         self.details_collapsed = collapsed;
+        // The highlighted commit is the one the details pane shows, so closing
+        // the pane drops the selection; selecting a commit opens it again.
+        if collapsed
+            && let Some(repo) = self
+                .active_repo()
+                .filter(|repo| repo.history_state.selected_commit.is_some())
+        {
+            self.store.dispatch(Msg::ClearCommitSelection {
+                request_id: None,
+                repo_id: repo.id,
+            });
+        }
         // The cached bottom bar draws this toggle's icon. Notified by id: its own
         // toggle calls this from inside the bar's update.
         gpui::AppContext::notify(cx, self.bottom_status_bar.entity_id());

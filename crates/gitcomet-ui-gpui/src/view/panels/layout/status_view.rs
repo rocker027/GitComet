@@ -56,6 +56,17 @@ struct StatusSectionNames {
     empty_hint: (&'static str, &'static str),
 }
 
+impl StatusSectionNames {
+    fn is_top_section(self) -> bool {
+        matches!(
+            self.section,
+            StatusSection::CombinedUnstaged | StatusSection::Untracked
+        )
+    }
+}
+
+const STATUS_CLOSE_ICON_PX: f32 = 12.0;
+
 const COMBINED_UNSTAGED_NAMES: StatusSectionNames = StatusSectionNames {
     section: StatusSection::CombinedUnstaged,
     header_id: "unstaged_header",
@@ -230,18 +241,6 @@ impl DetailsPaneView {
             .current_status_sections_bounds()
             .map(|bounds| bounds.size.width)
             .unwrap_or(Pixels::MAX);
-        let labels_for =
-            |title_chars: usize, title_is_dropdown: bool, action_label_chars: &[usize]| {
-                status_action_labels_for_width(
-                    header_width,
-                    title_chars,
-                    title_is_dropdown,
-                    action_label_chars,
-                    local_actions_in_flight,
-                    ui_scale_percent,
-                    theme.metrics,
-                )
-            };
         let char_width = |label: &str| {
             label
                 .chars()
@@ -249,11 +248,26 @@ impl DetailsPaneView {
                 .sum::<usize>()
         };
         let count_chars = |word: &str, count: usize| char_width(word) + 3 + count.to_string().len();
-        let title_width =
-            |names: StatusSectionNames| char_width(text(cx, names.title.0, names.title.1));
-        let unstaged = title_width(COMBINED_UNSTAGED_NAMES);
-        let untracked = title_width(UNTRACKED_NAMES);
-        let staged = title_width(STAGED_NAMES);
+        let close_width =
+            (ui_scale.px(STATUS_CLOSE_ICON_PX) + components::icon_pad_x(ui_scale) * 2.0 + px(2.0))
+                .max(components::control_height(ui_scale));
+        let close_gap = ui_scale::design_px_from_percent(STATUS_HEADER_GAP_PX, ui_scale_percent);
+        let labels_for = |names: StatusSectionNames, action_label_chars: &[usize]| {
+            let available_width = if names.is_top_section() {
+                header_width - close_width - close_gap
+            } else {
+                header_width
+            };
+            status_action_labels_for_width(
+                available_width,
+                char_width(text(cx, names.title.0, names.title.1)),
+                names.section != StatusSection::Staged,
+                action_label_chars,
+                local_actions_in_flight,
+                ui_scale_percent,
+                theme.metrics,
+            )
+        };
         let stage = text(cx, "Stage", "暫存");
         let discard = text(cx, "Discard", "捨棄");
         let unstage = text(cx, "Unstage", "取消暫存");
@@ -262,8 +276,7 @@ impl DetailsPaneView {
         let unstage_all = char_width(text(cx, "Unstage all changes", "全部取消暫存"));
         let unstaged_labels = if selected_combined_unstaged > 0 {
             labels_for(
-                unstaged,
-                true,
+                COMBINED_UNSTAGED_NAMES,
                 &[
                     count_chars(stage, selected_combined_unstaged),
                     count_chars(discard, selected_combined_unstaged),
@@ -271,12 +284,11 @@ impl DetailsPaneView {
                 ],
             )
         } else {
-            labels_for(unstaged, true, &[stage_all_changes])
+            labels_for(COMBINED_UNSTAGED_NAMES, &[stage_all_changes])
         };
         let untracked_labels = if selected_untracked > 0 {
             labels_for(
-                untracked,
-                true,
+                UNTRACKED_NAMES,
                 &[
                     count_chars(stage, selected_untracked),
                     count_chars(discard, selected_untracked),
@@ -284,12 +296,11 @@ impl DetailsPaneView {
                 ],
             )
         } else {
-            labels_for(untracked, true, &[stage_all])
+            labels_for(UNTRACKED_NAMES, &[stage_all])
         };
         let split_unstaged_labels = if selected_split_unstaged > 0 {
             labels_for(
-                unstaged,
-                true,
+                SPLIT_UNSTAGED_NAMES,
                 &[
                     count_chars(stage, selected_split_unstaged),
                     count_chars(discard, selected_split_unstaged),
@@ -297,16 +308,15 @@ impl DetailsPaneView {
                 ],
             )
         } else {
-            labels_for(unstaged, true, &[stage_all])
+            labels_for(SPLIT_UNSTAGED_NAMES, &[stage_all])
         };
         let staged_labels = if selected_staged > 0 {
             labels_for(
-                staged,
-                false,
+                STAGED_NAMES,
                 &[count_chars(unstage, selected_staged), unstage_all],
             )
         } else {
-            labels_for(staged, false, &[unstage_all])
+            labels_for(STAGED_NAMES, &[unstage_all])
         };
 
         StatusViewInputs {
@@ -570,6 +580,9 @@ impl DetailsPaneView {
         body: AnyElement,
         cx: &mut gpui::Context<Self>,
     ) -> Div {
+        let close_button = names
+            .is_top_section()
+            .then(|| Self::status_close_button(v, cx));
         self.status_section_container(names.section, cx)
             .flex()
             .flex_col()
@@ -579,8 +592,8 @@ impl DetailsPaneView {
                 v,
                 names.header_id,
                 title,
-                v.state(names.section).count > 0,
-                actions,
+                (v.state(names.section).count > 0).then_some(actions),
+                close_button,
             ))
             .child(
                 div()
@@ -591,6 +604,26 @@ impl DetailsPaneView {
                     .overflow_hidden()
                     .child(body),
             )
+    }
+
+    fn status_close_button(v: &StatusViewInputs, cx: &mut gpui::Context<Self>) -> Stateful<Div> {
+        components::Button::new("status_details_close", "")
+            .start_slot(svg_icon(
+                "icons/generic_close.svg",
+                v.theme.colors.foreground.secondary,
+                v.ui_scale.px(STATUS_CLOSE_ICON_PX),
+            ))
+            .style(components::ButtonStyle::Transparent)
+            .on_click(v.theme, cx, |this, _event, _window, cx| {
+                let _ = this.root_view.update(cx, |root, cx| {
+                    root.set_details_collapsed(true, cx);
+                });
+            })
+            .gitcomet_tooltip(
+                v.theme,
+                text(cx, "Hide details panel", "隱藏右側面板").into(),
+            )
+            .flex_none()
     }
 
     /// The "Unstaged" / "Untracked" title chip that opens the change-tracking
@@ -1203,14 +1236,13 @@ impl DetailsPaneView {
     }
 }
 
-/// A section header: the title takes the slack and clips, the actions keep
-/// their width.
+/// A section header: the title takes the slack, and the close button keeps its width.
 fn status_section_header(
     v: &StatusViewInputs,
     id: &'static str,
     title: AnyElement,
-    show_action: bool,
-    action: AnyElement,
+    actions: Option<AnyElement>,
+    close_button: Option<Stateful<Div>>,
 ) -> AnyElement {
     div()
         .id(id)
@@ -1224,9 +1256,8 @@ fn status_section_header(
         ))
         .px_2()
         .overflow_hidden()
-        // The labels shrink before this matters, but a UI zoom or a font
-        // wider than the budget assumes can still overrun the header —
-        // and then the title, not the actions, is what gives way.
+        // The title gives up space first. At extreme widths, clip the actions
+        // ahead of the close button so the panel can still be dismissed.
         .child(
             div()
                 .flex()
@@ -1235,7 +1266,15 @@ fn status_section_header(
                 .overflow_hidden()
                 .child(title),
         )
-        .when(show_action, |d| d.child(div().flex_none().child(action)))
+        .children(actions.map(|actions| {
+            div()
+                .flex_none()
+                .when(close_button.is_some(), |d| {
+                    d.flex_shrink(1.0).min_w(px(0.0)).overflow_hidden()
+                })
+                .child(actions)
+        }))
+        .children(close_button)
         .into_any_element()
 }
 

@@ -290,6 +290,38 @@ fn a_clean_working_copy_opens_with_the_details_pane_hidden(cx: &mut gpui::TestAp
     });
 }
 
+/// The highlighted commit is what the details pane shows: closing the pane
+/// drops the selection, and selecting a commit opens the pane again.
+#[gpui::test]
+fn the_commit_highlight_and_the_details_pane_go_together(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    prepare(cx, &view);
+    assert!(cx.debug_bounds("details_pane").is_some());
+
+    cx.update(|_, app| view.update(app, |root, cx| root.toggle_details(cx)));
+    wait_until(cx, "selection cleared", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.update(|_, app| {
+            view.read(app).state.repos[0]
+                .history_state
+                .selected_commit
+                .is_none()
+        })
+    });
+    draw_and_drain_test_window(cx);
+    assert!(cx.update(|_, app| view.read(app).details_collapsed));
+
+    let commit = cx.debug_bounds("history_row_0").unwrap();
+    cx.simulate_click(commit.center(), gpui::Modifiers::default());
+    wait_until(cx, "details reopened for the selected commit", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.update(|_, app| !view.read(app).details_collapsed)
+            && cx.debug_bounds("commit_details_heading").is_some()
+    });
+}
+
 /// With changes at startup the pane shows: it holds the commit form.
 #[gpui::test]
 fn a_dirty_working_copy_opens_with_the_details_pane_shown(cx: &mut gpui::TestAppContext) {
@@ -371,6 +403,41 @@ fn working_copy_repo(staged: &[&str], unstaged: &[&str]) -> RepoState {
         .into(),
     );
     repo
+}
+
+#[gpui::test]
+fn working_copy_header_closes_details_with_no_unstaged_changes(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    apply_state(
+        cx,
+        &view,
+        app_state_with_active_repo(working_copy_repo(&["a.rs"], &[])),
+    );
+
+    for (mode, header) in [
+        (ChangeTrackingView::Combined, "unstaged_header"),
+        (ChangeTrackingView::SplitUntracked, "untracked_header"),
+    ] {
+        cx.update(|_, app| {
+            view.update(app, |root, cx| root.set_change_tracking_view(mode, cx));
+        });
+        draw_and_drain_test_window(cx);
+
+        let header = cx.debug_bounds(header).unwrap();
+        let close = cx.debug_bounds("status_details_close").unwrap();
+        assert!(header.contains(&close.center()));
+        cx.simulate_click(close.center(), Modifiers::default());
+        draw_and_drain_test_window(cx);
+        cx.update(|_, app| assert!(view.read(app).details_collapsed));
+        assert!(cx.debug_bounds("status_details_close").is_none());
+
+        let toggle = cx.debug_bounds("details_toggle").unwrap();
+        cx.simulate_click(toggle.center(), Modifiers::default());
+        draw_and_drain_test_window(cx);
+        assert!(cx.debug_bounds("status_details_close").is_some());
+    }
 }
 
 fn focus_status(

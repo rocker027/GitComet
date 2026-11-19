@@ -609,6 +609,8 @@ fn commit_click_dispatches_after_state_update_without_intermediate_redraw(
 
     cx.update(|window, app| {
         view.update(app, |this, cx| {
+            // Shown as if toggled open: a clean working copy hides it.
+            this.set_details_hide_when_clean(false, cx);
             push_test_state(this, make_state(0, 0), cx);
         });
         let _ = window.draw(app);

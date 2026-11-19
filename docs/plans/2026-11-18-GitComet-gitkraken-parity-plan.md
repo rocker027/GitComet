@@ -186,6 +186,7 @@ GitComet 已有使用者與 `docs/shortcuts.md` 契約。建議不要直接改�
 - Q1、Q2、Q8 是計畫標為「便利性提案」、留給使用者決定的項目，本輪已一併實作。
 - Q5 改變既有預設：stash 訊息從必填改為選填。原本鎖定「空訊息不可 stash」的測試已改寫為新行為。
 - 2026-11-19 併入 `feature/side-bar`（7b46bb17，details pane 在工作區乾淨時自動隱藏）。`refactor/gitkraken` 以 fast-forward 前進，本計畫的未提交改動套回其上。`panes/details.rs` 的訂閱 closure 衝突，兩邊都保留。另修一處語意衝突：Focus Commit Message（`Cmd-Shift-M`）會先覆蓋自動隱藏再聚焦 commit 訊息框，否則乾淨工作區按下去沒有可見效果。
+- 2026-11-19 使用者要求：app 開啟時工作區乾淨就先隱藏 details pane，點了 commit 才顯示。改為自動隱藏預設啟用（`details_hide_when_clean` 初始為 true）。工作區有變更時照常顯示，因為 commit 表單在裡面。
 - Q6b 改變既有預設：沒有已暫存檔時，Commit 按鈕與 `Cmd-Enter` 原本停用，現在會先暫存全部變更（含 untracked）再 commit。按鈕文字會改成「Stage All & Commit」提示這件事。
 - Q8 改變既有預設：遠端分支雙擊原本一律跳對話框，現在名稱可用時直接建立並簽出。
 
