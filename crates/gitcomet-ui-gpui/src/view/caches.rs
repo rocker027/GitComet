@@ -3,7 +3,7 @@ use super::branch_sidebar::{
     branch_sidebar_source_matches_cached,
 };
 use super::*;
-use gitcomet_core::domain::{Branch, LogPage, LogScope, RemoteBranch, StashEntry, Tag};
+use gitcomet_core::domain::{Branch, LogPage, LogScope, RemoteBranch, StashEntry, Tag, Worktree};
 use rustc_hash::FxHasher;
 use smallvec::SmallVec;
 use std::cell::RefCell;
@@ -1260,12 +1260,12 @@ fn history_branch_ref_items_with_extra_head(
     let include_extra = names
         .iter()
         .copied()
-        .all(|name| cmp_history_branch_display(name, extra) != Ordering::Equal);
+        .all(|name| cmp_history_branch_ref_item(name, extra) != Ordering::Equal);
     let mut out = Vec::with_capacity(names.len() + usize::from(include_extra));
     let mut extra_pending = include_extra;
 
     for name in names.iter().copied() {
-        if extra_pending && cmp_history_branch_display(extra, name) == Ordering::Less {
+        if extra_pending && cmp_history_branch_ref_item(extra, name) == Ordering::Less {
             out.push(history_head_ref_item(head_branch));
             extra_pending = false;
         }
@@ -1606,6 +1606,21 @@ pub(super) struct HistoryStashIdsCache {
     pub(super) repo_id: RepoId,
     pub(super) stashes_rev: u64,
     pub(super) ids: Arc<FxHashSet<CommitId>>,
+}
+
+/// A local ref is checked out only if both its name and its tip match the
+/// worktree listing. Other refs on the same commit can be unrelated.
+pub(in crate::view) fn history_worktree_for_local_ref<'a>(
+    worktrees: &'a [Worktree],
+    commit_id: &CommitId,
+    branch: &str,
+) -> Option<&'a Worktree> {
+    worktrees.iter().find(|worktree| {
+        !worktree.bare
+            && !worktree.detached
+            && worktree.head.as_ref() == Some(commit_id)
+            && worktree.branch.as_deref() == Some(branch)
+    })
 }
 
 /// Another worktree, marked on the commit it has checked out.

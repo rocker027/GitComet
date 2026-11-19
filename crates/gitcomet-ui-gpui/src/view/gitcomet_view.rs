@@ -457,8 +457,25 @@ impl GitCometView {
             self.close_history_refs_hover(cx);
             return;
         }
+        let worktrees = self
+            .state
+            .repos
+            .iter()
+            .find(|repo| repo.id == repo_id)
+            .and_then(|repo| match &repo.worktrees {
+                Loadable::Ready(worktrees) => Some(Arc::clone(worktrees)),
+                _ => None,
+            });
         self.history_refs_hover_host.update(cx, |host, cx| {
-            host.show(repo_id, commit_id, source_bounds, items, pointer, cx)
+            host.show(
+                repo_id,
+                commit_id,
+                source_bounds,
+                items,
+                worktrees,
+                pointer,
+                cx,
+            )
         });
     }
 

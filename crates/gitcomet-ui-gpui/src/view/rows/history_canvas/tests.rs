@@ -139,6 +139,7 @@ fn assert_inline_ref_paint_budget(percent: u32, window: &mut Window, cx: &mut Ap
             &commit_id,
             &tags,
             &branches,
+            &[],
             None,
             None,
             &style,
@@ -187,6 +188,7 @@ fn assert_inline_ref_paint_budget(percent: u32, window: &mut Window, cx: &mut Ap
             &commit_id,
             &[],
             branch_list,
+            &[],
             None,
             None,
             &style,
@@ -219,6 +221,7 @@ fn assert_inline_ref_paint_budget(percent: u32, window: &mut Window, cx: &mut Ap
         &commit_id,
         &[],
         &long,
+        &[],
         None,
         None,
         &style,
@@ -656,7 +659,7 @@ fn grouped_branch_chip_icons_keep_exact_refs() {
     );
 
     assert_eq!(
-        history_branch_chip_icons(&combined).as_slice(),
+        history_branch_chip_icons(&combined, false).as_slice(),
         [HistoryBranchChipIcon::LocalRemote]
     );
     assert_eq!(HistoryBranchChipIcon::Local.path(), "icons/computer.svg");
@@ -690,7 +693,7 @@ fn grouped_branch_chip_icons_keep_exact_refs() {
 
     let local_only = branch_chip("feature/x", false, &[(BranchSection::Local, "feature/x")]);
     assert_eq!(
-        history_branch_chip_icons(&local_only).as_slice(),
+        history_branch_chip_icons(&local_only, false).as_slice(),
         [HistoryBranchChipIcon::Local]
     );
 
@@ -700,7 +703,7 @@ fn grouped_branch_chip_icons_keep_exact_refs() {
         &[(BranchSection::Remote, "origin/feature/x")],
     );
     assert_eq!(
-        history_branch_chip_icons(&remote_only).as_slice(),
+        history_branch_chip_icons(&remote_only, false).as_slice(),
         [HistoryBranchChipIcon::Remote]
     );
 
@@ -709,9 +712,118 @@ fn grouped_branch_chip_icons_keep_exact_refs() {
         kind: HistoryBranchChipKind::DetachedHead,
     };
     assert_eq!(
-        history_branch_chip_icons(&detached).as_slice(),
+        history_branch_chip_icons(&detached, false).as_slice(),
         [HistoryBranchChipIcon::Check]
     );
+}
+
+fn test_worktree(branch: &str, commit: &str) -> Worktree {
+    Worktree {
+        path: "/tmp/boxfish".into(),
+        bare: false,
+        head: Some(CommitId(commit.into())),
+        branch: Some(branch.to_owned()),
+        detached: false,
+    }
+}
+
+#[test]
+fn worktree_icons_require_a_matching_local_branch_and_commit() {
+    let commit = CommitId("tip".into());
+    let worktree = test_worktree("feature/topic", "tip");
+    let attached = branch_chip(
+        "feature/topic",
+        true,
+        &[
+            (BranchSection::Local, "feature/topic"),
+            (BranchSection::Remote, "origin/feature/topic"),
+        ],
+    );
+    let other_local = branch_chip("other", false, &[(BranchSection::Local, "other")]);
+    let same_named_remote = branch_chip(
+        "feature/topic",
+        false,
+        &[(BranchSection::Remote, "origin/feature/topic")],
+    );
+    let listed = std::slice::from_ref(&worktree);
+    assert!(history_branch_chip_is_checked_out(
+        &attached, listed, &commit
+    ));
+    assert!(!history_branch_chip_is_checked_out(
+        &other_local,
+        listed,
+        &commit
+    ));
+    assert!(!history_branch_chip_is_checked_out(
+        &same_named_remote,
+        listed,
+        &commit
+    ));
+    assert!(!history_branch_chip_is_checked_out(
+        &attached,
+        listed,
+        &CommitId("old-tip".into())
+    ));
+    assert!(!history_branch_chip_is_checked_out(
+        &attached,
+        &[
+            Worktree {
+                detached: true,
+                ..worktree.clone()
+            },
+            Worktree {
+                bare: true,
+                ..worktree
+            }
+        ],
+        &commit,
+    ));
+    assert_eq!(
+        history_branch_chip_icons(&attached, true).as_slice(),
+        [
+            HistoryBranchChipIcon::Check,
+            HistoryBranchChipIcon::Worktree,
+            HistoryBranchChipIcon::Remote
+        ]
+    );
+}
+
+#[gpui::test]
+fn a_checked_out_branch_stays_visible_before_other_refs_in_a_narrow_column(
+    cx: &mut gpui::TestAppContext,
+) {
+    let window_handle = cx.add_window(|_, _| gpui::Empty);
+    cx.update_window(window_handle.into(), |_, window, _| {
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(105.0), px(28.0)));
+        let theme = AppTheme::gitcomet_dark();
+        let refs = layout_history_ref_chips(
+            theme,
+            test_row_visual(theme),
+            bounds,
+            RepoId(1),
+            &CommitId("tip".into()),
+            &[HistoryTextVm::new("release".into())],
+            &[
+                branch_chip("alias", false, &[(BranchSection::Local, "alias")]),
+                branch_chip("topic", false, &[(BranchSection::Local, "topic")]),
+            ],
+            &[test_worktree("topic", "tip")],
+            None,
+            None,
+            &window.text_style(),
+            px(11.0),
+            px(16.0),
+            window,
+        );
+        assert_eq!(refs.chips[0].shaped.text, "topic");
+        assert_eq!(
+            refs.chips[0].icons.as_slice(),
+            [HistoryBranchChipIcon::Worktree]
+        );
+        assert!(refs.hidden > 0);
+        assert!(refs.bounds.right() <= bounds.right());
+    })
+    .expect("history canvas test window should stay open");
 }
 
 fn ref_item(kind: HistoryRefListItemKind) -> HistoryRefListItem {
@@ -968,7 +1080,7 @@ fn chips_share_the_lane_color_and_activate_for_the_row_or_lane() {
         }
         let head = branch_chip("main", true, &[(BranchSection::Local, "main")]);
         assert_eq!(
-            history_branch_chip_icons(&head).as_slice(),
+            history_branch_chip_icons(&head, false).as_slice(),
             [HistoryBranchChipIcon::Check, HistoryBranchChipIcon::Local]
         );
     }

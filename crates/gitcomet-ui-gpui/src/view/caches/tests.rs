@@ -411,6 +411,43 @@ fn history_ref_items_preserve_display_order_and_ref_types_for_attached_head() {
 }
 
 #[test]
+fn history_ref_items_keep_attached_head_and_remote_with_the_same_display_name() {
+    let commit = commit_id("a");
+    let branches = [Branch {
+        name: "origin/topic".into(),
+        target: commit.clone(),
+        upstream: None,
+        divergence: None,
+    }];
+    let remotes = [RemoteBranch {
+        remote: "origin".into(),
+        name: "topic".into(),
+        target: commit.clone(),
+    }];
+    let (_, head_items) = build_history_branch_ref_items_by_target(
+        &branches,
+        &remotes,
+        Some("origin/topic"),
+        Some(commit.as_ref()),
+    );
+    let items = head_items.expect("attached HEAD items");
+    assert_eq!(items.len(), 2);
+    assert!(
+        items
+            .iter()
+            .all(|item| item.text.as_ref() == "origin/topic")
+    );
+    assert!(matches!(
+        items[0].kind,
+        HistoryRefListItemKind::AttachedHead { .. }
+    ));
+    assert!(matches!(
+        items[1].kind,
+        HistoryRefListItemKind::RemoteBranch { .. }
+    ));
+}
+
+#[test]
 fn history_ref_items_preserve_detached_head_as_informational() {
     let commit = commit_id("a");
     let branches = vec![Branch {

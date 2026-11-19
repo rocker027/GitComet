@@ -66,6 +66,15 @@ fn mount<'a>(
     others: &[(&str, &str)],
     dirty: &[&str],
 ) -> Mounted<'a> {
+    mount_with_repo(cx, others, dirty, |_| {})
+}
+
+fn mount_with_repo<'a>(
+    cx: &'a mut gpui::TestAppContext,
+    others: &[(&str, &str)],
+    dirty: &[&str],
+    configure: impl FnOnce(&mut RepoState),
+) -> Mounted<'a> {
     let (store, events) = AppStore::new_test(Arc::new(BlockingBackend));
     let store_for_assert = store.clone();
     let (view, cx) =
@@ -111,6 +120,7 @@ fn mount<'a>(
             .collect(),
     ));
     repo.worktree_dirty_rev = 1;
+    configure(&mut repo);
     let state = Arc::new(AppState {
         repos: vec![repo],
         active_repo: Some(repo_id),
@@ -160,6 +170,64 @@ fn wait_for_open(cx: &mut gpui::VisualTestContext, store: &AppStore, folder: &st
             .iter()
             .any(|repo| repo.spec.workdir == path)
     });
+}
+
+#[gpui::test]
+fn history_refs_hover_marks_only_the_local_ref_checked_out_in_a_worktree(
+    cx: &mut gpui::TestAppContext,
+) {
+    let Mounted {
+        cx, view, base_row, ..
+    } = mount_with_repo(cx, &[("linked", "side")], &["linked"], |repo| {
+        repo.branches = Loadable::Ready(Arc::new(vec![
+            branch("main", "tip"),
+            branch("alias", "base"),
+            branch("side", "base"),
+        ]));
+        repo.remote_branches =
+            Loadable::Ready(Arc::new(vec![remote_branch("origin", "side", "base")]));
+        repo.remote_branches_rev = 1;
+    });
+    cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.set_history_branch_names(HistoryBranchNamesMode::SeparateColumn, cx);
+        });
+    });
+    crate::view::test_support::redraw(cx);
+    let row = bounds_of(cx, format!("history_row_{base_row}")).expect("the base commit's row");
+    let refs_center = point(row.left() + px(24.0), row.center().y);
+    cx.simulate_mouse_move(refs_center, None, gpui::Modifiers::default());
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    crate::view::test_support::redraw(cx);
+
+    for selector in [
+        "history_refs_hover_item_local_branch_side",
+        "history_refs_hover_item_local_branch_alias",
+        "history_refs_hover_item_remote_branch_origin_side",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "{selector} should be listed"
+        );
+    }
+    let badge = cx
+        .debug_bounds("history_refs_hover_item_local_branch_side_worktree")
+        .expect("the matching local ref names its worktree even when that worktree is dirty");
+    assert!(
+        cx.debug_bounds("history_refs_hover_item_local_branch_alias_worktree")
+            .is_none()
+    );
+    assert!(
+        cx.debug_bounds("history_refs_hover_item_remote_branch_origin_side_worktree")
+            .is_none()
+    );
+    cx.simulate_mouse_move(badge.center(), None, gpui::Modifiers::default());
+    crate::view::test_support::wait_for_native_tooltip(cx);
+    let tooltip = crate::view::test_support::tooltip_text(cx, &view)
+        .expect("the worktree badge shows its full path");
+    assert!(tooltip.contains(worktree_path("linked").to_string_lossy().as_ref()));
 }
 
 /// A clean worktree has no row of its own, so its chip sits on the commit it

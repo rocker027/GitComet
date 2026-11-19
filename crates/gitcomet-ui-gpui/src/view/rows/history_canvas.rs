@@ -1,6 +1,8 @@
 use super::*;
 use crate::kit::interaction_paint::InteractionPaint;
+use crate::view::caches::history_worktree_for_local_ref;
 use crate::view::panes::HistoryRowHoverArea;
+use gitcomet_core::domain::Worktree;
 use gitcomet_extension_api::{MarkEdge, MarkTarget, RowGlyph, RowMark};
 use gitcomet_state::msg::CommitSelectMode;
 use gitcomet_ui_kit::text_layout::TextLayoutExt as _;
@@ -836,6 +838,7 @@ enum HistoryBranchChipIcon {
     Local,
     Remote,
     LocalRemote,
+    Worktree,
     Tag,
     Check,
 }
@@ -846,6 +849,7 @@ impl HistoryBranchChipIcon {
             Self::Local => "icons/computer.svg",
             Self::Remote => "icons/cloud.svg",
             Self::LocalRemote => "icons/computer-cloud-background.svg",
+            Self::Worktree => "icons/git_worktree.svg",
             Self::Tag => "icons/tag.svg",
             Self::Check => "icons/check.svg",
         }
@@ -854,19 +858,39 @@ impl HistoryBranchChipIcon {
     fn foreground_path(self) -> Option<&'static str> {
         match self {
             Self::LocalRemote => Some("icons/computer-cloud-foreground.svg"),
-            Self::Local | Self::Remote | Self::Tag | Self::Check => None,
+            _ => None,
         }
     }
 
     fn size(self, icon_size: Pixels, combined_icon_size: Pixels) -> Pixels {
         match self {
-            Self::Local | Self::Remote | Self::Tag | Self::Check => icon_size,
             Self::LocalRemote => combined_icon_size,
+            _ => icon_size,
         }
     }
 }
 
-fn history_branch_chip_icons(chip: &HistoryBranchChipVm) -> SmallVec<[HistoryBranchChipIcon; 2]> {
+fn history_branch_chip_is_checked_out(
+    chip: &HistoryBranchChipVm,
+    worktrees: &[Worktree],
+    commit_id: &CommitId,
+) -> bool {
+    let HistoryBranchChipKind::Branch { targets, .. } = &chip.kind else {
+        return false;
+    };
+    targets.iter().any(|target| {
+        matches!(
+            target,
+            BranchMenuTarget::Local { name }
+                if history_worktree_for_local_ref(worktrees, commit_id, name).is_some()
+        )
+    })
+}
+
+fn history_branch_chip_icons(
+    chip: &HistoryBranchChipVm,
+    checked_out: bool,
+) -> SmallVec<[HistoryBranchChipIcon; 3]> {
     let HistoryBranchChipKind::Branch { targets, is_head } = &chip.kind else {
         return smallvec::smallvec![HistoryBranchChipIcon::Check];
     };
@@ -880,7 +904,12 @@ fn history_branch_chip_icons(chip: &HistoryBranchChipVm) -> SmallVec<[HistoryBra
     if *is_head {
         icons.push(HistoryBranchChipIcon::Check);
     }
-    if has_local && has_remote {
+    if checked_out {
+        icons.push(HistoryBranchChipIcon::Worktree);
+        if has_remote {
+            icons.push(HistoryBranchChipIcon::Remote);
+        }
+    } else if has_local && has_remote {
         icons.push(HistoryBranchChipIcon::LocalRemote);
     } else if has_local {
         icons.push(HistoryBranchChipIcon::Local);
@@ -1261,7 +1290,7 @@ struct HistoryRefChipPaint {
     bounds: Bounds<Pixels>,
     visual: HistoryChipVisual,
     shaped: gpui::ShapedLine,
-    icons: SmallVec<[HistoryBranchChipIcon; 2]>,
+    icons: SmallVec<[HistoryBranchChipIcon; 3]>,
 }
 
 #[derive(Default)]
@@ -1320,6 +1349,7 @@ fn layout_history_ref_chips(
     commit_id: &CommitId,
     tag_names: &[HistoryTextVm],
     branch_chips: &[HistoryBranchChipVm],
+    worktrees: &[Worktree],
     selected_branch: Option<&SelectedHistoryBranch>,
     active_context_menu_invoker: Option<&SharedString>,
     base_style: &gpui::TextStyle,
@@ -1391,11 +1421,11 @@ fn layout_history_ref_chips(
 
     enum ChipEntry<'a> {
         Tag(&'a HistoryTextVm),
-        Branch(&'a HistoryBranchChipVm),
+        Branch(&'a HistoryBranchChipVm, bool),
     }
-    // HEAD first (the strongest signal), then tags, then
-    // plain branches; overflow beyond the column collapses
-    // into a "+N" chip resolved by the refs hover menu.
+    // Show the current HEAD first, then checked-out branches before the
+    // other refs. The hover menu still lists every ref in the "+N" chip.
+    let checked_out = |chip| history_branch_chip_is_checked_out(chip, worktrees, commit_id);
     let head_entries = branch_chips
         .iter()
         .filter(|item| {
@@ -1405,19 +1435,26 @@ fn layout_history_ref_chips(
                     | HistoryBranchChipKind::DetachedHead
             )
         })
-        .map(ChipEntry::Branch);
-    let branch_entries = branch_chips
-        .iter()
-        .filter(|item| {
-            matches!(
-                item.kind,
-                HistoryBranchChipKind::Branch { is_head: false, .. }
-            )
-        })
-        .map(ChipEntry::Branch);
+        .map(|chip| ChipEntry::Branch(chip, checked_out(chip)));
+    let branch_entries = branch_chips.iter().filter(|item| {
+        matches!(
+            item.kind,
+            HistoryBranchChipKind::Branch { is_head: false, .. }
+        )
+    });
     let entries = head_entries
+        .chain(
+            branch_entries
+                .clone()
+                .filter(|chip| checked_out(*chip))
+                .map(|chip| ChipEntry::Branch(chip, true)),
+        )
         .chain(tag_names.iter().map(ChipEntry::Tag))
-        .chain(branch_entries);
+        .chain(
+            branch_entries
+                .filter(|chip| !checked_out(*chip))
+                .map(|chip| ChipEntry::Branch(chip, false)),
+        );
 
     for entry in entries {
         let pending_after = total_chips - shown - 1;
@@ -1428,7 +1465,7 @@ fn layout_history_ref_chips(
         };
         let icons = match &entry {
             ChipEntry::Tag(_) => smallvec::smallvec![HistoryBranchChipIcon::Tag],
-            ChipEntry::Branch(chip) => history_branch_chip_icons(chip),
+            ChipEntry::Branch(chip, checked_out) => history_branch_chip_icons(chip, *checked_out),
         };
         let icons_width = history_branch_chip_icon_width(
             icons.as_slice(),
@@ -1452,13 +1489,13 @@ fn layout_history_ref_chips(
 
         let style_kind = match &entry {
             ChipEntry::Tag(_) => HistoryChipStyleKind::Tag,
-            ChipEntry::Branch(chip) => history_branch_chip_style_kind(chip, selected_branch),
+            ChipEntry::Branch(chip, _) => history_branch_chip_style_kind(chip, selected_branch),
         };
         let context_menu_open = active_context_menu_invoker.is_some_and(|active| match &entry {
             ChipEntry::Tag(name) => {
                 active == &history_tag_chip_menu_invoker(repo_id, commit_id, name.as_ref())
             }
-            ChipEntry::Branch(chip) => {
+            ChipEntry::Branch(chip, _) => {
                 active == &history_branch_chip_menu_invoker(repo_id, commit_id, chip)
             }
         });
@@ -1475,7 +1512,7 @@ fn layout_history_ref_chips(
                 None,
                 LineCut::RefLeaf,
             ),
-            ChipEntry::Branch(chip) => shape_truncated_line_cached_from(
+            ChipEntry::Branch(chip, _) => shape_truncated_line_cached_from(
                 window,
                 if matches!(style_kind, HistoryChipStyleKind::Head { .. }) {
                     head_style.get_or_insert_with(|| {
@@ -1699,6 +1736,7 @@ pub(super) fn history_commit_row_canvas(
     tag_names: Arc<[HistoryTextVm]>,
     branch_chips: Arc<[HistoryBranchChipVm]>,
     ref_items: Arc<[HistoryRefListItem]>,
+    branch_worktrees: Option<Arc<Vec<Worktree>>>,
     selected_branch: Option<SelectedHistoryBranch>,
     selected_lane: Option<super::history_graph_paint::SelectedLane>,
     lane_branch_name: Option<SharedString>,
@@ -2249,6 +2287,7 @@ pub(super) fn history_commit_row_canvas(
                 &commit_id,
                 &tag_names,
                 &branch_chips,
+                branch_worktrees.as_deref().map_or(&[], Vec::as_slice),
                 selected_branch.as_ref(),
                 active_context_menu_invoker.as_ref(),
                 &base_style,

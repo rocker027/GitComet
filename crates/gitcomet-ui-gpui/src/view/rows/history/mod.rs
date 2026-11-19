@@ -270,6 +270,14 @@ impl HistoryView {
                             )
                         })
                         .unwrap_or_default();
+                    let branch_worktrees = match &repo.worktrees {
+                        Loadable::Ready(worktrees)
+                            if !decoration_row_vm.branch_chips.is_empty() =>
+                        {
+                            Some(Arc::clone(worktrees))
+                        }
+                        _ => None,
+                    };
                     let (find_dimmed, find_highlights) =
                         crate::view::panes::history::find::history_find_row_marks(
                             find_query.as_ref(),
@@ -305,6 +313,7 @@ impl HistoryView {
                         Arc::clone(&decoration_row_vm.tag_names),
                         Arc::clone(&decoration_row_vm.branch_chips),
                         Arc::clone(&decoration_row_vm.ref_items),
+                        branch_worktrees,
                         selected_branch,
                         selected_lane,
                         lane_branch_name,
@@ -548,6 +557,7 @@ fn history_table_row(
     tag_names: Arc<[HistoryTextVm]>,
     branch_chips: Arc<[HistoryBranchChipVm]>,
     ref_items: Arc<[HistoryRefListItem]>,
+    branch_worktrees: Option<Arc<Vec<gitcomet_core::domain::Worktree>>>,
     selected_branch: Option<SelectedHistoryBranch>,
     // Colour index of the lane the selection sits on; every other lane washes
     // out. A property of the lane, not of this row.
@@ -619,6 +629,7 @@ fn history_table_row(
         tag_names,
         branch_chips,
         ref_items,
+        branch_worktrees,
         selected_branch,
         selected_lane,
         lane_branch_name,
