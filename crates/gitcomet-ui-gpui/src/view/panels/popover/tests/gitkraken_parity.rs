@@ -519,13 +519,11 @@ fn the_toolbar_undo_moves_a_committed_branch_back(cx: &mut gpui::TestAppContext)
 /// The worker confirms the branch against the repository itself: checked
 /// out elsewhere since the state last loaded, the commit is not undone and
 /// no ref is written.
-#[gpui::test]
-fn the_toolbar_undo_refuses_when_the_branch_is_no_longer_checked_out(
-    cx: &mut gpui::TestAppContext,
-) {
+#[test]
+fn undo_refuses_when_the_branch_is_no_longer_checked_out() {
     const BEFORE: &str = "1111111111111111111111111111111111111111";
     const AFTER: &str = "2222222222222222222222222222222222222222";
-    let (store, events, repo, _workdir) =
+    let (store, _events, repo, _workdir) =
         super::branch::create_tracking_store("git-undo-stale-head");
     let repo_id = store.snapshot().active_repo.expect("active repository");
     store.dispatch(Msg::Internal(
