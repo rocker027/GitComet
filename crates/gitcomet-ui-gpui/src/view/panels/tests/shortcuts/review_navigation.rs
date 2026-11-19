@@ -266,6 +266,45 @@ fn review_close_commit_details_reopens_for_changes_or_commit_selection(
     });
 }
 
+/// At startup a clean working copy keeps the details pane hidden until a
+/// commit is selected.
+#[gpui::test]
+fn a_clean_working_copy_opens_with_the_details_pane_hidden(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    apply_state(
+        cx,
+        &view,
+        app_state_with_active_repo(working_copy_repo(&[], &[])),
+    );
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_none());
+    assert!(cx.debug_bounds("pane_resize_details").is_none());
+
+    let commit = cx.debug_bounds("history_row_0").unwrap();
+    cx.simulate_click(commit.center(), gpui::Modifiers::default());
+    wait_until(cx, "commit details shown", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.debug_bounds("commit_details_heading").is_some()
+    });
+}
+
+/// With changes at startup the pane shows: it holds the commit form.
+#[gpui::test]
+fn a_dirty_working_copy_opens_with_the_details_pane_shown(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    apply_state(
+        cx,
+        &view,
+        app_state_with_active_repo(working_copy_repo(&[], &["working.rs"])),
+    );
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_some());
+}
+
 #[gpui::test]
 fn review_close_commit_details_allows_manually_reopening_clean_working_copy(
     cx: &mut gpui::TestAppContext,

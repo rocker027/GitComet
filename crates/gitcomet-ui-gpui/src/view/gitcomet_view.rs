@@ -1373,7 +1373,9 @@ impl GitCometView {
             sidebar_collapsed_popover_anim_seq: 0,
             sidebar_collapsed_before_merge_view: None,
             details_collapsed: false,
-            details_hide_when_clean: false,
+            // A clean working copy opens with the details pane hidden; it
+            // shows once a commit is selected or changes appear.
+            details_hide_when_clean: true,
             sidebar_width_design: initial_sidebar_width_design,
             details_width_design: initial_details_width_design,
             sidebar_width: initial_sidebar_width,
