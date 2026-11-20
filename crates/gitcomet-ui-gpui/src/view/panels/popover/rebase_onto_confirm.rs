@@ -20,7 +20,9 @@ pub(super) fn panel(
     // The menu entry that opens this popover is gated the same way, but the
     // popover can outlive that check (an operation may start while it is
     // open); git would refuse the rebase, so hold the button too.
-    let history_rewrite_busy = repo.is_some_and(|r| r.history_rewrite_busy());
+    let history_rewrite_busy = repo.is_some_and(|r| {
+        r.history_rewrite_busy() || this.state.worktree_finish_blocks_workdir_mutation(r.id)
+    });
     let message = match Language::current(cx) {
         Language::English => format!("Rebase {current_branch} onto {onto}"),
         Language::TraditionalChinese => format!("將 {current_branch} 變基到 {onto}"),

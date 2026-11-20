@@ -997,6 +997,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         requires_repo: true,
         needs: Needs::Nothing,
     },
+    CommandEntry {
+        id: Command::FinishWorktrees.id(),
+        label: "Finish Worktrees…",
+        shortcut: Shortcut::None,
+        category: "Worktrees",
+        keywords: "merge rebase squash cleanup worktree",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
     // The removals below open the same picker and confirmation as their
     // section menus; nothing is removed before that confirmation.
     CommandEntry {

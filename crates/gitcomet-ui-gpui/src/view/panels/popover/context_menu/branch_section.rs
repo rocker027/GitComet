@@ -8,13 +8,25 @@ pub(super) fn model(
     language: Language,
 ) -> ContextMenuModel {
     let pins = this.pinned_branch_count(repo_id, section);
-    model_for_section(repo_id, section, pins, language)
+    let prune_disabled = this.state.has_active_worktree_finish_run(repo_id);
+    model_for_section_with_finish(repo_id, section, pins, prune_disabled, language)
 }
 
+#[cfg(test)]
 fn model_for_section(
     repo_id: RepoId,
     section: BranchSection,
     pins: usize,
+    language: Language,
+) -> ContextMenuModel {
+    model_for_section_with_finish(repo_id, section, pins, false, language)
+}
+
+fn model_for_section_with_finish(
+    repo_id: RepoId,
+    section: BranchSection,
+    pins: usize,
+    prune_disabled: bool,
     language: Language,
 ) -> ContextMenuModel {
     let header: SharedString = match section {
@@ -58,7 +70,7 @@ fn model_for_section(
                 .into(),
             icon: Some("icons/broom.svg".into()),
             shortcut: None,
-            disabled: false,
+            disabled: prune_disabled,
             action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
         });
         items.push(ContextMenuItem::Entry {

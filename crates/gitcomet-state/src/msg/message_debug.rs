@@ -729,6 +729,7 @@ impl std::fmt::Debug for InternalMsg {
                 .field("command", command)
                 .field("result", result)
                 .finish(),
+            InternalMsg::WorktreeFinish(msg) => f.debug_tuple("WorktreeFinish").field(msg).finish(),
         }
     }
 }

@@ -76,6 +76,125 @@ pub(super) fn send_unavailable_git_effect_result(
         Effect::HistoryFind(work) => send(Msg::HistoryFind(
             work.failed(git_unavailable_error(runtime)),
         )),
+        Effect::WorktreeFinish(work) => {
+            use crate::msg::{WorktreeFinishEffect, WorktreeFinishInternalMsg};
+            let err = git_unavailable_error(runtime);
+            let reply = match work {
+                WorktreeFinishEffect::LoadPreview {
+                    run_id,
+                    start_index,
+                    ..
+                } => WorktreeFinishInternalMsg::PreviewLoaded {
+                    run_id,
+                    start_index,
+                    common_dir: std::path::PathBuf::new(),
+                    target_head: None,
+                    target_host: crate::model::TargetHost::NotNeeded,
+                    target_snapshot: None,
+                    sources: Vec::new(),
+                    error: Some(err.to_string()),
+                },
+                WorktreeFinishEffect::PrepareTempWorktree {
+                    run_id, temp_path, ..
+                } => WorktreeFinishInternalMsg::TempWorktreePrepared {
+                    run_id,
+                    path: temp_path,
+                    result: Err(err),
+                },
+                WorktreeFinishEffect::PreflightItem { run_id, item, .. } => {
+                    WorktreeFinishInternalMsg::ItemPreflightLoaded {
+                        run_id,
+                        item,
+                        target_head: None,
+                        target_snapshot: None,
+                        source_head: None,
+                        source_snapshot: None,
+                        expected_merged_tree: None,
+                        error: Some(err.to_string()),
+                    }
+                }
+                WorktreeFinishEffect::RunStep {
+                    run_id, item, step, ..
+                } => WorktreeFinishInternalMsg::StepFinished {
+                    run_id,
+                    item,
+                    step,
+                    before: Default::default(),
+                    after: None,
+                    command: Err(err),
+                    precheck_violation: None,
+                    rebased_range: None,
+                    target_is_ancestor: None,
+                },
+                WorktreeFinishEffect::RecheckSite { run_id, item, .. } => {
+                    WorktreeFinishInternalMsg::RecheckLoaded {
+                        run_id,
+                        item,
+                        snapshot: Err(err),
+                        target_is_ancestor: None,
+                        rebased_range: None,
+                    }
+                }
+                WorktreeFinishEffect::LoadAgents { run_id, .. } => {
+                    WorktreeFinishInternalMsg::AgentsLoaded {
+                        run_id,
+                        availability:
+                            gitcomet_core::worktree_finish::AgentDispatchAvailability::Failed(
+                                err.to_string(),
+                            ),
+                        agents: Err(err),
+                    }
+                }
+                WorktreeFinishEffect::LaunchAgent {
+                    run_id,
+                    item,
+                    agent_id,
+                    request_id,
+                    ..
+                } => WorktreeFinishInternalMsg::AgentLaunched {
+                    run_id,
+                    item,
+                    agent_id,
+                    request_id,
+                    result: Err(err),
+                },
+                WorktreeFinishEffect::PollAgent { run_id, item, .. } => {
+                    WorktreeFinishInternalMsg::AgentPolled {
+                        run_id,
+                        item,
+                        sessions: Err(err),
+                    }
+                }
+                WorktreeFinishEffect::CheckCleanup { run_id, .. } => {
+                    WorktreeFinishInternalMsg::CleanupChecked {
+                        run_id,
+                        results: Vec::new(),
+                        orca_unavailable: true,
+                        live_terminal_paths: Vec::new(),
+                    }
+                }
+                WorktreeFinishEffect::RemoveWorktree { run_id, item, .. } => {
+                    WorktreeFinishInternalMsg::WorktreeRemoved {
+                        run_id,
+                        item,
+                        result: Err(err),
+                    }
+                }
+                WorktreeFinishEffect::CleanupTempWorktree {
+                    run_id, temp_path, ..
+                } => WorktreeFinishInternalMsg::TempWorktreeCleaned {
+                    run_id,
+                    removed: false,
+                    note: Some(format!(
+                        "Temporary worktree kept at {} ({err}).",
+                        temp_path.display()
+                    )),
+                },
+            };
+            send(Msg::Internal(crate::msg::InternalMsg::WorktreeFinish(
+                Box::new(reply),
+            )));
+        }
         Effect::LoadLog {
             repo_id,
             seq,

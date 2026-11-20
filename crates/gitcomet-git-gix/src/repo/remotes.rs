@@ -612,6 +612,34 @@ impl GixRepo {
         Ok(refspecs)
     }
 
+    /// Destinations of `remote_name`'s configured fetch refspecs, read fresh, without
+    /// negative or destination-less refspecs.
+    pub(super) fn configured_fetch_destinations_impl(
+        &self,
+        remote_name: &str,
+    ) -> Result<Vec<String>> {
+        validate_ref_like_arg(remote_name, "remote name")?;
+        let repo = self.reopen_repo()?;
+        let remote = repo.find_remote(remote_name).map_err(|e| {
+            Error::new(ErrorKind::Backend(format!(
+                "gix find_remote {remote_name}: {e}"
+            )))
+        })?;
+        Ok(remote
+            .refspecs(gix::remote::Direction::Fetch)
+            .iter()
+            .filter_map(|refspec| {
+                let refspec = refspec.to_ref();
+                if refspec.to_bstring().starts_with(b"^") {
+                    return None;
+                }
+                refspec
+                    .destination()
+                    .map(|destination| destination.to_str_lossy().into_owned())
+            })
+            .collect())
+    }
+
     /// Return only configured fetch refspecs whose destinations are in the
     /// remote-tracking namespace, plus the negative refspecs that constrain
     /// them. Supplying these refspecs explicitly keeps `--prune` from applying
@@ -1778,10 +1806,13 @@ impl GixRepo {
 
         if !present.is_empty() {
             let mut cmd = self.git_workdir_cmd();
+            // `--refmap=` keeps this to the refspecs below: without it Git also applies the
+            // configured `remote.<name>.fetch` refspecs, which may write local branches.
             cmd.arg("fetch")
                 .arg("--no-prune")
                 .arg("--no-prune-tags")
                 .arg("--no-tags")
+                .arg("--refmap=")
                 .arg("--")
                 .arg(remote);
             for branch in present {

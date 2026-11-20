@@ -69,6 +69,13 @@ fn auth_prompt_for_clone(
     )
 }
 
+pub(super) fn auth_prompt_for_worktree_finish(
+    run_id: crate::model::WorktreeFinishRunId,
+    error: &gitcomet_core::error::Error,
+) -> Option<AuthPromptState> {
+    auth_prompt_for_error(error, AuthRetryOperation::WorktreeFinish { run_id })
+}
+
 fn auth_prompt_for_error(error: &Error, operation: AuthRetryOperation) -> Option<AuthPromptState> {
     let kind = detect_auth_prompt_kind(error)?;
     let (challenge, status) = match error.kind() {
@@ -133,7 +140,7 @@ fn auth_operation_repo_id(operation: &AuthRetryOperation) -> Option<RepoId> {
         AuthRetryOperation::RepoCommand { repo_id, .. }
         | AuthRetryOperation::SafePushAfterCommit { repo_id, .. }
         | AuthRetryOperation::Commit { repo_id, .. } => Some(*repo_id),
-        AuthRetryOperation::Clone { .. } => None,
+        AuthRetryOperation::Clone { .. } | AuthRetryOperation::WorktreeFinish { .. } => None,
     }
 }
 
@@ -171,7 +178,7 @@ pub(super) fn discard_reword_auth_prompt(
     });
 }
 
-fn install_auth_prompt(state: &mut AppState, mut prompt: AuthPromptState) {
+pub(super) fn install_auth_prompt(state: &mut AppState, mut prompt: AuthPromptState) {
     cancel_auth_validation(state);
     state.auth_prompt_generation = state.auth_prompt_generation.wrapping_add(1);
     prompt.generation = state.auth_prompt_generation;
@@ -188,6 +195,9 @@ fn retry_msg_for_auth_operation(operation: AuthRetryOperation) -> Option<Msg> {
         }
         AuthRetryOperation::Commit { repo_id, request } => Some(Msg::Commit { repo_id, request }),
         AuthRetryOperation::Clone { url, dest } => Some(Msg::CloneRepo { url, dest }),
+        AuthRetryOperation::WorktreeFinish { run_id } => Some(Msg::WorktreeFinish(
+            crate::msg::WorktreeFinishMsg::RetryCredential { run_id },
+        )),
     }
 }
 

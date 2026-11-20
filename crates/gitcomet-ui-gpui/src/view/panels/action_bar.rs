@@ -350,6 +350,18 @@ impl ActionBarView {
             repo.navigation.main_history.entries.len().hash(&mut hasher);
         }
 
+        state.worktree_finish_runs.len().hash(&mut hasher);
+        for run in &state.worktree_finish_runs {
+            run.id.hash(&mut hasher);
+            run.origin_repo_id.hash(&mut hasher);
+            std::mem::discriminant(&run.phase).hash(&mut hasher);
+            run.sources.len().hash(&mut hasher);
+            for src in &run.sources {
+                std::mem::discriminant(&src.phase).hash(&mut hasher);
+                std::mem::discriminant(&src.cleanup).hash(&mut hasher);
+            }
+        }
+
         hasher.finish()
     }
 
@@ -921,10 +933,26 @@ impl BarItemOwner for ActionBarView {
                 gitcomet_state::model::GitUndoDirection::Redo => ("icons/redo.svg", "Shift+Z"),
             };
             let repo = self.active_repo();
-            let unavailable = repo.map_or(
-                Some(language.text("Open a repository first", "請先開啟儲存庫")),
-                |repo| crate::view::git_undo_unavailable(repo, direction),
-            );
+            let finish_busy = repo.is_some_and(|repo| {
+                self.state.worktree_finish_blocks_workdir_mutation(repo.id)
+                    || repo.git_undo.next(direction).is_some_and(|entry| {
+                        entry.changes.iter().any(|change| {
+                            self.state
+                                .worktree_finish_protects_branch(repo.id, &change.reference)
+                        })
+                    })
+            });
+            let unavailable = if finish_busy {
+                Some(language.text(
+                    "Worktree is protected by an active Worktree Finish run",
+                    "此工作樹正由進行中的工作樹收尾任務保護",
+                ))
+            } else {
+                repo.map_or(
+                    Some(language.text("Open a repository first", "請先開啟儲存庫")),
+                    |repo| crate::view::git_undo_unavailable(repo, direction),
+                )
+            };
             let label = repo
                 .and_then(|repo| repo.git_undo.next(direction))
                 .map(|entry| entry.label.clone());
@@ -1119,10 +1147,14 @@ impl BarItemOwner for ActionBarView {
             .as_ref()
             .is_some_and(|id| id.as_ref() == pull_picker_invoker.as_ref());
         let pull_tracking_branch_name = tracking_branch_name.clone();
+        let finish_owns_active_repo = self
+            .active_repo()
+            .is_some_and(|repo| self.state.worktree_finish_blocks_workdir_mutation(repo.id));
         let pull_unavailable = self
             .active_repo()
             .and_then(|repo| pull_unavailable_reason(repo, &self.state.large_file_settings));
-        let pull_available = self.active_repo().is_some() && pull_unavailable.is_none();
+        let pull_available =
+            self.active_repo().is_some() && pull_unavailable.is_none() && !finish_owns_active_repo;
         let pull_menu_icon_color = if pull_picker_active {
             theme.colors.accent.foreground
         } else {
@@ -1149,7 +1181,9 @@ impl BarItemOwner for ActionBarView {
                             return;
                         };
                         let repo_id = repo.id;
-                        if pull_unavailable_reason(repo, &this.state.large_file_settings).is_none()
+                        if !this.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                            && pull_unavailable_reason(repo, &this.state.large_file_settings)
+                                .is_none()
                         {
                             this.store.dispatch(Msg::Pull {
                                 repo_id,
@@ -1308,7 +1342,10 @@ impl BarItemOwner for ActionBarView {
                     None => label.to_owned().into(),
                 }
             };
-            let busy = repo.is_some_and(|repo| repo.local_actions_in_flight > 0);
+            let busy = repo.is_some_and(|repo| {
+                repo.local_actions_in_flight > 0
+                    || self.state.worktree_finish_blocks_workdir_mutation(repo.id)
+            });
             let busy_text = language.text(
                 "Wait for the running Git operation to finish",
                 "請等待目前的 Git 操作完成",
@@ -1562,10 +1599,71 @@ impl BarItemOwner for ActionBarView {
             if let Some(badge) = historical_badge {
                 items.push(BuiltinBarItem::HistoricalBrowse, badge);
             }
+            let active_finish_run = self
+                .active_repo_id()
+                .and_then(|repo_id| self.state.worktree_finish_run_for_repo(repo_id))
+                .cloned();
+
+            let has_active_finish_run = active_finish_run.is_some();
             let operation_controls = div()
                 .flex()
                 .items_center()
                 .gap(action_group_gap)
+                .when_some(active_finish_run, |d, run| {
+                    let run_id = run.id;
+                    let total = run.sources.len();
+                    let done_count = run.sources.iter().filter(|s| s.phase.is_terminal()).count();
+                    let banner_label = match run.phase {
+                        gitcomet_state::model::RunPhase::Previewing => language
+                            .text("Finish · Re-previewing", "收尾 · 重新預覽中")
+                            .to_string(),
+                        gitcomet_state::model::RunPhase::AwaitingConfirm { .. } => language
+                            .text("Finish · Confirm preview", "收尾 · 待重新確認")
+                            .to_string(),
+                        gitcomet_state::model::RunPhase::Running { current } => match language {
+                            Language::English => format!("Finish {}/{total}", current + 1),
+                            Language::TraditionalChinese => format!("收尾 {}/{total}", current + 1),
+                        },
+                        gitcomet_state::model::RunPhase::Paused { current } => match language {
+                            Language::English => {
+                                format!("Finish {}/{total} · Paused", current + 1)
+                            }
+                            Language::TraditionalChinese => {
+                                format!("收尾 {}/{total} · 已暫停", current + 1)
+                            }
+                        },
+                        gitcomet_state::model::RunPhase::CleanupCheck
+                        | gitcomet_state::model::RunPhase::CleaningUp => language
+                            .text("Finish · Cleaning up", "收尾 · 清理中")
+                            .to_string(),
+                        gitcomet_state::model::RunPhase::Finished => match language {
+                            Language::English => format!("Finish {done_count}/{total} · Done"),
+                            Language::TraditionalChinese => {
+                                format!("收尾 {done_count}/{total} · 已完成")
+                            }
+                        },
+                        gitcomet_state::model::RunPhase::Aborted => language
+                            .text("Finish · Aborted", "收尾 · 已中止")
+                            .to_string(),
+                    };
+                    let repo_id = run.origin_repo_id;
+                    d.child(
+                        components::Button::new("worktree_finish_banner", banner_label)
+                            .style(components::ButtonStyle::Outlined)
+                            .on_click(theme, cx, move |this, e: &ClickEvent, window, cx| {
+                                this.open_popover_at(
+                                    PopoverKind::worktree(
+                                        repo_id,
+                                        WorktreePopoverKind::FinishQueue { run_id },
+                                    ),
+                                    e.position(),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .debug_selector(|| "worktree_finish_banner".to_string()),
+                    )
+                })
                 .when(is_merging, |d| {
                     d.child(
                         div()
@@ -1680,7 +1778,7 @@ impl BarItemOwner for ActionBarView {
                             ),
                     )
                 });
-            if is_merging || sequencer_banner.is_some() {
+            if has_active_finish_run || is_merging || sequencer_banner.is_some() {
                 items.push(BuiltinBarItem::OperationControls, operation_controls);
             }
         }

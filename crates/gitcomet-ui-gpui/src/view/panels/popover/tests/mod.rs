@@ -66,5 +66,7 @@ mod submodule;
 mod upstream;
 mod worktree;
 mod worktree_badge;
+mod worktree_finish;
+mod worktree_finish_entries;
 
 mod appearance_and_refs;

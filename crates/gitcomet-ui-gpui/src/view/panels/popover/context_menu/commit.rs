@@ -414,10 +414,12 @@ fn model_with_header(
     // Cherry-pick, revert, squash, and rebase all contend for git's single
     // sequencer slot, so any in-flight operation (or a merge waiting to be
     // concluded) disables starting every one of them, not just its own kind.
+    let worktree_finish_busy = this.state.worktree_finish_blocks_workdir_mutation(repo_id);
     let history_rewrite_disabled = this
         .active_repo()
         .filter(|repo| repo.id == repo_id)
-        .is_some_and(|repo| repo.history_rewrite_busy());
+        .is_some_and(|repo| repo.history_rewrite_busy())
+        || worktree_finish_busy;
 
     // "Squash N commits" appears only when the right-clicked commit is part
     // of the active multi-selection and the whole selection passes the squash
@@ -647,7 +649,7 @@ fn model_with_header(
             .into(),
         icon: Some("icons/git_branch.svg".into()),
         shortcut: Some("D".into()),
-        disabled: false,
+        disabled: worktree_finish_busy,
         action: Box::new(ContextMenuAction::CheckoutCommit {
             repo_id,
             commit_id: commit_id.clone(),
@@ -717,7 +719,7 @@ fn model_with_header(
             .into(),
         icon: Some("icons/pencil.svg".into()),
         shortcut: Some("E".into()),
-        disabled: reword_blocker.is_some(),
+        disabled: reword_blocker.is_some() || worktree_finish_busy,
         action: Box::new(ContextMenuAction::EditCommitMessage {
             repo_id,
             commit_id: commit_id.clone(),
@@ -833,10 +835,12 @@ fn model_with_header(
     // about to refuse. `commit_is_ancestor_of_head` already looks the repository
     // up this way.
     let merge_repo = this.state.repos.iter().find(|repo| repo.id == repo_id);
-    let merge_into_current_disabled = !super::super::merge_commit_confirm::merge_commit_is_allowed(
-        merge_repo,
-        &this.state.large_file_settings,
-    ) || commit_is_ancestor_of_head(this, repo_id, commit_id);
+    let merge_into_current_disabled = worktree_finish_busy
+        || !super::super::merge_commit_confirm::merge_commit_is_allowed(
+            merge_repo,
+            &this.state.large_file_settings,
+        )
+        || commit_is_ancestor_of_head(this, repo_id, commit_id);
     let merge_destination =
         super::super::merge_commit_confirm::merge_commit_destination_label(merge_repo);
     items.push(ContextMenuItem::Entry {
@@ -913,7 +917,7 @@ fn model_with_header(
             label: label.into(),
             icon: Some(icon.into()),
             shortcut: None,
-            disabled: false,
+            disabled: worktree_finish_busy,
             action: Box::new(ContextMenuAction::OpenPopover {
                 kind: PopoverKind::ResetPrompt {
                     repo_id,

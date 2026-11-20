@@ -55,11 +55,14 @@ pub(super) fn model(
     // Git refuses to start a rebase while another rebase, cherry-pick,
     // revert, or unconcluded merge is in flight; grey the entry out instead
     // of letting the click surface that refusal.
-    let history_rewrite_disabled = repo.is_some_and(|r| r.history_rewrite_busy());
-    let merge_disabled = !super::super::merge_commit_confirm::merge_commit_is_allowed(
-        repo,
-        &this.state.large_file_settings,
-    );
+    let worktree_finish_busy = this.state.worktree_finish_blocks_workdir_mutation(repo_id);
+    let history_rewrite_disabled =
+        repo.is_some_and(|r| r.history_rewrite_busy()) || worktree_finish_busy;
+    let merge_disabled = worktree_finish_busy
+        || !super::super::merge_commit_confirm::merge_commit_is_allowed(
+            repo,
+            &this.state.large_file_settings,
+        );
     let branch_commit_id: Option<CommitId> = match target {
         BranchMenuTarget::Local { name } => repo.and_then(|repo| {
             repo.branches
@@ -87,11 +90,14 @@ pub(super) fn model(
             .unwrap_or_else(|| name.clone()),
     };
 
+    let checkout_disabled = worktree_finish_busy
+        || (section == BranchSection::Local
+            && this.state.worktree_finish_protects_branch(repo_id, &name));
     items.push(ContextMenuItem::Entry {
         label: language.text("Checkout", "切換分支").into(),
         icon: Some("icons/git_branch.svg".into()),
         shortcut: None,
-        disabled: false,
+        disabled: checkout_disabled,
         action: Box::new(match target {
             BranchMenuTarget::Local { name } => ContextMenuAction::CheckoutBranch {
                 repo_id,
@@ -136,7 +142,7 @@ pub(super) fn model(
             label: label_with_current_branch(items.len(), "Pull into current", "拉取至目前分支"),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: None,
-            disabled: false,
+            disabled: worktree_finish_busy,
             action: Box::new(ContextMenuAction::PullBranch {
                 repo_id,
                 remote: remote.to_string(),
@@ -265,11 +271,13 @@ pub(super) fn model(
 
     items.push(ContextMenuItem::Separator);
     if section == BranchSection::Local {
+        let branch_protected =
+            worktree_finish_busy || this.state.worktree_finish_protects_branch(repo_id, &name);
         items.push(ContextMenuItem::Entry {
             label: language.text("Rename branch", "重新命名分支").into(),
             icon: Some("icons/pencil.svg".into()),
             shortcut: None,
-            disabled: false,
+            disabled: branch_protected,
             action: Box::new(ContextMenuAction::OpenPopover {
                 kind: PopoverKind::RenameBranchPrompt {
                     repo_id,
@@ -282,7 +290,7 @@ pub(super) fn model(
             label: language.text("Delete branch", "刪除分支").into(),
             icon: Some("icons/trash.svg".into()),
             shortcut: None,
-            disabled: is_current_branch,
+            disabled: is_current_branch || branch_protected,
             action: Box::new(ContextMenuAction::DeleteBranch {
                 repo_id,
                 name: name.clone(),
@@ -421,7 +429,7 @@ pub(super) fn model(
                 .into(),
             icon: Some("icons/broom.svg".into()),
             shortcut: None,
-            disabled: false,
+            disabled: this.state.has_active_worktree_finish_run(repo_id),
             action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
         });
         items.push(ContextMenuItem::Entry {

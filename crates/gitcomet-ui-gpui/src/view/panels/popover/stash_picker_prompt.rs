@@ -87,6 +87,16 @@ pub(super) fn activate(
 ) {
     match purpose {
         StashPickerPurpose::Pop => {
+            if this.state.worktree_finish_blocks_workdir_mutation(repo_id) {
+                this.push_toast(
+                    components::ToastKind::Warning,
+                    "This worktree is currently in use by an active Worktree Finish run."
+                        .to_string(),
+                    cx,
+                );
+                this.close_popover(cx);
+                return;
+            }
             this.store.dispatch(Msg::PopStash {
                 repo_id,
                 index: row.index,
@@ -95,6 +105,16 @@ pub(super) fn activate(
             this.close_popover(cx);
         }
         StashPickerPurpose::Apply => {
+            if this.state.worktree_finish_blocks_workdir_mutation(repo_id) {
+                this.push_toast(
+                    components::ToastKind::Warning,
+                    "This worktree is currently in use by an active Worktree Finish run."
+                        .to_string(),
+                    cx,
+                );
+                this.close_popover(cx);
+                return;
+            }
             this.store.dispatch(Msg::ApplyStash {
                 repo_id,
                 index: row.index,

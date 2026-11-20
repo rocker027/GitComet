@@ -9,6 +9,8 @@ pub(super) fn panel(
     let theme = this.theme;
     let title = text(cx, "Pull: choose strategy", "選擇拉取策略");
 
+    let finish_busy = this.state.worktree_finish_blocks_workdir_mutation(repo_id);
+
     ConfirmDialog::new(title, DIALOG_440_WIDTH)
         .text(
             theme,
@@ -48,7 +50,12 @@ pub(super) fn panel(
                 .child(
                     components::Button::new("pull_reconcile_merge", text(cx, "Merge", "合併"))
                         .style(components::ButtonStyle::Filled)
+                        .disabled(finish_busy)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
+                            if this.state.worktree_finish_blocks_workdir_mutation(repo_id) {
+                                cx.notify();
+                                return;
+                            }
                             this.store.dispatch(Msg::Pull {
                                 repo_id,
                                 mode: PullMode::Merge,
@@ -59,7 +66,12 @@ pub(super) fn panel(
                 .child(
                     components::Button::new("pull_reconcile_rebase", text(cx, "Rebase", "變基"))
                         .style(components::ButtonStyle::Outlined)
+                        .disabled(finish_busy)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
+                            if this.state.worktree_finish_blocks_workdir_mutation(repo_id) {
+                                cx.notify();
+                                return;
+                            }
                             this.store.dispatch(Msg::Pull {
                                 repo_id,
                                 mode: PullMode::Rebase,

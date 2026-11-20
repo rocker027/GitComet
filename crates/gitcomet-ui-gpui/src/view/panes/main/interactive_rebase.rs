@@ -1259,7 +1259,8 @@ impl MainPaneView {
         // Setups can outlive the state they were opened under (a merge or
         // pick started from another surface, or externally in a terminal);
         // git would refuse the start, so hold the button until it can work.
-        let history_rewrite_busy = repo.history_rewrite_busy();
+        let history_rewrite_busy = repo.history_rewrite_busy()
+            || self.state.worktree_finish_blocks_workdir_mutation(repo_id);
         let (editor_mode, base, header_title, header_detail, loading_state) =
             if let Some(setup) = repo.interactive_rebase_setup.as_ref() {
                 let base = setup.base.clone();

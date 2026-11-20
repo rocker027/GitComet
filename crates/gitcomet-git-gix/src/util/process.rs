@@ -580,7 +580,7 @@ pub(super) fn terminate_process_tree_and_wait(
     }
 }
 
-pub(super) fn run_command_with_timeout(
+pub(crate) fn run_command_with_timeout(
     cmd: Command,
     label: &str,
     timeout: Duration,

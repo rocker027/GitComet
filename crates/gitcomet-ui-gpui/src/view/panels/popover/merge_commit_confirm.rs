@@ -41,13 +41,16 @@ pub(super) fn panel(
         })
         .unwrap_or_default();
     let destination = merge_commit_destination_label(repo);
-    let merge_ready = merge_commit_is_allowed(repo, &this.state.large_file_settings);
+    let merge_ready = merge_commit_is_allowed(repo, &this.state.large_file_settings)
+        && !repo.is_some_and(|r| this.state.worktree_finish_blocks_workdir_mutation(r.id));
 
     let dispatch = move |this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>| {
         // The dialog can stay open while another command starts. Recheck the
         // live repository instead of relying only on the render-time button.
         let repo = this.state.repos.iter().find(|repo| repo.id == repo_id);
-        if !merge_commit_is_allowed(repo, &this.state.large_file_settings) {
+        if !merge_commit_is_allowed(repo, &this.state.large_file_settings)
+            || repo.is_some_and(|r| this.state.worktree_finish_blocks_workdir_mutation(r.id))
+        {
             cx.notify();
             return;
         }

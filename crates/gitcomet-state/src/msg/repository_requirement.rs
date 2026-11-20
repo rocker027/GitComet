@@ -307,6 +307,7 @@ impl Msg {
             | Self::ConfirmSubmoduleTrustPrompt
             | Self::CancelSubmoduleTrustPrompt
             | Self::Fetch(..)
+            | Self::WorktreeFinish(..)
             | Self::Internal(..) => None,
         }
     }

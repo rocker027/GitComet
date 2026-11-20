@@ -77,6 +77,8 @@ mod unsaved_file_edits_confirm;
 mod upstream_picker;
 mod worktree_add_prompt;
 mod worktree_badge_picker;
+mod worktree_finish_queue;
+mod worktree_finish_setup;
 mod worktree_picker;
 mod worktree_remove_confirm;
 
@@ -420,6 +422,9 @@ pub(in super::super) struct PopoverHost {
     /// "Also delete local branch" in the open Remove-worktree dialog; off on every open.
     worktree_remove_delete_branch: bool,
     worktree_remove_delete_branch_focus_handle: FocusHandle,
+    worktree_finish_setup: Option<worktree_finish_setup::SetupDraft>,
+    worktree_finish_squash_input: Entity<components::TextInput>,
+    worktree_finish_target_filter_input: Entity<components::TextInput>,
     checkout_remote_branch_focus: DialogFocus,
     stash_message_input: Entity<components::TextInput>,
     stash_focus: DialogFocus,
@@ -763,7 +768,11 @@ fn popover_is_confirm_dialog(kind: &PopoverKind) -> bool {
                 ..
             }
             | PopoverKind::Repo {
-                kind: RepoPopoverKind::Worktree(WorktreePopoverKind::RemoveConfirm { .. }),
+                kind: RepoPopoverKind::Worktree(
+                    WorktreePopoverKind::RemoveConfirm { .. }
+                        | WorktreePopoverKind::FinishSetup { .. }
+                        | WorktreePopoverKind::FinishQueue { .. },
+                ),
                 ..
             }
             | PopoverKind::Repo {
@@ -1070,7 +1079,9 @@ fn popover_anchor_corner(kind: &PopoverKind) -> Anchor {
                     WorktreePopoverKind::AddPrompt
                     | WorktreePopoverKind::OpenPicker
                     | WorktreePopoverKind::RemovePicker
-                    | WorktreePopoverKind::RemoveConfirm { .. },
+                    | WorktreePopoverKind::RemoveConfirm { .. }
+                    | WorktreePopoverKind::FinishSetup { .. }
+                    | WorktreePopoverKind::FinishQueue { .. },
                 ),
             ..
         }
@@ -1194,6 +1205,14 @@ pub(in super::super) fn popover_width_spec(kind: &PopoverKind) -> Option<Popover
             Some(DIALOG_540_WIDTH)
         }
         PopoverKind::MergeAbortConfirm { .. } => Some(DIALOG_360_WIDTH),
+        PopoverKind::Repo {
+            kind:
+                RepoPopoverKind::Worktree(
+                    WorktreePopoverKind::FinishSetup { .. }
+                    | WorktreePopoverKind::FinishQueue { .. },
+                ),
+            ..
+        } => Some(PopoverWidthSpec::range(640.0, 540.0, 760.0)),
         PopoverKind::ForceRemoveWorktreeConfirm(_) => Some(DIALOG_460_WIDTH),
         PopoverKind::PullReconcilePrompt { .. } | PopoverKind::AddToGitignorePrompt { .. } => {
             Some(DIALOG_440_WIDTH)

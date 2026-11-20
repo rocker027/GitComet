@@ -39,3 +39,9 @@ pub use store_event::StoreEvent;
 
 mod fetch;
 pub use fetch::FetchMsg;
+mod worktree_finish;
+pub use worktree_finish::{
+    AbortSafetyBaseline, AgentCheckStatus, FinishStepAction, SourceCleanupCheckResult,
+    SourcePreviewResult, StepSiteGuard, WorktreeFinishEffect, WorktreeFinishInternalMsg,
+    WorktreeFinishMsg,
+};

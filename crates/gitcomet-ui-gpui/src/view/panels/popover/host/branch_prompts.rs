@@ -159,6 +159,17 @@ impl PopoverHost {
             Some(PopoverKind::BranchPicker {
                 purpose: BranchPickerPurpose::Delete,
             }) => {
+                if self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                    || self.state.worktree_finish_protects_branch(repo_id, &name)
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This branch is protected by an active Worktree Finish run.".to_string(),
+                        cx,
+                    );
+                    self.close_popover(cx);
+                    return;
+                }
                 let is_centered = matches!(self.popover_anchor, Some(PopoverAnchor::Centered));
                 self.root_view.request(
                     RootRequest::SetForceDeleteBranchCentered(is_centered),
@@ -185,16 +196,22 @@ impl PopoverHost {
             }) => {
                 // The same gate as the branch menu's "Merge into current".
                 let repo = self.state.repos.iter().find(|repo| repo.id == repo_id);
-                if super::super::merge_commit_confirm::merge_commit_is_allowed(
-                    repo,
-                    &self.state.large_file_settings,
-                ) {
+                let finish_busy =
+                    repo.is_some_and(|r| self.state.worktree_finish_blocks_workdir_mutation(r.id));
+                if !finish_busy
+                    && super::super::merge_commit_confirm::merge_commit_is_allowed(
+                        repo,
+                        &self.state.large_file_settings,
+                    )
+                {
                     self.store.dispatch(Msg::MergeRef {
                         repo_id,
                         reference: name,
                     });
                 } else {
-                    let reason = if repo.is_some_and(|repo| repo.history_rewrite_busy()) {
+                    let reason = if finish_busy {
+                        "This worktree is currently in use by an active Worktree Finish run"
+                    } else if repo.is_some_and(|repo| repo.history_rewrite_busy()) {
                         "Finish the merge, rebase, cherry-pick or revert in progress first"
                     } else {
                         "Merging is off while git-annex manages pull and push for this branch"
@@ -204,6 +221,18 @@ impl PopoverHost {
                 self.close_popover(cx);
             }
             _ => {
+                if self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                    || self.state.worktree_finish_protects_branch(repo_id, &name)
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree or branch is currently protected by an active Worktree Finish run"
+                            .to_string(),
+                        cx,
+                    );
+                    self.close_popover(cx);
+                    return;
+                }
                 self.store.dispatch(Msg::CheckoutBranch { repo_id, name });
                 self.close_popover(cx);
             }
@@ -277,6 +306,18 @@ impl PopoverHost {
             _ => return,
         };
 
+        if (checkout && self.state.worktree_finish_blocks_workdir_mutation(repo_id))
+            || self.state.worktree_finish_protects_branch(repo_id, &name)
+        {
+            self.push_toast(
+                components::ToastKind::Warning,
+                "This branch is protected by an active Worktree Finish run.".to_string(),
+                cx,
+            );
+            self.dismiss_inline_popover(window, cx);
+            return;
+        }
+
         if checkout {
             self.store.dispatch(Msg::CreateBranchAndCheckout {
                 repo_id,
@@ -322,6 +363,20 @@ impl PopoverHost {
         if !is_submittable_branch_name(&new_name) || new_name == name {
             return;
         }
+        if self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+            || self.state.worktree_finish_protects_branch(repo_id, &name)
+            || self
+                .state
+                .worktree_finish_protects_branch(repo_id, &new_name)
+        {
+            self.push_toast(
+                components::ToastKind::Warning,
+                "This branch is protected by an active Worktree Finish run.".to_string(),
+                cx,
+            );
+            self.dismiss_inline_popover(window, cx);
+            return;
+        }
         self.store.dispatch(Msg::RenameBranch {
             repo_id,
             old_name: name,
@@ -357,6 +412,20 @@ impl PopoverHost {
         let local_branch = self
             .create_branch_input
             .read_with(cx, |i, _| i.text().trim().to_string());
+
+        if self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+            || self
+                .state
+                .worktree_finish_protects_branch(repo_id, &local_branch)
+        {
+            self.push_toast(
+                components::ToastKind::Warning,
+                "This branch is protected by an active Worktree Finish run.".to_string(),
+                cx,
+            );
+            self.close_popover(cx);
+            return;
+        }
 
         let local_branch_exists = self
             .state

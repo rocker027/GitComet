@@ -3,12 +3,13 @@ use super::*;
 use crate::kit::components::secondary_shortcut;
 use crate::localization::Language;
 
-pub(super) fn model(
+pub(in super::super) fn model(
     repo_id: RepoId,
     path: &std::path::Path,
     branch: Option<&str>,
     editor_available: bool,
     location_available: bool,
+    protected_by_finish: bool,
     language: Language,
 ) -> ContextMenuModel {
     let mut items = vec![ContextMenuItem::Header(
@@ -57,10 +58,26 @@ pub(super) fn model(
     }
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
+        label: language.text("Finish into…", "收尾到…").into(),
+        icon: Some("icons/swap.svg".into()),
+        shortcut: None,
+        disabled: branch.is_none() || protected_by_finish,
+        action: Box::new(ContextMenuAction::OpenPopover {
+            kind: PopoverKind::worktree(
+                repo_id,
+                WorktreePopoverKind::FinishSetup {
+                    preselected: vec![path.to_path_buf()],
+                    target: None,
+                    mode: None,
+                },
+            ),
+        }),
+    });
+    items.push(ContextMenuItem::Entry {
         label: language.text("Remove…", "移除…").into(),
         icon: Some("icons/trash.svg".into()),
         shortcut: None,
-        disabled: false,
+        disabled: protected_by_finish,
         action: Box::new(ContextMenuAction::OpenPopover {
             kind: PopoverKind::worktree(
                 repo_id,
@@ -172,7 +189,15 @@ mod tests {
     fn folder_location_uses_cached_availability_without_checking_disk() {
         let path = std::path::Path::new("/unavailable/checkout");
         for available in [false, true] {
-            let menu = model(RepoId(1), path, None, false, available, Language::English);
+            let menu = model(
+                RepoId(1),
+                path,
+                None,
+                false,
+                available,
+                false,
+                Language::English,
+            );
             let disabled = menu.items.iter().find_map(|item| match item {
                 ContextMenuItem::Entry {
                     action, disabled, ..
@@ -193,7 +218,7 @@ mod tests {
     fn model_includes_open_in_new_tab() {
         let repo_id = RepoId(1);
         let path = std::path::PathBuf::from("/tmp/worktree");
-        let model = model(repo_id, &path, None, false, true, Language::English);
+        let model = model(repo_id, &path, None, false, true, false, Language::English);
 
         let open_action = model
             .items
@@ -228,6 +253,7 @@ mod tests {
                 Some("feature/工作樹"),
                 false,
                 true,
+                false,
                 language,
             );
             let remove_action = menu
@@ -262,13 +288,21 @@ mod tests {
     fn window_editor_override_exposes_the_worktree_action() {
         let path = std::path::Path::new("/tmp/worktree");
         let has_editor = |available| {
-            model(RepoId(1), path, None, available, true, Language::English)
-                .items
-                .iter()
-                .any(|item| {
-                    matches!(item, ContextMenuItem::Entry { action, .. }
+            model(
+                RepoId(1),
+                path,
+                None,
+                available,
+                true,
+                false,
+                Language::English,
+            )
+            .items
+            .iter()
+            .any(|item| {
+                matches!(item, ContextMenuItem::Entry { action, .. }
                 if matches!(**action, ContextMenuAction::OpenInCodeEditor { .. }))
-                })
+            })
         };
         assert!(!has_editor(false));
         assert!(has_editor(true));

@@ -820,6 +820,41 @@ impl PopoverHost {
             cx.focus_handle().tab_index(0).tab_stop(true);
         let worktree_remove_delete_branch_focus_handle =
             cx.focus_handle().tab_index(0).tab_stop(true);
+        let worktree_finish_squash_input = cx.new(|cx| {
+            components::TextInput::new(
+                components::TextInputOptions {
+                    placeholder: "Squash commit message".into(),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+        let worktree_finish_target_filter_input = cx.new(|cx| {
+            components::TextInput::new(
+                components::TextInputOptions {
+                    placeholder: "Filter target branches…".into(),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+        // F6: re-render FinishSetup live whenever the user types in the target branch filter.
+        prompt_input_subscriptions.push(cx.observe(
+            &worktree_finish_target_filter_input,
+            |this, _input, cx| {
+                if matches!(
+                    this.popover,
+                    Some(PopoverKind::Repo {
+                        kind: RepoPopoverKind::Worktree(WorktreePopoverKind::FinishSetup { .. }),
+                        ..
+                    })
+                ) {
+                    cx.notify();
+                }
+            },
+        ));
         let worktree_add_create_branch_focus_handle = cx.focus_handle().tab_index(0).tab_stop(true);
         let remote_add_focus = DialogFocus::new(cx);
         let remote_edit_focus = DialogFocus::new(cx);
@@ -999,6 +1034,9 @@ impl PopoverHost {
             filesystem_conflict_apply_to_all_focus_handle,
             worktree_remove_delete_branch: false,
             worktree_remove_delete_branch_focus_handle,
+            worktree_finish_setup: None,
+            worktree_finish_squash_input,
+            worktree_finish_target_filter_input,
             checkout_remote_branch_focus,
             stash_message_input,
             stash_focus,
@@ -2489,6 +2527,33 @@ impl PopoverHost {
                     ..
                 } => {
                     self.worktree_remove_delete_branch = false;
+                    window.focus(&self.prompt_tab_group_focus_handle, cx);
+                }
+                PopoverKind::Repo {
+                    repo_id,
+                    kind:
+                        RepoPopoverKind::Worktree(WorktreePopoverKind::FinishSetup {
+                            preselected,
+                            target,
+                            mode,
+                        }),
+                } => {
+                    let (repo_id, preselected, target, mode) =
+                        (*repo_id, preselected.clone(), target.clone(), *mode);
+                    worktree_finish_setup::prepare_setup_draft(
+                        self,
+                        repo_id,
+                        &preselected,
+                        target,
+                        mode,
+                        cx,
+                    );
+                    window.focus(&self.prompt_tab_group_focus_handle, cx);
+                }
+                PopoverKind::Repo {
+                    kind: RepoPopoverKind::Worktree(WorktreePopoverKind::FinishQueue { .. }),
+                    ..
+                } => {
                     window.focus(&self.prompt_tab_group_focus_handle, cx);
                 }
                 // Must sit above the generic confirm-dialog arm below, which

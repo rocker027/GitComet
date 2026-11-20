@@ -55,6 +55,12 @@ pub(super) fn panel(
         None => reason.into(),
     };
 
+    let finish_busy = this.state.worktree_finish_protects_worktree(repo_id, &path)
+        || this.state.worktree_finish_blocks_workdir_mutation(repo_id)
+        || delete_branch
+            .as_deref()
+            .is_some_and(|b| this.state.worktree_finish_protects_branch(repo_id, b));
+
     ConfirmDialog::new(header, DIALOG_460_WIDTH)
         .text(theme, description)
         .mono_value(theme, path.display().to_string())
@@ -75,7 +81,17 @@ pub(super) fn panel(
                 language.text("Delete anyway", "仍要刪除"),
             )
             .style(components::ButtonStyle::Danger)
+            .disabled(finish_busy)
             .on_click(theme, cx, move |this, _e, _w, cx| {
+                if this.state.worktree_finish_protects_worktree(repo_id, &path)
+                    || this.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                    || delete_branch
+                        .as_deref()
+                        .is_some_and(|b| this.state.worktree_finish_protects_branch(repo_id, b))
+                {
+                    cx.notify();
+                    return;
+                }
                 this.store.dispatch(Msg::ForceRemoveWorktree {
                     repo_id,
                     path: path.clone(),

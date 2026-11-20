@@ -1,7 +1,7 @@
 use super::*;
 use crate::localization::Language;
 
-pub(super) fn model(repo_id: RepoId, language: Language) -> ContextMenuModel {
+pub(in super::super) fn model(repo_id: RepoId, language: Language) -> ContextMenuModel {
     let mut items = vec![ContextMenuItem::Header(
         language.text("Worktrees", "工作樹").into(),
     )];
@@ -29,6 +29,22 @@ pub(super) fn model(repo_id: RepoId, language: Language) -> ContextMenuModel {
         disabled: false,
         action: Box::new(ContextMenuAction::OpenPopover {
             kind: PopoverKind::worktree(repo_id, WorktreePopoverKind::OpenPicker),
+        }),
+    });
+    items.push(ContextMenuItem::Entry {
+        label: language.text("Finish worktrees…", "收尾工作樹…").into(),
+        icon: Some("icons/swap.svg".into()),
+        shortcut: None,
+        disabled: false,
+        action: Box::new(ContextMenuAction::OpenPopover {
+            kind: PopoverKind::worktree(
+                repo_id,
+                WorktreePopoverKind::FinishSetup {
+                    preselected: Vec::new(),
+                    target: None,
+                    mode: None,
+                },
+            ),
         }),
     });
     items.push(ContextMenuItem::Entry {

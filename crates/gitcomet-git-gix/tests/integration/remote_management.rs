@@ -9,6 +9,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+mod push_delete_refmap;
 mod scoped_pull;
 
 // Local bare remotes require file protocol to be permitted.

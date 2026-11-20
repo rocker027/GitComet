@@ -47,6 +47,9 @@ mod tag_push;
 mod text_encoding;
 mod upstream;
 mod upstream_divergence;
+mod worktree_finish;
+mod worktree_finish_abort_restore;
+mod worktree_finish_squash_restore;
 mod worktrees;
 
 // Staged auth and cached passphrases are process-wide: hold this while staging

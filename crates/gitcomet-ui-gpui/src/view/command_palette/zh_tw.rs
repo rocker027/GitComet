@@ -82,6 +82,7 @@ pub(super) fn title(command: Command) -> &'static str {
         Command::UpdateSubmodules => "更新子模組",
         Command::RemoveSubmodule => "移除子模組…",
         Command::AddWorktree => "新增工作樹",
+        Command::FinishWorktrees => "收尾工作樹…",
         Command::RemoveWorktree => "移除工作樹…",
         Command::Blame => "追蹤逐行提交（Blame）",
         Command::ShowReflog => "顯示參照日誌",

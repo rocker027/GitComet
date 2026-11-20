@@ -44,6 +44,7 @@ mod submodule_trust;
 #[cfg(test)]
 pub(super) mod test_inputs;
 mod util;
+mod worktree_finish;
 mod worktree_removal;
 
 use crate::model::{AppState, ComparisonSource, Loadable, RepoId};
@@ -872,6 +873,250 @@ fn reconcile_active_nav_history(state: &mut AppState, push: bool) {
     repo.navigation.main_history.reconcile(cur, push);
 }
 
+fn fetch_refspec_targets_protected_branch(
+    state: &AppState,
+    repo_id: RepoId,
+    refspec: &str,
+) -> bool {
+    if refspec.trim_start().starts_with('^') {
+        return false;
+    }
+    let Some((_, raw_dst)) = refspec.split_once(':') else {
+        return false;
+    };
+    let dst = raw_dst.trim();
+    if dst == "HEAD" || dst == "@" {
+        return state.worktree_finish_blocks_workdir_mutation(repo_id);
+    }
+    super::fetch_guard::fetch_destination_writes_protected_branch(
+        dst,
+        state.has_active_worktree_finish_run(repo_id),
+        |branch| state.worktree_finish_protects_branch(repo_id, branch),
+    )
+}
+
+fn git_undo_touches_protected_branch(
+    state: &AppState,
+    repo_id: RepoId,
+    direction: crate::model::GitUndoDirection,
+) -> bool {
+    let Some(repo) = state.repos.iter().find(|r| r.id == repo_id) else {
+        return false;
+    };
+    let Some(entry) = repo.git_undo.next(direction) else {
+        return false;
+    };
+    entry
+        .changes
+        .iter()
+        .any(|change| state.worktree_finish_protects_branch(repo_id, &change.reference))
+}
+
+fn worktree_finish_blocked_repo_id(state: &AppState, msg: &Msg) -> Option<RepoId> {
+    if state.worktree_finish_runs.is_empty() {
+        return None;
+    }
+    match msg {
+        Msg::AddWorktree {
+            repo_id,
+            path,
+            checkout,
+            ..
+        } => {
+            let resolved_path = if path.is_relative() {
+                state
+                    .repos
+                    .iter()
+                    .find(|r| r.id == *repo_id)
+                    .map(|r| r.spec.workdir.join(path))
+                    .unwrap_or_else(|| path.clone())
+            } else {
+                path.clone()
+            };
+            if state.worktree_finish_protects_worktree(*repo_id, &resolved_path) {
+                return Some(*repo_id);
+            }
+            let target_branch = match checkout {
+                gitcomet_core::services::WorktreeCheckout::Existing { reference } => {
+                    reference.as_str()
+                }
+                gitcomet_core::services::WorktreeCheckout::NewBranch { name, .. }
+                | gitcomet_core::services::WorktreeCheckout::TrackRemote { name, .. } => {
+                    name.as_str()
+                }
+            };
+            state
+                .worktree_finish_protects_branch(*repo_id, target_branch)
+                .then_some(*repo_id)
+        }
+        Msg::RemoveWorktree {
+            repo_id,
+            path,
+            delete_branch,
+        }
+        | Msg::ForceRemoveWorktree {
+            repo_id,
+            path,
+            delete_branch,
+        } => {
+            if state.worktree_finish_protects_worktree(*repo_id, path)
+                || delete_branch
+                    .as_deref()
+                    .is_some_and(|b| state.worktree_finish_protects_branch(*repo_id, b))
+            {
+                return Some(*repo_id);
+            }
+            state
+                .worktree_finish_blocks_workdir_mutation(*repo_id)
+                .then_some(*repo_id)
+        }
+        Msg::RenameBranch {
+            repo_id,
+            old_name,
+            new_name,
+            ..
+        } => {
+            if state.worktree_finish_protects_branch(*repo_id, old_name)
+                || state.worktree_finish_protects_branch(*repo_id, new_name)
+            {
+                return Some(*repo_id);
+            }
+            state
+                .worktree_finish_blocks_workdir_mutation(*repo_id)
+                .then_some(*repo_id)
+        }
+        Msg::DeleteBranch { repo_id, name } | Msg::ForceDeleteBranch { repo_id, name } => {
+            if state.worktree_finish_protects_branch(*repo_id, name) {
+                return Some(*repo_id);
+            }
+            state
+                .worktree_finish_blocks_workdir_mutation(*repo_id)
+                .then_some(*repo_id)
+        }
+        Msg::DeleteBranches { repo_id, names, .. } => {
+            if names
+                .iter()
+                .any(|name| state.worktree_finish_protects_branch(*repo_id, name))
+            {
+                return Some(*repo_id);
+            }
+            state
+                .worktree_finish_blocks_workdir_mutation(*repo_id)
+                .then_some(*repo_id)
+        }
+        Msg::CreateBranch { repo_id, name, .. } => state
+            .worktree_finish_protects_branch(*repo_id, name)
+            .then_some(*repo_id),
+        Msg::CreateBranchAndCheckout { repo_id, name, .. }
+        | Msg::CheckoutBranch { repo_id, name } => {
+            if state.worktree_finish_protects_branch(*repo_id, name) {
+                return Some(*repo_id);
+            }
+            state
+                .worktree_finish_blocks_workdir_mutation(*repo_id)
+                .then_some(*repo_id)
+        }
+        Msg::CheckoutRemoteBranch {
+            repo_id,
+            local_branch,
+            ..
+        } => {
+            if state.worktree_finish_protects_branch(*repo_id, local_branch) {
+                return Some(*repo_id);
+            }
+            state
+                .worktree_finish_blocks_workdir_mutation(*repo_id)
+                .then_some(*repo_id)
+        }
+        Msg::PruneMergedBranches { repo_id } => state
+            .has_active_worktree_finish_run(*repo_id)
+            .then_some(*repo_id),
+        Msg::ResolveBranchExistsPrompt { prompt, choice } => {
+            if *choice == crate::msg::BranchExistsChoice::Cancel {
+                return None;
+            }
+            let protects_target = state
+                .worktree_finish_protects_branch(prompt.repo_id, &prompt.name)
+                || matches!(
+                    &prompt.operation,
+                    crate::model::BranchExistsPromptOperation::RenameBranch { old_name }
+                        if state.worktree_finish_protects_branch(prompt.repo_id, old_name)
+                );
+            if protects_target {
+                return Some(prompt.repo_id);
+            }
+            state
+                .worktree_finish_blocks_workdir_mutation(prompt.repo_id)
+                .then_some(prompt.repo_id)
+        }
+        Msg::Fetch(crate::msg::FetchMsg::Refspecs {
+            repo_id, refspecs, ..
+        }) => refspecs
+            .iter()
+            .any(|spec| fetch_refspec_targets_protected_branch(state, *repo_id, spec))
+            .then_some(*repo_id),
+        Msg::UndoGitOperation { repo_id } => (state
+            .worktree_finish_blocks_workdir_mutation(*repo_id)
+            || git_undo_touches_protected_branch(
+                state,
+                *repo_id,
+                crate::model::GitUndoDirection::Undo,
+            ))
+        .then_some(*repo_id),
+        Msg::RedoGitOperation { repo_id } => (state
+            .worktree_finish_blocks_workdir_mutation(*repo_id)
+            || git_undo_touches_protected_branch(
+                state,
+                *repo_id,
+                crate::model::GitUndoDirection::Redo,
+            ))
+        .then_some(*repo_id),
+        Msg::DisableBareMode { repo_id, .. } => state
+            .has_active_worktree_finish_run(*repo_id)
+            .then_some(*repo_id),
+        Msg::RunLargeFileCommand { repo_id, command } => matches!(
+            command,
+            gitcomet_core::large_files::LargeFileCommand::AnnexPull { .. }
+        )
+        .then(|| {
+            state
+                .worktree_finish_blocks_workdir_mutation(*repo_id)
+                .then_some(*repo_id)
+        })
+        .flatten(),
+        Msg::CheckoutCommit { repo_id, .. }
+        | Msg::MergeRef { repo_id, .. }
+        | Msg::SquashRef { repo_id, .. }
+        | Msg::Rebase { repo_id, .. }
+        | Msg::InteractiveRebase { repo_id, .. }
+        | Msg::InteractiveCherryPick { repo_id, .. }
+        | Msg::Reset { repo_id, .. }
+        | Msg::PrepareSquash { repo_id, .. }
+        | Msg::SquashCommits { repo_id, .. }
+        | Msg::RewordCommit { repo_id, .. }
+        | Msg::ContinueRewordCommit { repo_id, .. }
+        | Msg::CherryPickCommit { repo_id, .. }
+        | Msg::RevertCommit { repo_id, .. }
+        | Msg::ApplyPatch { repo_id, .. }
+        | Msg::ApplyFileChange { repo_id, .. }
+        | Msg::ApplyWorktreePatch { repo_id, .. }
+        | Msg::Pull { repo_id, .. }
+        | Msg::PullBranch { repo_id, .. }
+        | Msg::Stash { repo_id, .. }
+        | Msg::ApplyStash { repo_id, .. }
+        | Msg::PopStash { repo_id, .. }
+        | Msg::AddSubmodule { repo_id, .. }
+        | Msg::AddSubmoduleTrusted { repo_id, .. }
+        | Msg::UpdateSubmodules { repo_id, .. }
+        | Msg::UpdateSubmodulesTrusted { repo_id, .. }
+        | Msg::ChangeSubmodulePointer { repo_id, .. }
+        | Msg::RemoveSubmodule { repo_id, .. } => state
+            .worktree_finish_blocks_workdir_mutation(*repo_id)
+            .then_some(*repo_id),
+        _ => None,
+    }
+}
+
 fn reduce_inner(
     inputs: &ReducerInputs,
     repos: &mut RepositoryRuntimes,
@@ -879,6 +1124,15 @@ fn reduce_inner(
     state: &mut AppState,
     msg: Msg,
 ) -> Vec<Effect> {
+    if let Some(repo_id) = worktree_finish_blocked_repo_id(state, &msg) {
+        report_error(
+            inputs,
+            state,
+            Some(repo_id),
+            "This worktree is currently protected by an active Worktree Finish run.".to_string(),
+        );
+        return Vec::new();
+    }
     if msg_requires_available_git(&msg)
         && !state.git_runtime.is_available()
         && !matches!(
@@ -2459,6 +2713,7 @@ fn reduce_inner(
         Msg::DiffSession(event) => diff_session::reduce(inputs, repos, state, event),
         Msg::HistoryAuthors(event) => history_authors::reduce(state, event),
         Msg::HistoryFind(event) => history_find::reduce(state, event),
+        Msg::WorktreeFinish(event) => worktree_finish::reduce(inputs, id_alloc, state, event),
         Msg::Internal(msg) => internal::reduce(inputs, repos, id_alloc, state, msg),
     }
 }

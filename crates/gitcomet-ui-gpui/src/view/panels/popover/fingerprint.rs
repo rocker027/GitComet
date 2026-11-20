@@ -165,12 +165,70 @@ pub(super) fn notify_fingerprint(
                 std::mem::discriminant(&check.operation).hash(&mut hasher);
             }
         }
+        PopoverKind::Repo {
+            kind:
+                RepoPopoverKind::Worktree(
+                    WorktreePopoverKind::FinishSetup { .. }
+                    | WorktreePopoverKind::FinishQueue { .. },
+                ),
+            ..
+        } => {
+            if let Some(repo) = repo_for_popover(state, popover, binding) {
+                repo.branches_rev.hash(&mut hasher);
+                repo.worktrees_rev.hash(&mut hasher);
+                repo.head_branch_rev.hash(&mut hasher);
+            }
+            state.worktree_finish_runs.len().hash(&mut hasher);
+            for run in &state.worktree_finish_runs {
+                run.id.hash(&mut hasher);
+                std::mem::discriminant(&run.phase).hash(&mut hasher);
+                run.compute_fingerprint().hash(&mut hasher);
+                run.preview_blockers.len().hash(&mut hasher);
+                run.preview_warnings.len().hash(&mut hasher);
+                run.temp_worktree_kept_note.hash(&mut hasher);
+                run.cleanup_agent_check_unverified.hash(&mut hasher);
+                std::mem::discriminant(&run.agent_dispatch.installed).hash(&mut hasher);
+                run.agent_dispatch.last_error.hash(&mut hasher);
+                for src in &run.sources {
+                    std::mem::discriminant(&src.preview).hash(&mut hasher);
+                    std::mem::discriminant(&src.phase).hash(&mut hasher);
+                    std::mem::discriminant(&src.cleanup).hash(&mut hasher);
+                    src.conflict_stops.hash(&mut hasher);
+                    src.result_head.hash(&mut hasher);
+                    src.agent_receipt_unknown.hash(&mut hasher);
+                }
+            }
+        }
         _ => {
             if let Some(repo) = repo_for_popover(state, popover, binding) {
                 let diff = binding
                     .and_then(|binding| binding.diff(repo))
                     .unwrap_or(&repo.diff_state);
                 hash_repo_for_popover(repo, diff, popover, &mut hasher);
+                state
+                    .worktree_finish_blocks_workdir_mutation(repo.id)
+                    .hash(&mut hasher);
+                state
+                    .has_active_worktree_finish_run(repo.id)
+                    .hash(&mut hasher);
+                if let PopoverKind::BranchMenu { target, .. } = popover {
+                    state
+                        .worktree_finish_protects_branch(repo.id, &target.display_name())
+                        .hash(&mut hasher);
+                }
+                if let PopoverKind::Repo {
+                    kind: RepoPopoverKind::Worktree(WorktreePopoverKind::Menu { path, branch }),
+                    ..
+                } = popover
+                {
+                    state
+                        .worktree_finish_protects_worktree(repo.id, path)
+                        .hash(&mut hasher);
+                    branch
+                        .as_deref()
+                        .is_some_and(|b| state.worktree_finish_protects_branch(repo.id, b))
+                        .hash(&mut hasher);
+                }
                 if matches!(popover, PopoverKind::PullPicker | PopoverKind::PushPicker) {
                     hash_large_file_picker_entries(state, repo, &mut hasher);
                 }
@@ -1354,6 +1412,22 @@ fn hash_repo_popover_kind<H: Hasher>(repo_id: RepoId, kind: &RepoPopoverKind, ha
                 37u8.hash(hasher);
                 repo_id.hash(hasher);
                 commit_id.hash(hasher);
+            }
+            WorktreePopoverKind::FinishSetup {
+                preselected,
+                target,
+                mode,
+            } => {
+                38u8.hash(hasher);
+                repo_id.hash(hasher);
+                preselected.hash(hasher);
+                target.hash(hasher);
+                mode.hash(hasher);
+            }
+            WorktreePopoverKind::FinishQueue { run_id } => {
+                39u8.hash(hasher);
+                repo_id.hash(hasher);
+                run_id.hash(hasher);
             }
         },
         RepoPopoverKind::Submodule(submodule_kind) => match submodule_kind {

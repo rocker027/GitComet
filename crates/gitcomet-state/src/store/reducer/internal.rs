@@ -546,5 +546,6 @@ pub(super) fn reduce(
             command,
             result,
         } => auth::repo_command_finished(inputs, repos, id_alloc, state, repo_id, command, result),
+        InternalMsg::WorktreeFinish(msg) => worktree_finish::reduce_internal(inputs, state, *msg),
     }
 }

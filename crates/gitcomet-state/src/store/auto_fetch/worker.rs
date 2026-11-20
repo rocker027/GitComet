@@ -243,6 +243,8 @@ pub(super) fn execute(job: &Job, inner: &Inner) -> Completion {
             state.contacts.insert(host, now);
         }
     }
+    let (skipped, protected_refusals) =
+        skip_remotes_writing_protected_branches(job, repo.as_ref(), &remotes, skipped);
     let refs_before = repo.refs_fingerprint(&job.cancellation).ok();
     let result = job.cancellation.check_cancelled().and_then(|()| {
         repo.fetch_all_background_except(
@@ -252,6 +254,16 @@ pub(super) fn execute(job: &Job, inner: &Inner) -> Completion {
             &skipped,
             &job.cancellation,
         )
+    });
+    // The background command log says why a remote was left out.
+    let result = result.map(|mut output| {
+        for reason in &protected_refusals {
+            if !output.stderr.is_empty() && !output.stderr.ends_with('\n') {
+                output.stderr.push('\n');
+            }
+            output.stderr.push_str(reason);
+        }
+        output
     });
     // An unreadable fingerprint counts as a change.
     let refs_changed =
@@ -293,6 +305,39 @@ pub(super) fn execute(job: &Job, inner: &Inner) -> Completion {
         regrouped,
         tracking,
     }
+}
+
+/// `skipped` plus every contacted remote whose configured refspecs would write a branch an
+/// active Worktree Finish run protects, so the other remotes' tracking refs still update,
+/// with the reason for each remote added. When that leaves nothing to contact, the fetch is
+/// an empty success and the group waits for its next interval as usual.
+fn skip_remotes_writing_protected_branches(
+    job: &Job,
+    repo: &dyn GitRepository,
+    remotes: &[FetchRemote],
+    mut skipped: Vec<String>,
+) -> (Vec<String>, Vec<String>) {
+    let mut protected: Vec<String> = std::iter::once(&job.subscriber)
+        .chain(job.members.iter().map(|(_, member)| member))
+        .flat_map(|subscriber| subscriber.protected_branches.iter().cloned())
+        .collect();
+    protected.sort();
+    protected.dedup();
+    if protected.is_empty() {
+        return (skipped, Vec::new());
+    }
+    let refused: Vec<(String, String)> = contacted(remotes, &skipped)
+        .filter_map(|remote| {
+            crate::store::fetch_guard::protected_fetch_refusal(repo, &remote.name, &protected)
+                .map(|reason| (remote.name.clone(), reason))
+        })
+        .collect();
+    let mut reasons = Vec::with_capacity(refused.len());
+    for (name, reason) in refused {
+        skipped.push(name);
+        reasons.push(reason);
+    }
+    (skipped, reasons)
 }
 
 pub(super) fn sleep_unless_cancelled(

@@ -1423,6 +1423,7 @@ pub enum Msg {
         repo_id: RepoId,
         index: usize,
     },
+    WorktreeFinish(super::WorktreeFinishMsg),
     Internal(InternalMsg),
 }
 
@@ -1884,6 +1885,7 @@ pub enum InternalMsg {
         command: RepoCommandKind,
         result: Result<CommandOutput, Error>,
     },
+    WorktreeFinish(Box<super::WorktreeFinishInternalMsg>),
 }
 
 impl From<InternalMsg> for Msg {

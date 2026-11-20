@@ -17,7 +17,9 @@ mod auto_fetch_admission;
 mod bare_conversion;
 mod effects;
 mod executor;
+mod fetch_guard;
 mod mutation_gate;
+pub mod orca_dispatcher;
 mod reducer;
 mod reducer_diagnostics;
 mod repo_load_trace;
@@ -342,6 +344,9 @@ impl WorkerLoopContext<'_> {
                     .hash(&mut inputs);
                 (state.active_repo == Some(repo.id)).hash(&mut inputs);
                 repo.needs_auto_fetch_refresh().hash(&mut inputs);
+                state
+                    .worktree_finish_protected_branches(repo.id)
+                    .hash(&mut inputs);
             }
             let inputs = inputs.finish();
             if *self.auto_fetch_inputs == Some(inputs) && self.thread_msg_tx.is_alive() {
@@ -357,6 +362,7 @@ impl WorkerLoopContext<'_> {
                     repository: repos.repository(&repo.id).cloned(),
                     active: state.active_repo == Some(repo.id),
                     needs_refresh: repo.needs_auto_fetch_refresh(),
+                    protected_branches: state.worktree_finish_protected_branches(repo.id),
                 })
                 .collect();
             (registrations, settings, sign_in_open)
@@ -796,7 +802,18 @@ impl AppStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_test(backend: Arc<dyn GitBackend>) -> (Self, smol::channel::Receiver<StoreEvent>) {
-        Self::with_initial_state(
+        Self::new_test_with_agent_dispatcher(
+            backend,
+            Arc::new(orca_dispatcher::OrcaCliDispatcher::new()),
+        )
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_test_with_agent_dispatcher(
+        backend: Arc<dyn GitBackend>,
+        agent_dispatcher: Arc<dyn gitcomet_core::worktree_finish::AgentDispatcher>,
+    ) -> (Self, smol::channel::Receiver<StoreEvent>) {
+        Self::with_initial_state_and_dispatcher(
             backend,
             AppState::test_default(),
             repository_preferences::PreferenceHub::new(
@@ -804,6 +821,7 @@ impl AppStore {
             ),
             auto_fetch::AutoFetchCoordinator::new(),
             FilesystemScope::Store,
+            agent_dispatcher,
         )
     }
 
@@ -812,12 +830,13 @@ impl AppStore {
         backend: Arc<dyn GitBackend>,
         other: &Self,
     ) -> (Self, smol::channel::Receiver<StoreEvent>) {
-        Self::with_initial_state(
+        Self::with_initial_state_and_dispatcher(
             backend,
             AppState::test_default(),
             Arc::clone(&other.msg_tx.preferences),
             Arc::clone(&other.msg_tx.auto_fetch),
             FilesystemScope::Store,
+            Arc::clone(&other.msg_tx.agent_dispatcher),
         )
     }
 
@@ -828,18 +847,37 @@ impl AppStore {
         auto_fetch: Arc<auto_fetch::AutoFetchCoordinator>,
         scope: FilesystemScope,
     ) -> (Self, smol::channel::Receiver<StoreEvent>) {
+        Self::with_initial_state_and_dispatcher(
+            backend,
+            initial,
+            preferences,
+            auto_fetch,
+            scope,
+            Arc::new(orca_dispatcher::OrcaCliDispatcher::new()),
+        )
+    }
+
+    fn with_initial_state_and_dispatcher(
+        backend: Arc<dyn GitBackend>,
+        initial: AppState,
+        preferences: Arc<repository_preferences::PreferenceHub>,
+        auto_fetch: Arc<auto_fetch::AutoFetchCoordinator>,
+        scope: FilesystemScope,
+        agent_dispatcher: Arc<dyn gitcomet_core::worktree_finish::AgentDispatcher>,
+    ) -> (Self, smol::channel::Receiver<StoreEvent>) {
         let discovery_backend = Arc::clone(&backend);
         let state = Arc::new(RwLock::new(Arc::new(initial)));
         let (command_tx, command_rx) = mpsc::channel::<StoreWorkerCommand>();
         let store_id = StoreInstanceId::next();
         let store_alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let msg_tx = StoreWorkerSender::new(
+        let msg_tx = StoreWorkerSender::with_agent_dispatcher(
             command_tx,
             Arc::clone(&store_alive),
             store_id,
             preferences,
             auto_fetch,
             scope.engine(),
+            agent_dispatcher,
         );
         // Coalesced "state changed" notifications: at most one pending.
         let (event_tx, event_rx) = smol::channel::bounded::<StoreEvent>(1);
@@ -1304,6 +1342,29 @@ impl AppStore {
             .commit_identity
             .write()
             .unwrap_or_else(|e| e.into_inner()) = resolver;
+    }
+
+    /// Synchronously updates the live set of worktree paths hosting open embedded GitComet
+    /// terminals and notifies active Worktree Finish runs (F9).
+    pub fn set_running_terminal_paths(&self, paths: Vec<std::path::PathBuf>) {
+        *self
+            .msg_tx
+            .running_terminal_paths
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = paths.clone();
+        self.dispatch(Msg::WorktreeFinish(
+            crate::msg::WorktreeFinishMsg::SyncRunningTerminals { paths },
+        ));
+    }
+
+    /// The worktree paths last reported through [`Self::set_running_terminal_paths`]. Read
+    /// synchronously, so a view can use it without asking the view that owns the terminals.
+    pub fn running_terminal_paths(&self) -> Vec<std::path::PathBuf> {
+        self.msg_tx
+            .running_terminal_paths
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn dispatch(&self, msg: Msg) {

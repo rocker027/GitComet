@@ -269,6 +269,14 @@ impl GitCometView {
             }
             Command::PruneMergedBranches => {
                 if let Some(repo_id) = self.active_repo_id() {
+                    if self.state.has_active_worktree_finish_run(repo_id) {
+                        self.push_toast(
+                            components::ToastKind::Warning,
+                            "This repository has an active Worktree Finish run.".to_string(),
+                            cx,
+                        );
+                        return;
+                    }
                     self.store.dispatch(Msg::PruneMergedBranches { repo_id });
                 }
             }
@@ -362,6 +370,18 @@ impl GitCometView {
                 }
             }
             Command::CheckoutBranch => {
+                if self
+                    .active_repo()
+                    .is_some_and(|repo| self.state.worktree_finish_blocks_workdir_mutation(repo.id))
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(window) = window {
                     self.open_popover_centered(
                         PopoverKind::BranchPicker {
@@ -384,6 +404,17 @@ impl GitCometView {
                 }
             }
             Command::RenameBranch => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(repo_id) = self.active_repo_id()
                     && let Some(window) = window
                     && let Some(name) = self
@@ -413,6 +444,15 @@ impl GitCometView {
                 let Some(repo) = self.active_repo() else {
                     return;
                 };
+                if self.state.worktree_finish_blocks_workdir_mutation(repo.id) {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 self.store.dispatch(Msg::Pull {
                     repo_id: repo.id,
                     mode: PullMode::Default,
@@ -468,6 +508,28 @@ impl GitCometView {
                 }
             }
             Command::UndoGitOperation | Command::RedoGitOperation => {
+                let direction = if command == Command::UndoGitOperation {
+                    gitcomet_state::model::GitUndoDirection::Undo
+                } else {
+                    gitcomet_state::model::GitUndoDirection::Redo
+                };
+                if self.active_repo().is_some_and(|repo| {
+                    self.state.worktree_finish_blocks_workdir_mutation(repo.id)
+                        || repo.git_undo.next(direction).is_some_and(|entry| {
+                            entry.changes.iter().any(|change| {
+                                self.state
+                                    .worktree_finish_protects_branch(repo.id, &change.reference)
+                            })
+                        })
+                }) {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(repo_id) = self.active_repo_id() {
                     self.store
                         .dispatch(if command == Command::UndoGitOperation {
@@ -510,6 +572,18 @@ impl GitCometView {
                 }
             }
             Command::ApplyPatch => {
+                if self
+                    .active_repo()
+                    .is_some_and(|repo| self.state.worktree_finish_blocks_workdir_mutation(repo.id))
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 let Some(repo_id) = self.active_repo_id() else {
                     return;
                 };
@@ -596,11 +670,36 @@ impl GitCometView {
                 }
             }
             Command::Stash => {
+                if self
+                    .active_repo()
+                    .is_some_and(|repo| self.state.worktree_finish_blocks_workdir_mutation(repo.id))
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(window) = window {
                     self.open_popover_centered(PopoverKind::StashPrompt, window, cx);
                 }
             }
             Command::StashPop | Command::StashApply | Command::StashDrop => {
+                if matches!(command, Command::StashPop | Command::StashApply)
+                    && self.active_repo().is_some_and(|repo| {
+                        self.state.worktree_finish_blocks_workdir_mutation(repo.id)
+                    })
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(repo_id) = self.active_repo_id()
                     && let Some(window) = window
                 {
@@ -752,6 +851,24 @@ impl GitCometView {
                         }
                     };
                     self.open_popover_centered(kind, window, cx);
+                }
+            }
+            Command::FinishWorktrees => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && let Some(window) = window
+                {
+                    self.open_popover_centered(
+                        PopoverKind::worktree(
+                            repo_id,
+                            WorktreePopoverKind::FinishSetup {
+                                preselected: Vec::new(),
+                                target: None,
+                                mode: None,
+                            },
+                        ),
+                        window,
+                        cx,
+                    );
                 }
             }
             Command::RemoveWorktree | Command::RemoveSubmodule => {

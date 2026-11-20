@@ -5,7 +5,7 @@ use gitcomet_core::domain::Upstream;
 mod activate;
 mod annex;
 mod branch;
-mod branch_drop;
+pub(super) mod branch_drop;
 mod branch_group;
 mod branch_section;
 mod browse_history;
@@ -56,9 +56,9 @@ mod terminal;
 mod text_format_menu;
 mod ui_scale_picker;
 mod web_link;
-mod worktree;
+pub(super) mod worktree;
 mod worktree_file;
-mod worktree_section;
+pub(super) mod worktree_section;
 
 /// The menu entry that compares a commit against the mark named `label`.
 pub(in crate::view) fn compare_with_mark_label(label: &str) -> SharedString {
@@ -855,6 +855,11 @@ impl PopoverHost {
                 repo_id,
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::Menu { path, branch }),
             } => Some(localized_menu(cx, |language| {
+                let protected_by_finish =
+                    self.state.worktree_finish_protects_worktree(*repo_id, path)
+                        || branch.as_deref().is_some_and(|b| {
+                            self.state.worktree_finish_protects_branch(*repo_id, b)
+                        });
                 worktree::model(
                     *repo_id,
                     path,
@@ -863,6 +868,7 @@ impl PopoverHost {
                     self.worktree_menu_location
                         .as_ref()
                         .is_some_and(|(cached_path, available)| cached_path == path && *available),
+                    protected_by_finish,
                     language,
                 )
             })),

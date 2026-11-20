@@ -85,7 +85,7 @@ pub(super) fn model(
             .into(),
         icon: Some("icons/broom.svg".into()),
         shortcut: None,
-        disabled: false,
+        disabled: this.state.has_active_worktree_finish_run(repo_id),
         action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
     });
     items.push(ContextMenuItem::Entry {

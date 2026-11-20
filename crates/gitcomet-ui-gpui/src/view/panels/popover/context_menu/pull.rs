@@ -122,11 +122,15 @@ fn auto_fetch_status_items(
 pub(super) fn model(this: &PopoverHost, language: Language) -> ContextMenuModel {
     let active_repo_id = this.active_repo_id();
     let repo_disabled = active_repo_id.is_none();
+    let finish_busy = active_repo_id
+        .is_some_and(|repo_id| this.state.worktree_finish_blocks_workdir_mutation(repo_id));
+    let active_finish_run =
+        active_repo_id.is_some_and(|repo_id| this.state.has_active_worktree_finish_run(repo_id));
     // Pull's own reason also covers bare repositories; the bare-action guard skips it.
     let pull_unavailable = this
         .active_repo()
         .and_then(|repo| pull_unavailable_reason(repo, &this.state.large_file_settings));
-    let pull_disabled = this.active_repo().is_none() || pull_unavailable.is_some();
+    let pull_disabled = this.active_repo().is_none() || pull_unavailable.is_some() || finish_busy;
     let repo_id = active_repo_id.unwrap_or(RepoId(0));
     let upstream = super::active_branch_tracking_upstream(this);
 
@@ -205,7 +209,7 @@ pub(super) fn model(this: &PopoverHost, language: Language) -> ContextMenuModel 
                 .into(),
             icon: Some("icons/broom.svg".into()),
             shortcut: None,
-            disabled: repo_disabled,
+            disabled: repo_disabled || finish_busy || active_finish_run,
             action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
         },
         ContextMenuItem::Entry {

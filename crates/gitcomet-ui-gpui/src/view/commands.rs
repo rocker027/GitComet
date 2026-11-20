@@ -111,6 +111,7 @@ commands! {
     AddSubmodule => "add-submodule",
     UpdateSubmodules => "update-submodules",
     AddWorktree => "add-worktree",
+    FinishWorktrees => "finish-worktrees",
     RemoveWorktree => "remove-worktree",
     RemoveSubmodule => "remove-submodule",
     RemoveRemote => "remove-remote",
@@ -225,6 +226,7 @@ impl Command {
             | Self::EditRemoteUrl
             | Self::OpenRemoteInBrowser
             | Self::AddWorktree
+            | Self::FinishWorktrees
             | Self::RemoveWorktree
             | Self::RemoveRemote
             | Self::Blame

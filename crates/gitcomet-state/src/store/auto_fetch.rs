@@ -40,6 +40,9 @@ pub(super) struct Registration {
     pub(super) active: bool,
     /// The tab has no current incoming count and is not loading one.
     pub(super) needs_refresh: bool,
+    /// Branches an active Worktree Finish run protects in this repository; a fetch
+    /// leaves out every remote whose configured refspecs would write one.
+    pub(super) protected_branches: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -57,6 +60,7 @@ struct Subscriber {
     /// word; a sent refresh or a failed fetch updates it in between.
     needs_refresh: bool,
     active: bool,
+    protected_branches: Vec<String>,
 }
 
 impl Subscriber {
@@ -403,6 +407,7 @@ impl AutoFetchCoordinator {
                 sink: Arc::clone(&sink),
                 needs_refresh: registration.needs_refresh,
                 active: registration.active,
+                protected_branches: registration.protected_branches,
             };
             if entry
                 .subscribers

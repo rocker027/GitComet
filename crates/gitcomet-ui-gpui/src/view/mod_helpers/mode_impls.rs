@@ -685,6 +685,16 @@ pub(crate) enum WorktreePopoverKind {
     CommitMenu {
         commit_id: CommitId,
     },
+    /// Batch/single worktree finish setup & preview dialog.
+    FinishSetup {
+        preselected: Vec<std::path::PathBuf>,
+        target: Option<String>,
+        mode: Option<gitcomet_state::model::FinishMode>,
+    },
+    /// Live queue & conflict resolution panel for a worktree finish run.
+    FinishQueue {
+        run_id: gitcomet_state::model::WorktreeFinishRunId,
+    },
 }
 
 /// What the Add-worktree dialog opens with when another surface starts it. The

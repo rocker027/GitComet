@@ -54,6 +54,21 @@ pub(super) fn panel(
         }
     }
 
+    let finish_busy = this.state.worktree_finish_protects_worktree(repo_id, &path)
+        || this.state.worktree_finish_blocks_workdir_mutation(repo_id)
+        || branch
+            .as_deref()
+            .is_some_and(|b| this.state.worktree_finish_protects_branch(repo_id, b));
+    if finish_busy {
+        dialog = dialog.note(
+            theme,
+            language.text(
+                "This worktree is currently protected by an active Worktree Finish run.",
+                "此工作樹正由進行中的工作樹收尾任務保護，暫時無法移除。",
+            ),
+        );
+    }
+
     dialog.render(
         theme,
         dialog_cancel_button(
@@ -64,13 +79,27 @@ pub(super) fn panel(
         ),
         components::Button::new("worktree_remove_go", language.text("Remove", "移除"))
             .style(components::ButtonStyle::Danger)
+            .disabled(finish_busy)
             .on_click(theme, cx, move |this, _e, _w, cx| {
+                let delete_branch_selected = branch
+                    .clone()
+                    .filter(|_| this.worktree_remove_delete_branch);
+                if this.state.worktree_finish_protects_worktree(repo_id, &path)
+                    || this.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                    || branch
+                        .as_deref()
+                        .is_some_and(|b| this.state.worktree_finish_protects_branch(repo_id, b))
+                    || delete_branch_selected
+                        .as_deref()
+                        .is_some_and(|b| this.state.worktree_finish_protects_branch(repo_id, b))
+                {
+                    cx.notify();
+                    return;
+                }
                 this.store.dispatch(Msg::RemoveWorktree {
                     repo_id,
                     path: path.clone(),
-                    delete_branch: branch
-                        .clone()
-                        .filter(|_| this.worktree_remove_delete_branch),
+                    delete_branch: delete_branch_selected,
                 });
                 this.close_popover(cx);
             }),

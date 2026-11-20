@@ -199,6 +199,12 @@ impl PopoverHost {
                     WorktreePopoverKind::RemoveConfirm { path, branch } => {
                         worktree_remove_confirm::panel(self, repo_id, path, branch, cx)
                     }
+                    WorktreePopoverKind::FinishSetup { .. } => {
+                        worktree_finish_setup::panel(self, repo_id, cx)
+                    }
+                    WorktreePopoverKind::FinishQueue { run_id } => {
+                        worktree_finish_queue::panel(self, repo_id, run_id, cx)
+                    }
                 },
                 RepoPopoverKind::Annex(annex_kind) => match annex_kind {
                     AnnexPopoverKind::SectionMenu | AnnexPopoverKind::RepositoryMenu { .. } => {

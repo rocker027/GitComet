@@ -68,7 +68,10 @@ pub(super) fn apply_change_entry(
         .repos
         .iter()
         .find(|repo| repo.id == repo_id)
-        .is_none_or(|repo| repo.history_rewrite_busy());
+        .is_none_or(|repo| {
+            repo.history_rewrite_busy()
+                || this.state.worktree_finish_blocks_workdir_mutation(repo.id)
+        });
     let label = match (language, target.paths.len()) {
         (_, 1) => language.text("Apply change", "套用變更").into(),
         (Language::English, count) => format!("Apply changes ({count})").into(),

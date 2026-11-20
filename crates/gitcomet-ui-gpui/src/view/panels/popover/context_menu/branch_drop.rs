@@ -11,22 +11,26 @@ use super::*;
 use crate::localization::Language;
 
 /// The repository facts the drop menu depends on.
-pub(super) struct BranchDropFacts<'a> {
+pub(in super::super) struct BranchDropFacts<'a> {
     /// The checked-out local branch, if any.
-    pub(super) current: Option<&'a str>,
+    pub(in super::super) current: Option<&'a str>,
     /// The checked-out branch's upstream as `(remote, branch)`.
-    pub(super) current_upstream: Option<(&'a str, &'a str)>,
-    pub(super) merge_allowed: bool,
-    pub(super) history_rewrite_busy: bool,
+    pub(in super::super) current_upstream: Option<(&'a str, &'a str)>,
+    pub(in super::super) merge_allowed: bool,
+    pub(in super::super) history_rewrite_busy: bool,
     /// git-annex runs Push itself, without an upstream (as `push_request`).
-    pub(super) annex_pushes: bool,
+    pub(in super::super) annex_pushes: bool,
+    /// Worktree path where the local source branch is checked out, if any.
+    pub(in super::super) source_worktree: Option<std::path::PathBuf>,
+    /// Worktree path where the local target branch is checked out, if any.
+    pub(in super::super) target_worktree: Option<std::path::PathBuf>,
 }
 
 /// A branch end of the drop: its menu target and the reference Git
 /// actions use (the exact tip for remote branches, as the branch menu does).
-pub(super) struct BranchDropEnd<'a> {
-    pub(super) target: &'a BranchMenuTarget,
-    pub(super) reference: String,
+pub(in super::super) struct BranchDropEnd<'a> {
+    pub(in super::super) target: &'a BranchMenuTarget,
+    pub(in super::super) reference: String,
 }
 
 fn entry(
@@ -50,7 +54,7 @@ fn is_current(target: &BranchMenuTarget, current: Option<&str>) -> bool {
 
 /// Builds the entries and the tooltips of the greyed-out ones, keyed by
 /// item index.
-pub(super) fn drop_items(
+pub(in super::super) fn drop_items(
     repo_id: RepoId,
     source: &BranchDropEnd<'_>,
     target: &BranchDropEnd<'_>,
@@ -174,6 +178,68 @@ pub(super) fn drop_items(
                 ));
             }
         }
+    } else if let (
+        BranchMenuTarget::Local { .. },
+        BranchMenuTarget::Local { name: target_local },
+        Some(source_wt),
+    ) = (source.target, target.target, facts.source_worktree.as_ref())
+    {
+        // Cross-worktree finish: neither branch is checked out in this tab,
+        // but the source branch has a worktree we can finish into/onto target.
+        let merge_wt_label = match (&facts.target_worktree, language) {
+            (Some(wt), Language::English) => format!(
+                "Finish {source_name} into {target_name} (in {})…",
+                wt.display()
+            ),
+            (Some(wt), Language::TraditionalChinese) => format!(
+                "在工作樹 {} 將 {source_name} 收尾合併至 {target_name}…",
+                wt.display()
+            ),
+            (None, Language::English) => format!("Finish {source_name} into {target_name}…"),
+            (None, Language::TraditionalChinese) => {
+                format!("將 {source_name} 收尾合併至 {target_name}…")
+            }
+        };
+        items.push(entry(
+            merge_wt_label,
+            "icons/swap.svg",
+            facts.history_rewrite_busy,
+            ContextMenuAction::OpenPopover {
+                kind: PopoverKind::worktree(
+                    repo_id,
+                    WorktreePopoverKind::FinishSetup {
+                        preselected: vec![source_wt.clone()],
+                        target: Some(target_local.clone()),
+                        mode: Some(gitcomet_state::model::FinishMode::MergeInto),
+                    },
+                ),
+            },
+        ));
+        let rebase_wt_label = match language {
+            Language::English => format!(
+                "Rebase {source_name} onto {target_name} (in {})…",
+                source_wt.display()
+            ),
+            Language::TraditionalChinese => format!(
+                "在工作樹 {} 將 {source_name} 變基至 {target_name}…",
+                source_wt.display()
+            ),
+        };
+        items.push(entry(
+            rebase_wt_label,
+            "icons/arrow_up.svg",
+            facts.history_rewrite_busy,
+            ContextMenuAction::OpenPopover {
+                kind: PopoverKind::worktree(
+                    repo_id,
+                    WorktreePopoverKind::FinishSetup {
+                        preselected: vec![source_wt.clone()],
+                        target: Some(target_local.clone()),
+                        mode: Some(gitcomet_state::model::FinishMode::RebaseOnto),
+                    },
+                ),
+            },
+        ));
     } else {
         // Neither end is checked out: say which one needs to be.
         let merge_reason = match target.target {
@@ -264,16 +330,35 @@ pub(super) fn model(
             .as_ref()?;
         Some((upstream.remote.as_str(), upstream.branch.as_str()))
     });
+    let worktree_for = |end: &BranchMenuTarget| -> Option<std::path::PathBuf> {
+        let BranchMenuTarget::Local { name } = end else {
+            return None;
+        };
+        repo.and_then(|repo| repo.worktrees.ready())
+            .and_then(|wts| {
+                wts.iter()
+                    .find(|wt| {
+                        !wt.bare && !wt.detached && wt.branch.as_deref() == Some(name.as_str())
+                    })
+                    .map(|wt| wt.path.clone())
+            })
+    };
     let facts = BranchDropFacts {
         current,
         current_upstream,
         merge_allowed: super::super::merge_commit_confirm::merge_commit_is_allowed(
             repo,
             &this.state.large_file_settings,
-        ),
-        history_rewrite_busy: repo.is_some_and(|repo| repo.history_rewrite_busy()),
+        ) && !repo
+            .is_some_and(|repo| this.state.worktree_finish_blocks_workdir_mutation(repo.id)),
+        history_rewrite_busy: repo.is_some_and(|repo| {
+            repo.history_rewrite_busy()
+                || this.state.worktree_finish_blocks_workdir_mutation(repo.id)
+        }),
         annex_pushes: repo
             .is_some_and(|repo| repo.annex_takes_over_pull_push(&this.state.large_file_settings)),
+        source_worktree: worktree_for(source),
+        target_worktree: worktree_for(target),
     };
     let (items, tooltips) = drop_items(
         repo_id,
@@ -312,6 +397,8 @@ mod tests {
             merge_allowed: true,
             history_rewrite_busy: false,
             annex_pushes: false,
+            source_worktree: None,
+            target_worktree: None,
         }
     }
 
@@ -483,6 +570,8 @@ mod tests {
             merge_allowed: false,
             history_rewrite_busy: true,
             annex_pushes: false,
+            source_worktree: None,
+            target_worktree: None,
         };
         let (items, _) = drop_items(
             RepoId(1),

@@ -264,8 +264,17 @@ fn for_each_member(
 /// The checked-out branch cannot be deleted, so including it would promise
 /// something the delete cannot do. A remote group has no such constraint: the
 /// local HEAD says nothing about a remote-tracking ref.
-fn is_deletable(section: BranchSection, name: &str, current_branch: Option<&str>) -> bool {
-    section == BranchSection::Remote || Some(name) != current_branch
+fn is_deletable(
+    this: &PopoverHost,
+    repo_id: RepoId,
+    section: BranchSection,
+    name: &str,
+    current_branch: Option<&str>,
+) -> bool {
+    section == BranchSection::Remote
+        || (Some(name) != current_branch
+            && !this.state.worktree_finish_blocks_workdir_mutation(repo_id)
+            && !this.state.worktree_finish_protects_branch(repo_id, name))
 }
 
 /// `(members, deletable)` in one walk.
@@ -285,7 +294,7 @@ fn member_counts(
     let (mut members, mut deletable) = (0, 0);
     for_each_member(this, repo_id, section, remote, path, |name| {
         members += 1;
-        if is_deletable(section, name, current_branch) {
+        if is_deletable(this, repo_id, section, name, current_branch) {
             deletable += 1;
         }
     });
@@ -304,7 +313,7 @@ pub(super) fn deletable_branches(
     let current_branch = current_branch_name(this, repo_id);
     let mut names = Vec::new();
     for_each_member(this, repo_id, section, remote, path, |name| {
-        if is_deletable(section, name, current_branch) {
+        if is_deletable(this, repo_id, section, name, current_branch) {
             names.push(name.to_owned());
         }
     });
