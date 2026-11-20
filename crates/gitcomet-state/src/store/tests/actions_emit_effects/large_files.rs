@@ -452,6 +452,37 @@ fn pull_and_push_on_adjusted_branch_use_git_annex() {
 }
 
 #[test]
+fn push_local_branch_refuses_adjusted_checkout_or_source() {
+    for (head, local_branch) in [
+        ("adjusted/main(unlocked)", "feature/test"),
+        ("main", "adjusted/feature/test(unlocked)"),
+    ] {
+        let (mut repos, id_alloc, mut state, repo_id) = large_file_fixture();
+        annex_repo_on(&mut state, head);
+        let effects = reduce(
+            &mut repos,
+            &id_alloc,
+            &mut state,
+            Msg::PushBranch {
+                repo_id,
+                local_branch: local_branch.into(),
+                upstream: upstream_target("origin", "feature/test"),
+                set_upstream: false,
+            },
+        );
+        assert!(effects.is_empty(), "{head}, {local_branch}: {effects:?}");
+        let repo = &state.repos[0];
+        assert_eq!(repo.push_in_flight, 0);
+        assert!(
+            repo.feedback
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("git-annex adjusted branch"))
+        );
+    }
+}
+
+#[test]
 fn adjusted_branch_never_uses_plain_git_while_support_is_unknown() {
     for support in [
         Loadable::NotLoaded,

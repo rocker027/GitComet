@@ -2015,7 +2015,7 @@ fn commit_details_copy_button_copies_only_the_title_even_when_editing_is_blocked
     let edit = cx
         .debug_bounds("commit_details_edit_message")
         .expect("edit button");
-    assert!(copy.right() <= edit.left());
+    assert!(edit.bottom() <= copy.top());
     click_selector(cx, "commit_details_edit_message");
     assert!(cx.debug_bounds("commit_reword_editor").is_none());
     click_selector(cx, "commit_details_copy_title");

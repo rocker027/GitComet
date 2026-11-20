@@ -108,6 +108,8 @@ impl SettingsWindowView {
             terminal_external_args: None,
             terminal_action_bar_target: None,
             external_code_editor: None,
+            // Saved on its own from the AI commit message page.
+            commit_message_prompt_template: None,
         };
         self.terminal_preferences
             .apply_to_ui_settings(&mut settings);

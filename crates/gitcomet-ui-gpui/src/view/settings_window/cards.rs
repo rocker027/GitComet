@@ -90,6 +90,7 @@ impl SettingsWindowView {
             SettingsCategory::GitExecutable => self.git_executable_card(theme, cx),
             SettingsCategory::Environment => self.environment_card(theme, cx),
             SettingsCategory::Links => self.links_card(theme, cx),
+            SettingsCategory::CommitMessage => self.commit_message_prompt_card(theme, cx),
         }
     }
 

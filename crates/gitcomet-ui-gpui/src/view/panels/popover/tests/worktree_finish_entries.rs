@@ -64,6 +64,30 @@ fn b2_command_palette_entry_opens_finish_setup_inside_root_view_update(
 }
 
 #[gpui::test]
+fn action_bar_finish_button_opens_finish_setup_without_preselection(cx: &mut gpui::TestAppContext) {
+    let repo_id = RepoId(1);
+    let state = app_state_with_repo(repo_with_worktrees(repo_id), repo_id);
+    let (view, cx) = open_view(cx, state);
+    redraw(cx);
+
+    let center = cx
+        .debug_bounds("finish_worktrees")
+        .expect("the action bar's Finish button")
+        .center();
+    cx.simulate_mouse_move(center, None, gpui::Modifiers::default());
+    cx.simulate_mouse_down(center, gpui::MouseButton::Left, gpui::Modifiers::default());
+    cx.simulate_mouse_up(center, gpui::MouseButton::Left, gpui::Modifiers::default());
+    redraw(cx);
+
+    assert_eq!(
+        finish_setup_selection(&view, cx, repo_id),
+        Vec::<PathBuf>::new(),
+        "the toolbar entry lists every worktree without preselecting one"
+    );
+    assert!(cx.debug_bounds("worktree_finish_confirm_go").is_some());
+}
+
+#[gpui::test]
 fn b2_context_menu_entry_opens_finish_setup_with_its_worktree_preselected(
     cx: &mut gpui::TestAppContext,
 ) {

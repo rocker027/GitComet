@@ -344,6 +344,7 @@ pub(crate) fn msg_requires_available_git(msg: &Msg) -> bool {
             | Msg::SquashRef { .. }
             | Msg::PushWithTags { .. }
             | Msg::Push { .. }
+            | Msg::PushBranch { .. }
             | Msg::PushAfterCommit { .. }
             | Msg::ForcePush { .. }
             | Msg::ForcePushWithLease { .. }
@@ -2210,6 +2211,22 @@ fn reduce_inner(
         Msg::Push { repo_id } => match annex_takeover(inputs, repos, state, repo_id, false) {
             Some(effects) => effects,
             None => actions_emit_effects::push(repos, state, repo_id),
+        },
+        Msg::PushBranch {
+            repo_id,
+            local_branch,
+            upstream,
+            set_upstream,
+        } => match auth::annex_push_branch_refusal(inputs, state, repo_id, &local_branch) {
+            Some(effects) => effects,
+            None => actions_emit_effects::push_branch(
+                repos,
+                state,
+                repo_id,
+                local_branch,
+                upstream,
+                set_upstream,
+            ),
         },
         Msg::PushAfterCommit {
             repo_id,

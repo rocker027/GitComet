@@ -176,6 +176,7 @@ impl Msg {
             | Self::PushWithTags { repo_id, .. }
             | Self::PreviewTagPush { repo_id, .. }
             | Self::Push { repo_id, .. }
+            | Self::PushBranch { repo_id, .. }
             | Self::PushAfterCommit { repo_id, .. }
             | Self::ForcePush { repo_id, .. }
             | Self::ForcePushWithLease { repo_id, .. }

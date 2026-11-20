@@ -111,6 +111,22 @@ pub(crate) enum TextFormatMenuSection {
     TabSize,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum PushUpstreamMode {
+    CurrentBranch,
+    SelectedBranch(String),
+    ConfigureOnly(String),
+}
+
+impl PushUpstreamMode {
+    pub(in crate::view) fn local_branch(&self) -> Option<&str> {
+        match self {
+            Self::CurrentBranch => None,
+            Self::SelectedBranch(branch) | Self::ConfigureOnly(branch) => Some(branch),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PopoverKind {
     /// A dialog an extension opened; its content lives on the popover host.
@@ -237,9 +253,7 @@ pub(crate) enum PopoverKind {
     PushSetUpstreamPrompt {
         repo_id: RepoId,
         remote: String,
-        /// `Some` configures this local branch without pushing. `None` is the
-        /// first-push flow that creates the remote branch immediately.
-        configure_only_for: Option<String>,
+        mode: PushUpstreamMode,
     },
     ForcePushConfirm {
         repo_id: RepoId,

@@ -404,6 +404,7 @@ enum SettingsCategory {
     GitExecutable,
     Environment,
     Links,
+    CommitMessage,
 }
 
 impl SettingsCategory {
@@ -424,6 +425,7 @@ impl SettingsCategory {
         SettingsCategory::GitExecutable,
         SettingsCategory::Environment,
         SettingsCategory::Links,
+        SettingsCategory::CommitMessage,
     ];
 
     fn label(self, language: Language) -> &'static str {
@@ -444,6 +446,7 @@ impl SettingsCategory {
             Self::GitExecutable => ("Executables", "執行檔"),
             Self::Environment => ("Environment", "環境"),
             Self::Links => ("Links", "連結"),
+            Self::CommitMessage => ("AI commit message", "AI 提交訊息"),
         };
         language.text(english, traditional_chinese)
     }
@@ -466,6 +469,7 @@ impl SettingsCategory {
             Self::GitExecutable => "icons/git_branch.svg",
             Self::Environment => "icons/computer.svg",
             Self::Links => "icons/link.svg",
+            Self::CommitMessage => "icons/lightning.svg",
         }
     }
 
@@ -487,6 +491,7 @@ impl SettingsCategory {
             Self::GitExecutable => "settings_window_nav_git_executable",
             Self::Environment => "settings_window_nav_environment",
             Self::Links => "settings_window_nav_links",
+            Self::CommitMessage => "settings_window_nav_commit_message",
         }
     }
 
@@ -553,6 +558,9 @@ impl SettingsCategory {
             Self::Links => {
                 "links theme guide github license open source licenses professional edition \
                  upgrade waitlist"
+            }
+            Self::CommitMessage => {
+                "ai commit message prompt template orca agent generate staged 提交訊息 提示詞 模板"
             }
         }
     }
@@ -678,6 +686,8 @@ pub(crate) struct SettingsWindowView {
     terminal_external_program_input: Entity<components::TextInput>,
     terminal_external_args_input: Entity<components::TextInput>,
     terminal_status: Option<TerminalSettingsStatus>,
+    commit_message_prompt_input: Entity<components::TextInput>,
+    commit_message_prompt_status: Option<SharedString>,
     diff_content_mode: DiffContentMode,
     diff_whitespace_mode: DiffWhitespaceMode,
     diff_engine: DiffEngine,
@@ -870,6 +880,7 @@ pub(in crate::view) fn open_settings_at(
                     "executables" => SettingsCategory::GitExecutable,
                     "environment" => SettingsCategory::Environment,
                     "links" => SettingsCategory::Links,
+                    "commit-message" => SettingsCategory::CommitMessage,
                     _ => return,
                 };
                 view.select_category(page, cx);
@@ -1254,6 +1265,21 @@ impl SettingsWindowView {
             input
         });
 
+        let commit_message_prompt_input = cx.new(|cx| {
+            let mut input = components::TextInput::new(
+                components::TextInputOptions {
+                    multiline: true,
+                    soft_wrap: true,
+                    min_lines: 8,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            input.set_text(saved_commit_message_prompt(), cx);
+            input
+        });
+
         let git_executable_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
@@ -1547,6 +1573,8 @@ impl SettingsWindowView {
             terminal_external_program_input,
             terminal_external_args_input,
             terminal_status: None,
+            commit_message_prompt_input,
+            commit_message_prompt_status: None,
             diff_content_mode,
             diff_whitespace_mode,
             diff_engine,
@@ -1735,6 +1763,8 @@ impl SettingsWindowView {
 
 mod appearance;
 mod cards;
+mod commit_message_prompt;
+use commit_message_prompt::saved_commit_message_prompt;
 pub(crate) mod close_guards;
 mod extension_host;
 mod extension_pages;

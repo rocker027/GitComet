@@ -251,7 +251,7 @@ fn upstream_create_new_opens_the_set_only_prompt(cx: &mut gpui::TestAppContext) 
         Some(PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote: "origin".to_string(),
-            configure_only_for: Some(branch.clone()),
+            mode: PushUpstreamMode::ConfigureOnly(branch.clone()),
         })
     );
     assert_eq!(remote_branch, branch);
@@ -263,7 +263,7 @@ fn set_only_prompt_builds_a_config_action_without_a_push() {
     let kind = PopoverKind::PushSetUpstreamPrompt {
         repo_id: RepoId(1),
         remote: "origin".to_string(),
-        configure_only_for: Some("feature/current".to_string()),
+        mode: PushUpstreamMode::ConfigureOnly("feature/current".to_string()),
     };
 
     let message =
@@ -279,6 +279,99 @@ fn set_only_prompt_builds_a_config_action_without_a_push() {
             && remote == "mirror"
             && remote_branch == "review/current"
     ));
+}
+
+#[gpui::test]
+fn selected_branch_first_push_prefills_and_submits_the_selected_source(
+    cx: &mut gpui::TestAppContext,
+) {
+    let repo_id = RepoId(1);
+    let mut repo = untracked_repo(repo_id);
+    repo.head_branch = Loadable::Ready("master".into());
+    let (view, cx) = open_popover(
+        cx,
+        repo,
+        PopoverKind::BranchMenu {
+            repo_id,
+            target: BranchMenuTarget::local("feature/current"),
+        },
+    );
+
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                let menu = host
+                    .context_menu_model(&host.popover_kind_for_tests().unwrap(), cx)
+                    .expect("branch menu");
+                let action = menu
+                    .items
+                    .iter()
+                    .find_map(|item| match item {
+                        ContextMenuItem::Entry {
+                            label,
+                            disabled: false,
+                            action,
+                            ..
+                        } if label.as_ref() == "Push branch…" => Some(action.as_ref().clone()),
+                        _ => None,
+                    })
+                    .expect("first-push action");
+                host.context_menu_activate_action(action, window, cx);
+            });
+        });
+    });
+
+    let (kind, remote_branch) = cx.update(|_window, app| {
+        let host = view.read(app).popover_host.read(app);
+        (
+            host.popover_kind_for_tests().expect("first-push prompt"),
+            host.push_upstream_branch_input.read(app).text().to_string(),
+        )
+    });
+    assert_eq!(remote_branch, "feature/current");
+    let message = upstream_prompt_submission(&kind, "mirror".into(), "review/current".into());
+    assert!(matches!(
+        message,
+        Some(Msg::PushBranch { repo_id: RepoId(1), local_branch, upstream, set_upstream: true })
+            if local_branch == "feature/current"
+                && upstream.remote == "mirror"
+                && upstream.branch == "review/current"
+    ));
+}
+
+#[gpui::test]
+fn selected_branch_first_push_requires_reselection_if_the_remote_is_removed(
+    cx: &mut gpui::TestAppContext,
+) {
+    let repo_id = RepoId(1);
+    let mut repo = untracked_repo(repo_id);
+    repo.remotes = Loadable::Ready(Arc::new(vec![Remote {
+        name: "mirror".into(),
+        url: None,
+        default_branch: None,
+    }]));
+    let (view, cx) = open_popover(
+        cx,
+        repo,
+        PopoverKind::PushSetUpstreamPrompt {
+            repo_id,
+            remote: "origin".into(),
+            mode: PushUpstreamMode::SelectedBranch("feature/current".into()),
+        },
+    );
+    let selected_remote = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|_window, app| {
+            view.read(app)
+                .popover_host
+                .read(app)
+                .selected_push_upstream_remote()
+        })
+    };
+
+    assert_eq!(selected_remote(cx), None);
+    click(cx, "push_upstream_remote_selector");
+    click(cx, "push_upstream_remote_option_0");
+    assert_eq!(selected_remote(cx).as_deref(), Some("mirror"));
 }
 
 #[gpui::test]
@@ -310,7 +403,7 @@ fn upstream_create_new_is_keyboard_reachable(cx: &mut gpui::TestAppContext) {
         Some(PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote: "origin".to_string(),
-            configure_only_for: Some(branch),
+            mode: PushUpstreamMode::ConfigureOnly(branch),
         })
     );
 }
@@ -559,7 +652,7 @@ fn first_push_remote_selector_changes_remote_without_resetting_branch_name(
         PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote: "origin".to_string(),
-            configure_only_for: None,
+            mode: PushUpstreamMode::CurrentBranch,
         },
     );
 
@@ -583,7 +676,7 @@ fn first_push_remote_selector_changes_remote_without_resetting_branch_name(
         Some(PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote: "mirror".to_string(),
-            configure_only_for: None,
+            mode: PushUpstreamMode::CurrentBranch,
         })
     );
     assert_eq!(branch_text, "feature/current");
@@ -605,7 +698,7 @@ fn first_push_remote_selector_supports_arrow_and_enter_selection(cx: &mut gpui::
         PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote: "origin".to_string(),
-            configure_only_for: None,
+            mode: PushUpstreamMode::CurrentBranch,
         },
     );
 
@@ -649,7 +742,7 @@ fn first_push_remote_selector_supports_arrow_and_enter_selection(cx: &mut gpui::
         Some(PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote: "mirror".to_string(),
-            configure_only_for: None,
+            mode: PushUpstreamMode::CurrentBranch,
         })
     );
 }
@@ -670,7 +763,7 @@ fn escape_dismisses_set_upstream_prompt_after_a_remote_is_selected(cx: &mut gpui
         PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote: "origin".to_string(),
-            configure_only_for: None,
+            mode: PushUpstreamMode::CurrentBranch,
         },
     );
 
@@ -718,7 +811,7 @@ fn first_push_with_one_remote_keeps_a_static_remote_label(cx: &mut gpui::TestApp
         PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote: "origin".to_string(),
-            configure_only_for: None,
+            mode: PushUpstreamMode::CurrentBranch,
         },
     );
 

@@ -1752,6 +1752,18 @@ pub trait GitRepository: Send + Sync {
     fn pull(&self, mode: PullMode) -> Result<CommandOutput>;
     fn push_with_output(&self) -> Result<CommandOutput>;
 
+    /// Push an explicitly named local branch independently of the worktree's HEAD.
+    fn push_branch_with_output(
+        &self,
+        _local_branch: &str,
+        _upstream: &Upstream,
+        _set_upstream: bool,
+    ) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "pushing a named branch is not implemented for this backend",
+        )))
+    }
+
     fn push_with_tags(&self, _request: &crate::tag_push::TagPushRequest) -> Result<CommandOutput> {
         Err(Error::new(ErrorKind::Unsupported(
             "pushing with tags is not implemented for this backend",

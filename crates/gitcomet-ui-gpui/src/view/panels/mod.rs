@@ -587,6 +587,11 @@ pub(in crate::view) enum ContextMenuAction {
     Push {
         repo_id: RepoId,
     },
+    PushBranch {
+        repo_id: RepoId,
+        local_branch: String,
+        upstream: Upstream,
+    },
     SetUpstreamBranch {
         repo_id: RepoId,
         branch: String,

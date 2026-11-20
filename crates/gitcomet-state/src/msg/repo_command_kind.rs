@@ -50,6 +50,11 @@ pub enum RepoCommandKind {
         reference: String,
     },
     Push,
+    PushBranch {
+        local_branch: String,
+        upstream: Upstream,
+        set_upstream: bool,
+    },
     PushWithTags {
         request: gitcomet_core::tag_push::TagPushRequest,
     },
@@ -284,6 +289,7 @@ impl RepoCommandKind {
                 Self::RunMaintenance
                     | Self::PruneLocalTags
                     | Self::Push
+                    | Self::PushBranch { .. }
                     | Self::PushWithTags { .. }
                     | Self::PushAfterCommit { .. }
                     | Self::ForcePush
@@ -310,6 +316,7 @@ impl RepoCommandKind {
             | Self::PruneLocalTags
             | Self::RunMaintenance
             | Self::Push
+            | Self::PushBranch { .. }
             | Self::PushWithTags { .. }
             | Self::PushAfterCommit { .. }
             | Self::ForcePush
@@ -423,6 +430,7 @@ impl RepoCommandKind {
             | Self::PruneLocalTags
             | Self::RunMaintenance
             | Self::Push
+            | Self::PushBranch { .. }
             | Self::PushWithTags { .. }
             | Self::PushAfterCommit { .. }
             | Self::ForcePush
@@ -483,6 +491,7 @@ impl RepoCommandKind {
             | Self::FetchRefspecs { .. }
             | Self::PruneMergedBranches
             | Self::Push
+            | Self::PushBranch { .. }
             | Self::PushWithTags { .. }
             | Self::PushAfterCommit { .. }
             | Self::ForcePush
@@ -569,7 +578,10 @@ impl RepoCommandKind {
             Self::MergeRef { .. } => "Merge",
             Self::SquashRef { .. } | Self::SquashCommits { .. } => "Squash",
             Self::RewordCommit { .. } => "Edit commit message",
-            Self::Push | Self::PushAfterCommit { .. } => "Push",
+            Self::PushBranch {
+                set_upstream: true, ..
+            } => "Push and set upstream",
+            Self::Push | Self::PushBranch { .. } | Self::PushAfterCommit { .. } => "Push",
             Self::PushWithTags { request } => request.mode.label(),
             Self::ForcePush | Self::ForcePushWithLease { .. } => "Force push",
             Self::PushSetUpstream { .. } => "Push and set upstream",

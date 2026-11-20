@@ -50,7 +50,11 @@ impl OrcaCliDispatcher {
         )
     }
 
-    fn run_json(&self, args: &[String], cancellation: Option<&CancellationToken>) -> Result<Value> {
+    pub(crate) fn run_json(
+        &self,
+        args: &[String],
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Value> {
         if let Some(token) = cancellation {
             token.check_cancelled()?;
         }

@@ -114,6 +114,8 @@ pub struct UiSession {
     pub recommend_repo_maintenance: Option<bool>,
     pub git_executable_path: Option<PathBuf>,
     pub external_code_editor: Option<ExternalCodeEditorSetting>,
+    /// The saved prompt template for AI commit messages; `None` uses the default.
+    pub commit_message_prompt_template: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -344,6 +346,8 @@ pub(crate) struct UiSessionFile {
     git_executable_path: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     external_code_editor: Option<ExternalCodeEditorSettingFile>,
+    #[serde(default, deserialize_with = "lenient")]
+    commit_message_prompt_template: Option<String>,
     #[serde(
         default,
         deserialize_with = "repository_preferences::lenient_preferences"
@@ -610,6 +614,7 @@ pub fn load_from_path(path: &Path) -> UiSession {
             .as_deref()
             .map(path_from_storage_key),
         external_code_editor: external_code_editor_from_file(file.external_code_editor),
+        commit_message_prompt_template: file.commit_message_prompt_template,
     }
 }
 

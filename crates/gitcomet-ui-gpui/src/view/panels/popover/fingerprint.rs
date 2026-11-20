@@ -408,6 +408,7 @@ fn hash_repo_for_popover<H: Hasher>(
             repo.remote_branches_rev.hash(hasher);
             repo.tags_rev.hash(hasher);
             repo.annex_refs_hidden.hash(hasher);
+            repo.large_file_support_rev.hash(hasher);
             // The checkout picker's rows carry each ref's author, date and
             // summary on their detail line, so metadata landing while the picker
             // is open has to repaint it — the rows change height, not just text.
@@ -594,6 +595,7 @@ fn hash_repo_for_popover<H: Hasher>(
             repo.tags_rev.hash(hasher);
             repo.remotes_rev.hash(hasher);
             repo.remote_tags_rev.hash(hasher);
+            repo.large_file_support_rev.hash(hasher);
             repo.status_rev.hash(hasher);
             repo.history_state.selected_commit_rev.hash(hasher);
             repo.history_state.log_rev.hash(hasher);
@@ -904,11 +906,11 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
         PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote,
-            configure_only_for,
+            mode,
         } => {
             repo_id.hash(hasher);
             remote.hash(hasher);
-            configure_only_for.hash(hasher);
+            mode.hash(hasher);
         }
         PopoverKind::ForcePushConfirm { repo_id } => {
             repo_id.hash(hasher);

@@ -2456,17 +2456,13 @@ impl PopoverHost {
                         },
                     ));
                 }
-                PopoverKind::PushSetUpstreamPrompt {
-                    repo_id,
-                    configure_only_for,
-                    ..
-                } => {
+                PopoverKind::PushSetUpstreamPrompt { repo_id, mode, .. } => {
                     self.push_upstream_remote_menu_open = false;
                     self.push_upstream_remote_selected_index = None;
                     let current_text = self
                         .push_upstream_branch_input
                         .read_with(cx, |i, _| i.text().to_string());
-                    let text = configure_only_for.clone().unwrap_or_else(|| {
+                    let text = mode.local_branch().map(str::to_owned).unwrap_or_else(|| {
                         self.state
                             .repos
                             .iter()

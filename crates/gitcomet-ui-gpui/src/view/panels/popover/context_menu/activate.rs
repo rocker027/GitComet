@@ -2,9 +2,9 @@
 
 use super::{
     ConflictResolverViewMode, ContextMenuAction, ContextMenuItem, ContextMenuModel, DiffArea,
-    InteractiveRebaseAction, Msg, PopoverHost, PopoverKind, PushRequest, Window, add_repo_menu,
-    app_menu, branch_group, components, context_menu_entry_action_at, push_request, repo_picker,
-    resolve_checkout_file_path, session,
+    InteractiveRebaseAction, Msg, PopoverHost, PopoverKind, PushRequest, PushUpstreamMode, Window,
+    add_repo_menu, app_menu, branch_group, components, context_menu_entry_action_at, push_request,
+    repo_picker, resolve_checkout_file_path, session,
 };
 use crate::view::WorktreePopoverKind;
 use crate::view::gitcomet_view_requests::{RootRequest, RootRequests as _};
@@ -1127,7 +1127,7 @@ impl PopoverHost {
                             PopoverKind::PushSetUpstreamPrompt {
                                 repo_id,
                                 remote,
-                                configure_only_for: None,
+                                mode: PushUpstreamMode::CurrentBranch,
                             },
                             anchor,
                             window,
@@ -1138,6 +1138,16 @@ impl PopoverHost {
                     PushRequest::NoRemotes | PushRequest::NotReady => {}
                 }
             }
+            ContextMenuAction::PushBranch {
+                repo_id,
+                local_branch,
+                upstream,
+            } => self.store.dispatch(Msg::PushBranch {
+                repo_id,
+                local_branch,
+                upstream,
+                set_upstream: false,
+            }),
             ContextMenuAction::SetUpstreamBranch {
                 repo_id,
                 branch,

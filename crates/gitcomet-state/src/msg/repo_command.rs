@@ -218,6 +218,13 @@ pub enum RepoCommandEffect {
         repo_id: RepoId,
         auth: Option<StagedGitAuth>,
     },
+    PushBranch {
+        repo_id: RepoId,
+        local_branch: String,
+        upstream: Upstream,
+        set_upstream: bool,
+        auth: Option<StagedGitAuth>,
+    },
     PushAfterCommit {
         repo_id: RepoId,
         target: SafePushAfterCommitTarget,
@@ -389,6 +396,7 @@ macro_rules! match_git_auth {
             | RepoCommandEffect::PullBranch { auth: $auth, .. }
             | RepoCommandEffect::PushWithTags { auth: $auth, .. }
             | RepoCommandEffect::Push { auth: $auth, .. }
+            | RepoCommandEffect::PushBranch { auth: $auth, .. }
             | RepoCommandEffect::PushAfterCommit { auth: $auth, .. }
             | RepoCommandEffect::ForcePush { auth: $auth, .. }
             | RepoCommandEffect::ForcePushWithLease { auth: $auth, .. }
@@ -724,6 +732,20 @@ impl RepoCommandEffect {
             RepoCommandEffect::Push { repo_id, .. } => {
                 Some(RepoCommandKind::Push.finished(repo_id, Err(error)))
             }
+            RepoCommandEffect::PushBranch {
+                repo_id,
+                local_branch,
+                upstream,
+                set_upstream,
+                ..
+            } => Some(
+                RepoCommandKind::PushBranch {
+                    local_branch,
+                    upstream,
+                    set_upstream,
+                }
+                .finished(repo_id, Err(error)),
+            ),
             RepoCommandEffect::PushAfterCommit {
                 repo_id,
                 target,

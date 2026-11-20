@@ -157,6 +157,8 @@ pub(in super::super) struct DetailsPaneView {
     /// `--no-verify` for the commit and the push after it.
     pub(in super::super) commit_skip_hooks_enabled: bool,
     pub(in super::super) pending_commits: FxHashMap<RepoId, PendingCommit>,
+    /// The AI commit message being generated for a repository's staged changes.
+    pub(in super::super) commit_message_generation: Option<(RepoId, gpui::Task<()>)>,
     pending_amend_prefill: Option<RepoId>,
     /// Suggestion (repo and rev) already offered to the commit box, so git's
     /// prepared message is applied once and never re-applied.
@@ -669,6 +671,7 @@ impl DetailsPaneView {
             commit_push_after_enabled,
             commit_skip_hooks_enabled: false,
             pending_commits: FxHashMap::default(),
+            commit_message_generation: None,
             pending_amend_prefill: None,
             applied_commit_suggestions: rustc_hash::FxHashMap::default(),
             extension_commit_items: Vec::new(),

@@ -256,6 +256,7 @@ fn command_keeps_git_undo(command: &RepoCommandKind) -> bool {
             | RepoCommandKind::PruneLocalTags
             | RepoCommandKind::RunMaintenance
             | RepoCommandKind::Push
+            | RepoCommandKind::PushBranch { .. }
             | RepoCommandKind::PushWithTags { .. }
             | RepoCommandKind::PushAfterCommit { .. }
             | RepoCommandKind::ForcePush

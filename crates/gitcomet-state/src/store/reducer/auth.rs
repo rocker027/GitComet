@@ -5,7 +5,9 @@ use super::{
     actions_emit_effects, begin_commit_action, begin_local_action, external_and_history,
     maintenance, refresh_selected_head_gitlink, repo_management, util, worktree_removal,
 };
-use crate::model::{AppState, AuthPromptState, AuthRetryOperation, CommitRequest, RepoId};
+use crate::model::{
+    AppState, AuthPromptState, AuthRetryOperation, CommitRequest, RepoId, RepoState,
+};
 use crate::model::{AuthPromptKind, AuthPromptStatus};
 use crate::msg::{Effect, Msg, RepoCommandKind};
 use crate::store::reducer::prepared::ReducerInputs;
@@ -274,6 +276,28 @@ pub(super) fn annex_refusal(
     let summary = format!(
         "{action} on a git-annex adjusted branch {reason}. Check out {base} to use plain Git."
     );
+    log_annex_refusal(inputs, repo, action, summary);
+    Some(Vec::new())
+}
+
+pub(super) fn annex_push_branch_refusal(
+    inputs: &ReducerInputs,
+    state: &mut AppState,
+    repo_id: RepoId,
+    local_branch: &str,
+) -> Option<Vec<Effect>> {
+    let repo = state.repos.iter_mut().find(|repo| repo.id == repo_id)?;
+    if !repo.local_branch_push_blocked_by_annex(local_branch) {
+        return None;
+    }
+    let summary = format!(
+        "Push {local_branch} is unavailable when the current or selected branch is a git-annex adjusted branch."
+    );
+    log_annex_refusal(inputs, repo, "Push", summary);
+    Some(Vec::new())
+}
+
+fn log_annex_refusal(inputs: &ReducerInputs, repo: &mut RepoState, action: &str, summary: String) {
     repo.feedback_mut().last_error = Some(summary.clone());
     util::push_action_log(
         inputs,
@@ -284,7 +308,6 @@ pub(super) fn annex_refusal(
         None,
         false,
     );
-    Some(Vec::new())
 }
 
 #[cfg(test)]
@@ -320,6 +343,16 @@ fn retry_msg_for_repo_command(repo_id: RepoId, command: RepoCommandKind) -> Opti
         RepoCommandKind::MergeRef { reference } => Msg::MergeRef { repo_id, reference },
         RepoCommandKind::SquashRef { reference } => Msg::SquashRef { repo_id, reference },
         RepoCommandKind::Push => Msg::Push { repo_id },
+        RepoCommandKind::PushBranch {
+            local_branch,
+            upstream,
+            set_upstream,
+        } => Msg::PushBranch {
+            repo_id,
+            local_branch,
+            upstream,
+            set_upstream,
+        },
         RepoCommandKind::PushWithTags { request } => Msg::PushWithTags { repo_id, request },
         RepoCommandKind::PushAfterCommit {
             target,

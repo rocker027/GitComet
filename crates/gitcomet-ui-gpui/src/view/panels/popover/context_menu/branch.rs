@@ -116,6 +116,16 @@ pub(super) fn model(
         items.extend(worktree_entries(repo, repo_id, target, language));
     }
 
+    if let BranchMenuTarget::Local { name } = target {
+        let (entry, unavailable_reason) = push_entry(repo, repo_id, name, language);
+        items.push(ContextMenuItem::Separator);
+        branch_entry_source_labels.insert(items.len(), "Push".into());
+        if let Some(reason) = unavailable_reason {
+            branch_entry_tooltips.insert(items.len(), reason.into());
+        }
+        items.push(entry);
+    }
+
     if !is_current_branch {
         let current_branch = active_branch_name
             .map(String::as_str)
@@ -136,7 +146,9 @@ pub(super) fn model(
                 branch_entry_tooltips.insert(index, label.clone());
                 label
             };
-        items.push(ContextMenuItem::Separator);
+        if section == BranchSection::Remote {
+            items.push(ContextMenuItem::Separator);
+        }
         let (remote, branch) = remote_parts.unwrap_or((".", &name));
         items.push(ContextMenuItem::Entry {
             label: label_with_current_branch(items.len(), "Pull into current", "拉取至目前分支"),
@@ -444,6 +456,73 @@ pub(super) fn model(
     let mut model = ContextMenuModel::new(items).with_entry_tooltips(branch_entry_tooltips);
     model.entry_source_labels = branch_entry_source_labels;
     model
+}
+
+fn push_entry(
+    repo: Option<&RepoState>,
+    repo_id: RepoId,
+    branch: &str,
+    language: Language,
+) -> (ContextMenuItem, Option<&'static str>) {
+    let local = repo
+        .and_then(|repo| repo.branches.ready())
+        .and_then(|branches| branches.iter().find(|candidate| candidate.name == branch));
+    let remotes = repo.and_then(|repo| repo.remotes.ready());
+    let upstream = local.and_then(|local| local.upstream.as_ref());
+    let preferred_remote = repo
+        .and_then(|repo| super::super::push_set_upstream_prompt::selected_remote(repo, "origin"));
+    let unavailable_reason = if local.is_none() || remotes.is_none() {
+        Some(language.text("Branch or remotes unavailable", "無法取得分支或遠端"))
+    } else if repo.is_some_and(|repo| repo.local_branch_push_blocked_by_annex(branch)) {
+        Some(language.text(
+            "Use git-annex push on an adjusted branch",
+            "調整分支須使用 git-annex 推送",
+        ))
+    } else if let Some(upstream) = upstream {
+        (!remotes
+            .is_some_and(|remotes| remotes.iter().any(|remote| remote.name == upstream.remote)))
+        .then(|| language.text("The upstream remote is not configured", "上游遠端未設定"))
+    } else {
+        preferred_remote
+            .is_none()
+            .then(|| language.text("Add a remote to push to first", "請先新增可推送的遠端"))
+    };
+    let (label, action) = match upstream {
+        Some(upstream) => (
+            format!(
+                "{} {}/{}",
+                language.text("Push to", "推送至"),
+                upstream.remote,
+                upstream.branch
+            )
+            .into(),
+            ContextMenuAction::PushBranch {
+                repo_id,
+                local_branch: branch.to_string(),
+                upstream: upstream.clone(),
+            },
+        ),
+        None => (
+            language.text("Push branch…", "推送分支…").into(),
+            ContextMenuAction::OpenPopover {
+                kind: PopoverKind::PushSetUpstreamPrompt {
+                    repo_id,
+                    remote: preferred_remote.unwrap_or_default(),
+                    mode: PushUpstreamMode::SelectedBranch(branch.to_string()),
+                },
+            },
+        ),
+    };
+    (
+        ContextMenuItem::Entry {
+            label,
+            icon: Some("icons/arrow_up.svg".into()),
+            shortcut: None,
+            disabled: unavailable_reason.is_some(),
+            action: Box::new(action),
+        },
+        unavailable_reason,
+    )
 }
 
 /// What a new worktree for the branch starts from.

@@ -50,7 +50,7 @@ impl PopoverHost {
             let kind = PopoverKind::PushSetUpstreamPrompt {
                 repo_id,
                 remote: request.remote,
-                configure_only_for: None,
+                mode: PushUpstreamMode::CurrentBranch,
             };
             match anchor {
                 Some(anchor) => self.open_popover_at(kind, anchor, window, cx),
@@ -224,7 +224,7 @@ impl PopoverHost {
             }
             PopoverKind::PushSetUpstreamPrompt {
                 repo_id,
-                configure_only_for: None,
+                mode: PushUpstreamMode::CurrentBranch,
                 ..
             } => {
                 let mode = self.push_upstream_tag_mode?;

@@ -1546,6 +1546,132 @@ fn revert_signing_passphrase_failure_sets_passphrase_prompt() {
 }
 
 #[test]
+fn push_local_branch_auth_retry_preserves_target_and_refreshes_refs() {
+    use crate::msg::ReferenceEffect;
+    use gitcomet_core::services::UPSTREAM_CONFIG_WRITE_FAILED;
+
+    let _lock = super::staged_auth_test_lock();
+    clear_staged_git_auth();
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/push-local-branch");
+    state.repos[0].set_head_branch(Loadable::Ready("master".into()));
+    let id_alloc = AtomicU64::new(1);
+    let upstream = Upstream {
+        remote: "publish".into(),
+        branch: "releases/test".into(),
+    };
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::PushBranch {
+            repo_id,
+            local_branch: "feature/test".into(),
+            upstream: upstream.clone(),
+            set_upstream: true,
+        },
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::RepoCommand(RepoCommandEffect::PushBranch {
+            repo_id: RepoId(1), local_branch, upstream: target, set_upstream: true, auth: None,
+        })] if local_branch == "feature/test" && target == &upstream
+    ));
+    assert_eq!(state.repos[0].push_in_flight, 1);
+
+    let command = RepoCommandKind::PushBranch {
+        local_branch: "feature/test".into(),
+        upstream: upstream.clone(),
+        set_upstream: true,
+    };
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::RepoCommandFinished {
+            repo_id,
+            command: command.clone(),
+            result: Err(auth_error(
+                "git push failed: fatal: could not read Username for 'https://example.com': terminal prompts disabled",
+            )),
+        }),
+    );
+    assert_eq!(state.repos[0].push_in_flight, 0);
+    assert_auth_attempt_is_recoverable(&state);
+    let prompt = state.auth_prompt.as_ref().expect("expected auth prompt");
+    assert_eq!(
+        prompt.operation,
+        AuthRetryOperation::RepoCommand {
+            repo_id,
+            command: command.clone(),
+        }
+    );
+    let generation = prompt.generation;
+    // The previous attempt's reference refresh can finish while the prompt is open.
+    state.repos[0].loads_in_flight.clear();
+    let retry_effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SubmitAuthPrompt {
+            generation,
+            username: Some("alice".into()),
+            secret: "test-token".into(),
+        },
+    );
+    assert!(matches!(
+        retry_effects.as_slice(),
+        [Effect::RepoCommand(RepoCommandEffect::PushBranch {
+            repo_id: RepoId(1), local_branch, upstream: target, set_upstream: true, auth: Some(auth),
+        })] if local_branch == "feature/test" && target == &upstream && auth.secret == "test-token"
+    ));
+    assert_eq!(state.repos[0].push_in_flight, 1);
+
+    let mut output = CommandOutput::empty_success("git push publish");
+    output.stderr = UPSTREAM_CONFIG_WRITE_FAILED.into();
+    let refresh = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::RepoCommandFinished {
+            repo_id,
+            command,
+            result: Ok(output),
+        }),
+    );
+    let repo = &state.repos[0];
+    assert_eq!(repo.push_in_flight, 0);
+    assert_eq!(repo.head_branch.ready().map(String::as_str), Some("master"));
+    let entry = repo.feedback.command_log.last().unwrap();
+    assert!(entry.ok);
+    assert_eq!(
+        entry.summary,
+        "Push -u feature/test → publish/releases/test: Pushed, but the upstream was not saved"
+    );
+    assert_eq!(
+        refresh
+            .iter()
+            .filter(|effect| matches!(
+                effect,
+                Effect::References(ReferenceEffect::LoadBranches { repo_id: RepoId(1) })
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        refresh
+            .iter()
+            .filter(|effect| matches!(
+                effect,
+                Effect::References(ReferenceEffect::LoadRemoteBranches { repo_id: RepoId(1) })
+            ))
+            .count(),
+        1
+    );
+    clear_staged_git_auth();
+}
+
+#[test]
 fn tag_push_auth_retry_preserves_mode_destination_and_upstream_choice() {
     use gitcomet_core::tag_push::{TagPushMode, TagPushRequest};
     let _lock = super::staged_auth_test_lock();

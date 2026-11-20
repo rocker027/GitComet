@@ -134,6 +134,11 @@ fn repo_command_context(command: &RepoCommandKind) -> Option<String> {
         RepoCommandKind::Push | RepoCommandKind::ForcePush => {
             "Current branch → configured upstream".to_string()
         }
+        RepoCommandKind::PushBranch {
+            local_branch,
+            upstream,
+            ..
+        } => format!("{local_branch} → {}/{}", upstream.remote, upstream.branch),
         RepoCommandKind::PushAfterCommit { target, hooks, .. } => {
             let context = format!(
                 "{} → {}/{}",
@@ -2845,6 +2850,28 @@ pub(super) fn schedule(
             repo_id,
             tracking_branch_context(thread_state, repo_id),
             auth,
+        ),
+        RepoCommandEffect::PushBranch {
+            repo_id,
+            local_branch,
+            upstream,
+            set_upstream,
+            auth,
+        } => schedule_repo_command(
+            executor,
+            repos,
+            msg_tx,
+            repo_id,
+            RepoCommandKind::PushBranch {
+                local_branch: local_branch.clone(),
+                upstream: upstream.clone(),
+                set_upstream,
+            },
+            move |repo| {
+                run_with_git_auth(auth, || {
+                    repo.push_branch_with_output(&local_branch, &upstream, set_upstream)
+                })
+            },
         ),
         RepoCommandEffect::PushAfterCommit {
             repo_id,

@@ -19,6 +19,7 @@ mod effects;
 mod executor;
 mod fetch_guard;
 mod mutation_gate;
+pub mod orca_commit_message;
 pub mod orca_dispatcher;
 mod reducer;
 mod reducer_diagnostics;

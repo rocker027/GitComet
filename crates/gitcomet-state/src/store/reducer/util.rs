@@ -1391,7 +1391,7 @@ fn summarize_command(
             RepoCommandKind::MergeRef { .. } => "Merge",
             RepoCommandKind::SquashRef { .. } => "Squash",
             RepoCommandKind::PushWithTags { request } => request.mode.label(),
-            RepoCommandKind::Push => "Push",
+            RepoCommandKind::Push | RepoCommandKind::PushBranch { .. } => "Push",
             RepoCommandKind::PushAfterCommit { .. } => "Push after commit",
             RepoCommandKind::ForcePush => "Force push",
             RepoCommandKind::ForcePushWithLease { .. } => "Force push with lease",
@@ -1562,6 +1562,19 @@ fn summarize_command(
             format!("Squash {reference}: {base}")
         }
         RepoCommandKind::Push => format!("Push: {}", push_outcome(output)),
+        RepoCommandKind::PushBranch {
+            local_branch,
+            upstream,
+            set_upstream,
+        } => {
+            let flag = if *set_upstream { " -u" } else { "" };
+            format!(
+                "Push{flag} {local_branch} → {}/{}: {}",
+                upstream.remote,
+                upstream.branch,
+                push_outcome(output)
+            )
+        }
         RepoCommandKind::PushAfterCommit { set_upstream, .. } => {
             let flag = if *set_upstream { " -u" } else { "" };
             format!("Push after commit{flag}: {}", push_outcome(output))

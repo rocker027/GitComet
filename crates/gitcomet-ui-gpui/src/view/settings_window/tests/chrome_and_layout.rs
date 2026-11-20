@@ -909,6 +909,10 @@ fn settings_window_containers_fill_available_width_when_content_wraps(
         ),
         (SettingsCategory::Environment, "settings_window_environment"),
         (SettingsCategory::Links, "settings_window_links"),
+        (
+            SettingsCategory::CommitMessage,
+            "settings_window_commit_message_card",
+        ),
     ] {
         let _ = settings_window.update(&mut settings_cx, |settings, _window, cx| {
             settings.select_category(category, cx);

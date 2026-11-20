@@ -4,9 +4,9 @@ use super::commands::Command;
 use super::{
     AnnexPopoverKind, AnnexPrompt, BranchPickerPurpose, CloseWindow, DecreaseUiScale, DiffArea,
     DiffViewMode, GitCometView, IncreaseUiScale, Loadable, Msg, NewWindow, OpenRepository,
-    PopoverKind, PullMode, PushRequest, RefPickerPurpose, RemotePopoverKind, RepoPopoverKind,
-    ResetUiScale, StashPickerPurpose, SubmodulePopoverKind, ToggleRevealCommit, Window,
-    WorktreePopoverKind, command_palette, components, head_branch_has_live_upstream,
+    PopoverKind, PullMode, PushRequest, PushUpstreamMode, RefPickerPurpose, RemotePopoverKind,
+    RepoPopoverKind, ResetUiScale, StashPickerPurpose, SubmodulePopoverKind, ToggleRevealCommit,
+    Window, WorktreePopoverKind, command_palette, components, head_branch_has_live_upstream,
     head_is_detached, push_request,
 };
 use crate::kit::search_keys::OpenActiveViewSearch;
@@ -471,7 +471,7 @@ impl GitCometView {
                                 PopoverKind::PushSetUpstreamPrompt {
                                     repo_id,
                                     remote,
-                                    configure_only_for: None,
+                                    mode: PushUpstreamMode::CurrentBranch,
                                 },
                                 window,
                                 cx,

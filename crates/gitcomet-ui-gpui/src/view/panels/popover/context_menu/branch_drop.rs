@@ -157,7 +157,7 @@ pub(in super::super) fn drop_items(
                         kind: PopoverKind::PushSetUpstreamPrompt {
                             repo_id,
                             remote: remote.clone(),
-                            configure_only_for: None,
+                            mode: PushUpstreamMode::CurrentBranch,
                         },
                     },
                 ));
@@ -511,7 +511,7 @@ mod tests {
                 if matches!(
                     action.as_ref(),
                     ContextMenuAction::OpenPopover {
-                        kind: PopoverKind::PushSetUpstreamPrompt { remote, configure_only_for: None, .. }
+                        kind: PopoverKind::PushSetUpstreamPrompt { remote, mode: PushUpstreamMode::CurrentBranch, .. }
                     } if remote == "origin"
                 )
         )));

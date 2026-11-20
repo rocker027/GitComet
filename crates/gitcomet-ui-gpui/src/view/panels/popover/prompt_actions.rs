@@ -243,11 +243,9 @@ impl PopoverHost {
                     }
                 },
             },
-            PopoverKind::PushSetUpstreamPrompt {
-                repo_id,
-                remote,
-                configure_only_for,
-            } => push_set_upstream_prompt::panel(self, repo_id, remote, configure_only_for, cx),
+            PopoverKind::PushSetUpstreamPrompt { repo_id, mode, .. } => {
+                push_set_upstream_prompt::panel(self, repo_id, mode, cx)
+            }
             PopoverKind::ForcePushConfirm { repo_id } => {
                 force_push_confirm::panel(self, repo_id, cx)
             }

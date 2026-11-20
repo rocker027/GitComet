@@ -853,12 +853,23 @@ impl RepoState {
         let Loadable::Ready(head) = &self.head_branch else {
             return None;
         };
-        let adjusted = gitcomet_core::annex::adjusted_branch(head)?;
+        self.annex_adjusted_branch_named(head)
+    }
+
+    fn annex_adjusted_branch_named<'a>(&self, branch: &'a str) -> Option<(&'a str, &'a str)> {
+        let adjusted = gitcomet_core::annex::adjusted_branch(branch)?;
         match &self.large_file_support {
             // Outside an annex repo the name is an ordinary branch.
             Loadable::Ready(support) if !support.annex.in_use() => None,
             _ => Some(adjusted),
         }
+    }
+
+    /// A named push cannot use git-annex's current-branch synchronization.
+    /// Avoid plain Git if either the checkout or the selected branch is adjusted.
+    pub fn local_branch_push_blocked_by_annex(&self, local_branch: &str) -> bool {
+        self.annex_adjusted_branch().is_some()
+            || self.annex_adjusted_branch_named(local_branch).is_some()
     }
 
     /// Pull and Push of the current branch go through git-annex.

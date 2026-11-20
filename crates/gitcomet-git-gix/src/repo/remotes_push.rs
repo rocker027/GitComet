@@ -1,7 +1,7 @@
 use super::GixRepo;
 use super::remotes::{
-    UpstreamBranch, tracking_refs_for_remote_branch, tracking_refs_of_remote,
-    write_branch_upstream_config,
+    UpstreamBranch, branch_upstream_needs_setup, tracking_refs_for_remote_branch,
+    tracking_refs_of_remote, write_branch_upstream_config, write_new_branch_upstream_config,
 };
 use crate::util::{
     bytes_to_text_preserving_utf8, command_output, git_command_failed_error, run_git_raw_output,
@@ -120,7 +120,94 @@ fn safe_push_ref_display(remote: &str, branch: &str) -> String {
     format!("{remote}/{branch}")
 }
 
+fn push_branch_ref(branch: &str, kind: &str) -> Result<String> {
+    validate_ref_like_arg(branch, kind)?;
+    let name = format!("refs/heads/{branch}");
+    gix::validate::reference::branch_name(gix::bstr::BStr::new(&name))
+        .map_err(|error| Error::new(ErrorKind::Backend(format!("invalid {kind}: {error}"))))?;
+    Ok(name)
+}
+
+fn find_push_source<'repo>(
+    repo: &'repo gix::Repository,
+    source: &str,
+) -> Result<crate::refs::Reference<'repo>> {
+    crate::refs::find(repo, source)?
+        .filter(|reference| reference.name().as_bstr() == source)
+        .ok_or_else(|| {
+            Error::new(ErrorKind::Backend(format!(
+                "Local branch {source} does not exist."
+            )))
+        })
+}
+
+fn report_upstream_config_write_failure(output: &mut CommandOutput, error: Error) {
+    if !output.stderr.is_empty() && !output.stderr.ends_with('\n') {
+        output.stderr.push('\n');
+    }
+    output
+        .stderr
+        .push_str(&format!("{UPSTREAM_CONFIG_WRITE_FAILED}: {error}\n"));
+}
+
 impl GixRepo {
+    pub(super) fn push_branch_with_output_impl(
+        &self,
+        local_branch: &str,
+        upstream: &Upstream,
+        set_upstream: bool,
+    ) -> Result<CommandOutput> {
+        validate_ref_like_arg(&upstream.remote, "remote name")?;
+        let source = push_branch_ref(local_branch, "local branch name")?;
+        let destination = push_branch_ref(&upstream.branch, "remote branch name")?;
+        let repo = self.reopen_repo()?;
+        let remote = repo
+            .find_remote(upstream.remote.as_str())
+            .map_err(|error| {
+                Error::new(ErrorKind::Backend(format!(
+                    "Push remote {} is not available: {error}",
+                    upstream.remote
+                )))
+            })?;
+        if remote.url(gix::remote::Direction::Push).is_none() {
+            return Err(Error::new(ErrorKind::Backend(format!(
+                "Remote {} has no push URL.",
+                upstream.remote
+            ))));
+        }
+        find_push_source(&repo, &source)?;
+        if set_upstream {
+            branch_upstream_needs_setup(repo.config_snapshot().plumbing(), local_branch, upstream)?;
+        }
+
+        // Using the local ref preserves the branch name seen by pre-push hooks.
+        let refspec = format!("{source}:{destination}");
+        let label = format!("git push --no-follow-tags -- {} {refspec}", upstream.remote);
+        let mut cmd = self.git_workdir_cmd();
+        cmd.args(["push", "--no-follow-tags", "--"])
+            .arg(&upstream.remote)
+            .arg(refspec);
+        let mut output = run_git_with_output(cmd, &label)?;
+        if set_upstream
+            && let Err(error) = self.reopen_repo().and_then(|repo| {
+                find_push_source(&repo, &source)?;
+                if branch_upstream_needs_setup(
+                    repo.config_snapshot().plumbing(),
+                    local_branch,
+                    upstream,
+                )? {
+                    write_new_branch_upstream_config(&repo, local_branch, upstream)?;
+                }
+                Ok(())
+            })
+        {
+            report_upstream_config_write_failure(&mut output, error);
+        } else {
+            self.clear_pending_upstream_if_matches(local_branch, upstream);
+        }
+        Ok(output)
+    }
+
     pub(super) fn push_set_upstream_with_output_impl(
         &self,
         remote: &str,
@@ -324,12 +411,9 @@ impl GixRepo {
             )
         }) {
             // Like `git push --set-upstream`: the push stands and says what failed.
-            if !output.stderr.is_empty() && !output.stderr.ends_with('\n') {
-                output.stderr.push('\n');
-            }
+            report_upstream_config_write_failure(&mut output, error);
             output.stderr.push_str(&format!(
-                "{UPSTREAM_CONFIG_WRITE_FAILED}: {error}\n\
-                 hint: run `git branch --set-upstream-to={}/{} {}`\n",
+                "hint: run `git branch --set-upstream-to={}/{} {}`\n",
                 upstream.remote, upstream.branch, target.local_branch
             ));
         }

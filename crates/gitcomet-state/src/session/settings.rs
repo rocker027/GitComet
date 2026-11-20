@@ -87,6 +87,7 @@ pub struct UiSettings {
     pub recommend_repo_maintenance: Option<bool>,
     pub git_executable_path: Option<Option<PathBuf>>,
     pub external_code_editor: Option<Option<ExternalCodeEditorSetting>>,
+    pub commit_message_prompt_template: Option<String>,
 }
 
 impl UiSession {
@@ -246,6 +247,7 @@ pub fn persist_ui_settings_to_path(settings: UiSettings, path: &Path) -> io::Res
         if let Some(editor) = settings.external_code_editor {
             file.external_code_editor = editor.map(external_code_editor_to_file);
         }
+        apply_setting!(settings, file, commit_message_prompt_template);
 
         SessionUpdate::Write
     })

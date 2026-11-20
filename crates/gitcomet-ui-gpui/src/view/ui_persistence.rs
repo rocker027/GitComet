@@ -288,6 +288,7 @@ impl GitCometView {
                             recommend_repo_maintenance: None,
                             git_executable_path: None,
                             external_code_editor: None,
+                            commit_message_prompt_template: None,
                         };
 
                         Some(settings)

@@ -668,6 +668,18 @@ impl ActionBarView {
             root.open_popover_for_bounds(kind, anchor_bounds, window, cx);
         });
     }
+
+    fn open_popover_centered(
+        &mut self,
+        kind: impl Into<PopoverRequest>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let kind: PopoverRequest = kind.into();
+        let _ = self.root_view.update(cx, |root, cx| {
+            root.open_popover_centered(kind, window, cx);
+        });
+    }
 }
 
 impl BarItemOwner for ActionBarView {
@@ -1279,7 +1291,7 @@ impl BarItemOwner for ActionBarView {
                                 PopoverKind::PushSetUpstreamPrompt {
                                     repo_id,
                                     remote,
-                                    configure_only_for: None,
+                                    mode: PushUpstreamMode::CurrentBranch,
                                 },
                                 e.position(),
                                 window,
@@ -1465,12 +1477,44 @@ impl BarItemOwner for ActionBarView {
             .render(theme, ui_scale_percent)
             .when_some(tile_height, |split, height| split.h(height));
 
+            let finish_caption = language.text("Finish", "收尾");
+            let finish_button = git_button(
+                "finish_worktrees",
+                finish_caption,
+                action_label(finish_caption),
+            )
+            .start_slot(icon("icons/swap.svg", icon_primary))
+            .style(components::ButtonStyle::Subtle)
+            .disabled(repo_id.is_none())
+            .on_click(theme, cx, move |this, _e, window, cx| {
+                if let Some(repo_id) = this.active_repo_id() {
+                    this.open_popover_centered(
+                        PopoverKind::worktree(
+                            repo_id,
+                            crate::view::WorktreePopoverKind::FinishSetup {
+                                preselected: Vec::new(),
+                                target: None,
+                                mode: None,
+                            },
+                        ),
+                        window,
+                        cx,
+                    );
+                }
+            })
+            .debug_selector(|| "finish_worktrees".to_string())
+            .gitcomet_tooltip(
+                theme,
+                language.text("Finish worktrees…", "收尾工作樹…").into(),
+            );
+
             div()
                 .flex()
                 .items_center()
                 .gap(tracking_action_gap)
                 .child(stash_button)
                 .child(restore_buttons)
+                .child(finish_button)
         }
         .flex_none()
         .debug_selector(|| "stash".to_string());

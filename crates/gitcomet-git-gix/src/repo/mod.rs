@@ -1590,6 +1590,16 @@ impl GitRepository for GixRepo {
         self.push_with_output_impl()
     }
 
+    fn push_branch_with_output(
+        &self,
+        local_branch: &str,
+        upstream: &Upstream,
+        set_upstream: bool,
+    ) -> Result<CommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.push_branch_with_output_impl(local_branch, upstream, set_upstream)
+    }
+
     fn push_force_with_output(&self) -> Result<CommandOutput> {
         let _operation = self.operation_lease()?;
         self.push_force_with_output_impl()

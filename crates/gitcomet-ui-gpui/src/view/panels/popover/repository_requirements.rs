@@ -387,6 +387,7 @@ impl PopoverHost {
             | ContextMenuAction::LoadWorktrees { .. }
             | ContextMenuAction::PushWithTags { .. }
             | ContextMenuAction::Push { .. }
+            | ContextMenuAction::PushBranch { .. }
             | ContextMenuAction::SetUpstreamBranch { .. }
             | ContextMenuAction::UnsetUpstreamBranch { .. }
             | ContextMenuAction::OpenFileHistory { .. }

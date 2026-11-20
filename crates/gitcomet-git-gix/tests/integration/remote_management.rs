@@ -1,11 +1,12 @@
 use crate::git_cli::{git_cmd, run_checked, stdout_text};
+use gitcomet_core::domain::Upstream;
 use gitcomet_core::error::{ErrorKind, GitFailureId};
 use gitcomet_core::remote_url::{RemoteProtocol, RemoteUrlPolicy};
 use gitcomet_core::services::{GitBackend, PullMode, RemoteUrlKind};
 use gitcomet_core::test_support::git_fixture::{FixtureTimer, append_config, init_repository};
 use gitcomet_git_gix::GixBackend;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -327,6 +328,269 @@ fn push_with_output_uses_tracked_upstream_when_branch_names_differ() {
         .trim()
         .to_string();
     assert_eq!(remote_head, local_head);
+}
+
+fn local_branch_push_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let remote = root.join("remote.git");
+    let work = root.join("work");
+    fs::create_dir(&remote).expect("create remote directory");
+    fs::create_dir(&work).expect("create work directory");
+    run_git(&remote, &["init", "--bare", "-b", "master"]);
+    run_git(&work, &["init", "-b", "master"]);
+    configure_repo_with_user(&work);
+    run_git(
+        &work,
+        &["remote", "add", "origin", &git_remote_url(&remote)],
+    );
+    run_git(&work, &["commit", "--allow-empty", "-m", "base"]);
+    run_git(&work, &["push", "-u", "origin", "master"]);
+    run_git(&work, &["checkout", "-b", "feature/test"]);
+    run_git(&work, &["commit", "--allow-empty", "-m", "feature"]);
+    run_git(&work, &["checkout", "master"]);
+    run_git(
+        &work,
+        &["commit", "--allow-empty", "-m", "unpublished master"],
+    );
+    (work, remote)
+}
+
+#[test]
+fn push_branch_with_output_targets_the_selected_branch_without_switching_head() {
+    let _guard = remote_management_test_lock();
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let (work, remote) = local_branch_push_fixture(dir.path());
+    let master = run_git_capture(&work, &["rev-parse", "refs/heads/master"]);
+    let remote_master = run_git_capture(&remote, &["rev-parse", "refs/heads/master"]);
+    let feature = run_git_capture(&work, &["rev-parse", "refs/heads/feature/test"]);
+    assert_ne!(master, remote_master);
+    assert_ne!(master, feature);
+
+    run_git(
+        &work,
+        &["push", "origin", "origin/master:refs/heads/release/test"],
+    );
+    run_git(
+        &work,
+        &[
+            "branch",
+            "--set-upstream-to=origin/release/test",
+            "feature/test",
+        ],
+    );
+    run_git(&work, &["branch", "feature/new", "feature/test"]);
+    run_git(&work, &["config", "branch.feature/new.remote", "origin"]);
+    run_git(
+        &work,
+        &[
+            "tag",
+            "-a",
+            "-m",
+            "fixture tag",
+            "fixture-tag",
+            "feature/test",
+        ],
+    );
+    run_git(&work, &["config", "push.followTags", "true"]);
+    run_git(
+        &work,
+        &["config", "remote.origin.push", "+refs/heads/*:refs/heads/*"],
+    );
+    fs::write(work.join("draft.txt"), "draft\n").expect("write untracked file");
+    let status_before = run_git_capture(&work, &["status", "--porcelain"]);
+
+    let repo = GixBackend.open(&work).expect("open work repo");
+    let tracked = Upstream {
+        remote: "origin".into(),
+        branch: "release/test".into(),
+    };
+    let output = repo
+        .push_branch_with_output("feature/test", &tracked, false)
+        .expect("push tracked branch to differently named upstream");
+    assert_eq!(output.exit_code, Some(0));
+    assert_eq!(
+        run_git_capture(&remote, &["rev-parse", "refs/heads/release/test"]),
+        feature
+    );
+
+    let first_push = Upstream {
+        remote: "origin".into(),
+        branch: "feature/new".into(),
+    };
+    let output = repo
+        .push_branch_with_output("feature/new", &first_push, true)
+        .expect("publish and set the selected branch's upstream");
+    assert_eq!(output.exit_code, Some(0));
+    assert_eq!(
+        run_git_capture(&remote, &["rev-parse", "refs/heads/feature/new"]),
+        feature
+    );
+    assert_eq!(
+        run_git_capture(
+            &work,
+            &[
+                "rev-parse",
+                "--symbolic-full-name",
+                "feature/new@{upstream}"
+            ]
+        )
+        .trim(),
+        "refs/remotes/origin/feature/new"
+    );
+    assert_eq!(
+        run_git_capture(
+            &work,
+            &["rev-parse", "--symbolic-full-name", "master@{upstream}"]
+        )
+        .trim(),
+        "refs/remotes/origin/master"
+    );
+    assert_eq!(
+        run_git_capture(&work, &["symbolic-ref", "HEAD"]).trim(),
+        "refs/heads/master"
+    );
+    assert_eq!(run_git_capture(&work, &["rev-parse", "HEAD"]), master);
+    assert_eq!(
+        run_git_capture(&work, &["status", "--porcelain"]),
+        status_before
+    );
+    assert_eq!(
+        run_git_capture(&remote, &["rev-parse", "refs/heads/master"]),
+        remote_master
+    );
+    assert_eq!(
+        run_git_capture(&remote, &["for-each-ref", "--format=%(refname)"])
+            .lines()
+            .collect::<Vec<_>>(),
+        vec![
+            "refs/heads/feature/new",
+            "refs/heads/master",
+            "refs/heads/release/test"
+        ]
+    );
+
+    run_git(&work, &["branch", "-f", "feature/test", "HEAD"]);
+    repo.push_branch_with_output("feature/test", &tracked, false)
+        .expect_err("a divergent branch must not overwrite its upstream");
+    assert_eq!(
+        run_git_capture(&remote, &["rev-parse", "refs/heads/release/test"]),
+        feature
+    );
+}
+
+#[test]
+fn push_branch_with_output_rejects_missing_branch_and_stale_upstream() {
+    let _guard = remote_management_test_lock();
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let (work, remote) = local_branch_push_fixture(dir.path());
+    let repo = GixBackend.open(&work).expect("open work repo");
+    let target = Upstream {
+        remote: "origin".into(),
+        branch: "publication".into(),
+    };
+    run_git(&work, &["tag", "refs/heads/missing", "feature/test"]);
+    let error = repo
+        .push_branch_with_output("missing", &target, false)
+        .expect_err("a tag must not stand in for an absent local branch");
+    assert!(error.to_string().contains("does not exist"), "{error}");
+
+    let missing_remote = Upstream {
+        remote: git_remote_url(&remote),
+        branch: target.branch.clone(),
+    };
+    let error = repo
+        .push_branch_with_output("feature/test", &missing_remote, false)
+        .expect_err("a path to a repository is not the selected remote name");
+    assert!(error.to_string().contains("is not available"), "{error}");
+
+    run_git(&work, &["config", "remote.origin.mirror", "true"]);
+    repo.push_branch_with_output("feature/test", &target, false)
+        .expect_err("a mirror remote cannot accept a single-branch push");
+    run_git(&work, &["config", "--unset", "remote.origin.mirror"]);
+
+    run_git(
+        &work,
+        &["branch", "--set-upstream-to=master", "feature/test"],
+    );
+    let error = repo
+        .push_branch_with_output("feature/test", &target, true)
+        .expect_err("first push must not replace an existing upstream");
+    assert!(
+        error.to_string().contains("upstream configuration"),
+        "{error}"
+    );
+    assert_eq!(
+        run_git_capture(
+            &work,
+            &[
+                "rev-parse",
+                "--symbolic-full-name",
+                "feature/test@{upstream}"
+            ]
+        )
+        .trim(),
+        "refs/heads/master"
+    );
+    assert_eq!(
+        run_git_capture(&remote, &["for-each-ref", "--format=%(refname)"]).trim(),
+        "refs/heads/master"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn push_branch_with_output_preserves_upstream_changed_during_push() {
+    use gitcomet_core::services::UPSTREAM_CONFIG_WRITE_FAILED;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let _guard = remote_management_test_lock();
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let (work, remote) = local_branch_push_fixture(dir.path());
+    let hooks = work.join(".git/hooks");
+    fs::create_dir_all(&hooks).expect("create hooks directory");
+    let hook = hooks.join("pre-push");
+    fs::write(
+        &hook,
+        r#"#!/bin/sh
+read -r local_ref local_oid remote_ref remote_oid
+test "$local_ref" = refs/heads/feature/test &&
+git config --local branch.feature/test.remote . &&
+git config --local branch.feature/test.merge refs/heads/master
+"#,
+    )
+    .expect("write pre-push hook");
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("make hook executable");
+    run_git(&work, &["config", "core.hooksPath", ".git/hooks"]);
+
+    let repo = GixBackend.open(&work).expect("open work repo");
+    let target = Upstream {
+        remote: "origin".into(),
+        branch: "publication".into(),
+    };
+    let output = repo
+        .push_branch_with_output("feature/test", &target, true)
+        .expect("the remote update succeeded");
+    assert_eq!(output.exit_code, Some(0));
+    assert!(
+        output.stderr.contains(UPSTREAM_CONFIG_WRITE_FAILED),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(
+        run_git_capture(
+            &work,
+            &[
+                "rev-parse",
+                "--symbolic-full-name",
+                "feature/test@{upstream}"
+            ]
+        )
+        .trim(),
+        "refs/heads/master"
+    );
+    assert_eq!(
+        run_git_capture(&remote, &["rev-parse", "refs/heads/publication"]),
+        run_git_capture(&work, &["rev-parse", "refs/heads/feature/test"])
+    );
 }
 
 #[test]

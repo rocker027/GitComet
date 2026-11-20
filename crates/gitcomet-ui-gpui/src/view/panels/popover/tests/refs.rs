@@ -1293,6 +1293,7 @@ fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppConte
                     branch_menu_groups(&local.items[2..]),
                     [
                         vec!["Checkout", "Open in new worktree"],
+                        vec!["Push branch…"],
                         vec!["Create branch", "Create tag…"],
                         vec!["Rename branch", "Delete branch"],
                         vec!["Mark main for comparison", "Compare with working tree"],
@@ -1344,6 +1345,75 @@ fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppConte
                         ContextMenuItem::Entry { label, disabled: true, .. } if label.as_ref() == "Create tag…"
                     )).expect("disabled Create tag action");
                     assert!(model.entry_tooltips[&tag_index].contains("Show tags in history view"));
+                }
+            });
+        });
+    });
+}
+
+#[gpui::test]
+fn local_branch_menu_push_uses_the_clicked_branch_in_sidebar_and_history(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gitcomet_core::domain::{Branch, Remote, Upstream};
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(1);
+    let tip = CommitId("0123456789abcdef".into());
+    let mut repo = RepoState::new_opening(
+        repo_id,
+        gitcomet_core::domain::RepoSpec {
+            workdir: std::path::PathBuf::from("/tmp/branch-menu-push"),
+        },
+    );
+    repo.head_branch = Loadable::Ready("master".into());
+    repo.branches = Loadable::Ready(Arc::new(vec![Branch {
+        name: "feature/test".into(),
+        target: tip.clone(),
+        upstream: Some(Upstream {
+            remote: "mirror".into(),
+            branch: "review/topic".into(),
+        }),
+        divergence: None,
+    }]));
+    repo.remotes = Loadable::Ready(Arc::new(vec![Remote {
+        name: "mirror".into(),
+        url: None,
+        default_branch: None,
+    }]));
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            push_test_state(this, app_state_with_repo(repo, repo_id), cx)
+        });
+    });
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                let target = BranchMenuTarget::local("feature/test");
+                let history_ref = HistoryMenuRef::Branch(target.clone());
+                host.expanded_history_ref = Some(history_ref.clone());
+                for kind in [
+                    PopoverKind::BranchMenu { repo_id, target },
+                    PopoverKind::CommitMenu {
+                        repo_id,
+                        commit_id: tip,
+                        refs: CommitMenuRefs::Only(history_ref),
+                    },
+                ] {
+                    let menu = host.context_menu_model(&kind, cx).expect("branch menu");
+                    assert!(menu.items.iter().any(|item| matches!(
+                        item,
+                        ContextMenuItem::Entry { label, disabled: false, action, .. }
+                            if label.as_ref() == "Push to mirror/review/topic"
+                                && matches!(action.as_ref(), ContextMenuAction::PushBranch {
+                                    repo_id: RepoId(1), local_branch, upstream,
+                                } if local_branch == "feature/test"
+                                    && upstream.remote == "mirror"
+                                    && upstream.branch == "review/topic")
+                    )));
                 }
             });
         });

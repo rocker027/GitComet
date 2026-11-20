@@ -321,7 +321,7 @@ fn create_new(
         PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote,
-            configure_only_for: Some(branch.to_string()),
+            mode: PushUpstreamMode::ConfigureOnly(branch.to_string()),
         },
         window,
         cx,

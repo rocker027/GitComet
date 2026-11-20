@@ -2805,6 +2805,41 @@ fn persist_ui_settings_round_trips_empty_custom_git_executable_path() {
 }
 
 #[test]
+fn persist_ui_settings_round_trips_commit_message_prompt_template() {
+    let dir_guard = tempfile::tempdir().expect("create tempdir");
+    let path = dir_guard.path().join("session.json");
+    persist_to_path(
+        &path,
+        &UiSessionFile {
+            version: CURRENT_SESSION_FILE_VERSION,
+            ..UiSessionFile::default()
+        },
+    )
+    .expect("seed session file");
+    assert_eq!(load_from_path(&path).commit_message_prompt_template, None);
+
+    let template = "第一行\n\n第二段 {diff}".to_string();
+    persist_ui_settings_to_path(
+        UiSettings {
+            commit_message_prompt_template: Some(template.clone()),
+            ..UiSettings::default()
+        },
+        &path,
+    )
+    .expect("persist ui settings");
+    assert_eq!(
+        load_from_path(&path).commit_message_prompt_template,
+        Some(template.clone())
+    );
+
+    persist_ui_settings_to_path(UiSettings::default(), &path).expect("persist other settings");
+    assert_eq!(
+        load_from_path(&path).commit_message_prompt_template,
+        Some(template)
+    );
+}
+
+#[test]
 fn persist_ui_settings_round_trips_commit_push_after_enabled() {
     let dir_guard = tempfile::tempdir().expect("create tempdir");
     let dir = dir_guard.path().to_path_buf();

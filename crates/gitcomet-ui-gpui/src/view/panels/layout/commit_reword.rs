@@ -533,7 +533,7 @@ impl DetailsPaneView {
                     .min_w(px(0.0))
                     .child(self.commit_details_message_view(theme, repo_id)),
             )
-            .child(div().flex().flex_none().child(copy).child(edit))
+            .child(div().flex().flex_col().flex_none().child(edit).child(copy))
             .into_any_element()
     }
 

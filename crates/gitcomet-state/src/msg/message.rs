@@ -1115,6 +1115,12 @@ pub enum Msg {
     Push {
         repo_id: RepoId,
     },
+    PushBranch {
+        repo_id: RepoId,
+        local_branch: String,
+        upstream: Upstream,
+        set_upstream: bool,
+    },
     PushAfterCommit {
         repo_id: RepoId,
         target: SafePushAfterCommitTarget,

@@ -222,6 +222,97 @@ impl DetailsPaneView {
         true
     }
 
+    /// Asks an Orca agent for a message describing the staged changes and
+    /// fills the commit box with it; a newer request replaces this one.
+    fn generate_ai_commit_message(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(repo) = self.active_repo() else {
+            return;
+        };
+        let (repo_id, lifetime, workdir) = (repo.id, repo.lifetime(), repo.spec.workdir.clone());
+        let language = Language::current(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || {
+                let template = gitcomet_state::session::load()
+                    .commit_message_prompt_template
+                    .unwrap_or_default();
+                gitcomet_state::store::orca_commit_message::generate_commit_message(
+                    &workdir, &template,
+                )
+            })
+            .await;
+            let _ = this.update(cx, |this, cx| {
+                this.commit_message_generation = None;
+                match result {
+                    Ok(message) => {
+                        this.set_extension_commit_message(repo_id, lifetime, message, cx);
+                    }
+                    Err(error) => {
+                        let message = format!(
+                            "{} {error}",
+                            language
+                                .text("Could not generate a commit message.", "無法產生提交訊息。")
+                        );
+                        let _ = this.root_view.update(cx, |root, cx| {
+                            root.push_toast(components::ToastKind::Error, message, cx);
+                        });
+                    }
+                }
+                cx.notify();
+            });
+        });
+        self.commit_message_generation = Some((repo_id, task));
+        cx.notify();
+    }
+
+    fn ai_commit_message_button(
+        &self,
+        staged_count: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let theme = self.theme;
+        let scaled_px = crate::ui_scale::scaler(crate::ui_scale::current(cx).percent);
+        let repo_key = self.active_repo_id().map(|id| id.0).unwrap_or(0);
+        let busy = self.commit_message_generation.is_some();
+        let generating = matches!(
+            self.commit_message_generation,
+            Some((id, _)) if Some(id) == self.active_repo_id()
+        );
+        let icon_color = theme.colors.foreground.secondary;
+        let start_slot: components::ButtonSlot = if generating {
+            components::ButtonSlot::spinner(
+                ("ai_commit_message_spinner", repo_key),
+                icon_color,
+                scaled_px(12.0),
+            )
+        } else {
+            svg_icon("icons/lightning.svg", icon_color, scaled_px(12.0)).into()
+        };
+        let tooltip = if busy {
+            text(cx, "Generating commit message…", "正在產生提交訊息…")
+        } else if staged_count == 0 {
+            text(
+                cx,
+                "Stage changes to generate a commit message",
+                "暫存變更後才能產生提交訊息",
+            )
+        } else {
+            text(
+                cx,
+                "Generate a commit message from the staged changes with AI (Orca)",
+                "依已暫存的變更，用 AI（Orca）產生提交訊息",
+            )
+        };
+        components::Button::new("ai_commit_message", "")
+            .start_slot(start_slot)
+            .style(components::ButtonStyle::Transparent)
+            .disabled(busy || staged_count == 0)
+            .on_click(theme, cx, |this, _e, _w, cx| {
+                this.generate_ai_commit_message(cx);
+            })
+            .debug_selector(|| "ai_commit_message_button".to_string())
+            .gitcomet_tooltip(theme, tooltip.into())
+    }
+
     pub(super) fn commit_options(&self) -> CommitOptions {
         CommitOptions {
             amend: self.commit_amend_enabled,
@@ -525,12 +616,16 @@ impl DetailsPaneView {
                 div()
                     .px_3()
                     .py_1p5()
+                    .flex()
+                    .items_center()
+                    .justify_between()
                     .border_b_1()
                     .border_color(theme.colors.stroke.subtle)
                     .text_size(theme.ui_text(13.0))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.colors.foreground.primary)
-                    .child(text(cx, "Commit Message", "提交訊息")),
+                    .child(text(cx, "Commit Message", "提交訊息"))
+                    .child(self.ai_commit_message_button(staged_count, cx)),
             )
             .child(div().px_3().py_2().child(commit_message));
         div()
