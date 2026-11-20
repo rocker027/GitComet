@@ -25,6 +25,7 @@ criterion
 .worktrees/
 .reasonix/
 .claude/
+/.omc/
 .envrc
 
 # `cargo test --manifest-path vendor/tree-sitter-vue/Cargo.toml` (the standalone
