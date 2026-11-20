@@ -56,6 +56,10 @@ pub(in crate::view) enum DiffCommand {
     FocusReviewFiles {
         window: AnyWindowHandle,
     },
+    ReviewWorkingTree {
+        repo: RepoId,
+        window: AnyWindowHandle,
+    },
     OpenPopover {
         request: Box<PopoverRequest>,
         anchor: DiffPopoverAnchor,

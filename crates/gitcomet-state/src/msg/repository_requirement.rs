@@ -111,6 +111,7 @@ impl Msg {
             | Self::SelectCommit { repo_id, .. }
             | Self::SelectCommitMulti { repo_id, .. }
             | Self::ClearCommitSelection { repo_id, .. }
+            | Self::ReviewWorkingTree { repo_id, .. }
             | Self::CompareCommitRange { repo_id, .. }
             | Self::ClearComparison { repo_id, .. }
             | Self::MarkForComparison { repo_id, .. }

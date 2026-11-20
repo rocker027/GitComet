@@ -1,6 +1,8 @@
 use super::status_nav::status_navigation_context_for_repo;
 use super::*;
-use crate::view::panes::diff::helpers::state::{NextFileAdvance, OpenFileChange};
+use crate::view::panes::diff::helpers::state::{
+    NextFileAdvance, OpenFileChange, StageFileTransfer,
+};
 use gitcomet_state::model::LoadKind;
 
 /// What a dispatch did to the open file, carried to the deferred arming.
@@ -14,6 +16,194 @@ struct ArmedChange {
 }
 
 impl DiffRenderer {
+    /// The explicit file button follows that file, independent of the
+    /// next-file preference used while reviewing individual changes.
+    pub(super) fn stage_shown_file_preserving_diff(
+        &mut self,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(repo) = self.active_repo() else {
+            return false;
+        };
+        if self.hosted_decor.is_some()
+            || self.shows_linked_worktree()
+            || self.is_inline_submodule_diff_active()
+            || repo.local_actions_in_flight > 0
+            || self.stage_file_transfer.is_some()
+        {
+            return false;
+        }
+        let diff = self.bound_diff_state(repo);
+        if diff.content_preview {
+            return false;
+        }
+        let Some(DiffTarget::WorkingTree { path, area, .. }) = diff.diff_target.as_ref() else {
+            return false;
+        };
+        let transfer = StageFileTransfer {
+            repo_id: repo.id,
+            path: path.clone(),
+            from: *area,
+            ops_rev: repo.ops_rev,
+            canvas_requests: repo.navigation.canvas_requests,
+            opened: false,
+            scroll_offsets: [&self.diff_scroll, &self.diff_split_right_scroll]
+                .map(|scroll| scroll.0.borrow().base_handle.offset()),
+        };
+        // Preserve the existing batch operation when the button represents
+        // several selected paths.
+        if self
+            .status_selection_for_shortcut(transfer.repo_id, transfer.from, &transfer.path, cx)
+            .is_some()
+        {
+            return self.toggle_stage_shown_file(window, cx);
+        }
+        let consumes_selection = self.status_single_selection_for_shortcut(
+            transfer.repo_id,
+            transfer.from,
+            &transfer.path,
+            cx,
+        );
+        if self.confirm_stage_conflict_markers(
+            transfer.repo_id,
+            transfer.from,
+            vec![transfer.path.clone()],
+            consumes_selection,
+            window,
+            cx,
+        ) {
+            return true;
+        }
+        if consumes_selection {
+            self.clear_status_selection_for_shortcut(transfer.repo_id, cx);
+        }
+        let msg = match transfer.from {
+            DiffArea::Unstaged => Msg::StagePath {
+                repo_id: transfer.repo_id,
+                path: transfer.path.clone(),
+            },
+            DiffArea::Staged => Msg::UnstagePath {
+                repo_id: transfer.repo_id,
+                path: transfer.path.clone(),
+            },
+        };
+        self.next_file_advance = None;
+        self.stage_file_transfer = Some(transfer);
+        self.store.dispatch(msg);
+        true
+    }
+
+    pub(in crate::view) fn resolve_stage_file_transfer(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(mut transfer) = self.stage_file_transfer.take() else {
+            return;
+        };
+        let Some(repo) = self
+            .active_repo()
+            .filter(|repo| repo.id == transfer.repo_id)
+        else {
+            return;
+        };
+        let to = match transfer.from {
+            DiffArea::Unstaged => DiffArea::Staged,
+            DiffArea::Staged => DiffArea::Unstaged,
+        };
+        let diff = self.bound_diff_state(repo);
+        let showing_source = diff.diff_target.as_ref().is_some_and(|target| {
+            matches!(target, DiffTarget::WorkingTree { path, area, .. }
+                if path == &transfer.path && *area == transfer.from)
+        });
+        let showing_destination = diff.diff_target.as_ref().is_some_and(|target| {
+            matches!(target, DiffTarget::WorkingTree { path, area, .. }
+                if path == &transfer.path && *area == to)
+        });
+        // Our deferred SelectDiff is one canvas request too. Until it is
+        // applied, old source snapshots still belong to the original request.
+        let expected_canvas_requests = if transfer.opened && showing_destination {
+            transfer.canvas_requests.wrapping_add(1)
+        } else {
+            transfer.canvas_requests
+        };
+        if repo.navigation.canvas_requests != expected_canvas_requests {
+            return;
+        }
+        if transfer.opened {
+            if !showing_destination {
+                if showing_source || diff.diff_target.is_none() {
+                    self.stage_file_transfer = Some(transfer);
+                }
+                return;
+            }
+            if matches!(diff.diff, Loadable::Loading | Loadable::NotLoaded) {
+                self.stage_file_transfer = Some(transfer);
+                return;
+            }
+            for (scroll, offset) in [&self.diff_scroll, &self.diff_split_right_scroll]
+                .into_iter()
+                .zip(transfer.scroll_offsets)
+            {
+                scroll.0.borrow().base_handle.set_offset(offset);
+            }
+            self.diff_autoscroll_pending = false;
+            return;
+        }
+        // A new file selection wins. `None` is expected when the reducer
+        // retires the source lane after the whole-file operation succeeds.
+        if diff.diff_target.is_some() && !showing_source {
+            return;
+        }
+        let status_loading = repo.loads_in_flight.is_in_flight(LoadKind::WorktreeStatus)
+            || repo.loads_in_flight.is_in_flight(LoadKind::StagedStatus);
+        if repo.ops_rev == transfer.ops_rev || repo.local_actions_in_flight > 0 || status_loading {
+            self.stage_file_transfer = Some(transfer);
+            return;
+        }
+        if repo.feedback.last_error.is_some()
+            || repo.status_entry_for_path(to, &transfer.path).is_none()
+        {
+            return;
+        }
+        let repo_id = transfer.repo_id;
+        let path = transfer.path.clone();
+        let canvas_requests = transfer.canvas_requests;
+        transfer.opened = true;
+        self.stage_file_transfer = Some(transfer);
+        let pane = cx.weak_entity();
+        cx.defer(move |cx| {
+            let _ = pane.update(cx, |pane, _| {
+                let Some(current) = pane.store.snapshot() else {
+                    pane.stage_file_transfer = None;
+                    return;
+                };
+                let Some(repo) = current
+                    .repos
+                    .iter()
+                    .find(|repo| repo.id == repo_id && current.active_repo == Some(repo_id))
+                else {
+                    pane.stage_file_transfer = None;
+                    return;
+                };
+                if repo.navigation.canvas_requests != canvas_requests
+                    || repo.diff_state.diff_target.as_ref().is_some_and(|target| {
+                        !matches!(target, DiffTarget::WorkingTree { path: shown, area, .. }
+                            if shown == &path && *area != to)
+                    })
+                    || !pane
+                        .stage_file_transfer
+                        .as_ref()
+                        .is_some_and(|pending| pending.opened)
+                {
+                    pane.stage_file_transfer = None;
+                    return;
+                }
+                pane.store.dispatch(Msg::SelectDiff {
+                    repo_id,
+                    target: DiffTarget::working_tree(path, to),
+                });
+            });
+        });
+    }
+
     pub(in crate::view) fn set_open_next_file_after_last_change(&mut self, enabled: bool) {
         self.open_next_file_after_last_change = enabled;
         if !enabled {

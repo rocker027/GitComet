@@ -1123,8 +1123,8 @@ fn distinct_non_utf8_worktree_paths_keep_distinct_row_keys() {
 }
 
 #[test]
-fn double_clicking_a_commit_checks_out_its_one_local_branch() {
-    use super::history_double_click_checkout;
+fn double_clicking_a_branch_uses_its_exact_ref_and_opens_linked_worktrees() {
+    use super::{HistoryBranchActivation, history_double_click_branch};
     use gitcomet_core::domain::{Branch, CommitId, RepoSpec, RepositoryMode, Worktree};
     use gitcomet_state::model::{Loadable, RepoId, RepoState};
     use std::sync::Arc;
@@ -1160,30 +1160,23 @@ fn double_clicking_a_commit_checks_out_its_one_local_branch() {
     }]));
 
     assert_eq!(
-        history_double_click_checkout(&repo, &commit("c-feature")).as_deref(),
-        Some("feature")
+        history_double_click_branch(&repo, "feature"),
+        Some(HistoryBranchActivation::Checkout("feature".into()))
     );
-    // Already checked out, several branches, none, or held by another worktree.
+    assert_eq!(history_double_click_branch(&repo, "main"), None);
+    for name in ["left", "right"] {
+        assert_eq!(
+            history_double_click_branch(&repo, name),
+            Some(HistoryBranchActivation::Checkout(name.into()))
+        );
+    }
+    assert_eq!(history_double_click_branch(&repo, "missing"), None);
     assert_eq!(
-        history_double_click_checkout(&repo, &commit("c-main")),
-        None
+        history_double_click_branch(&repo, "elsewhere"),
+        Some(HistoryBranchActivation::Open(
+            "/tmp/history-double-click-other".into()
+        ))
     );
-    assert_eq!(
-        history_double_click_checkout(&repo, &commit("c-shared")),
-        None
-    );
-    assert_eq!(
-        history_double_click_checkout(&repo, &commit("c-none")),
-        None
-    );
-    assert_eq!(
-        history_double_click_checkout(&repo, &commit("c-elsewhere")),
-        None
-    );
-
     repo.repository_mode = Some(RepositoryMode::Bare);
-    assert_eq!(
-        history_double_click_checkout(&repo, &commit("c-feature")),
-        None
-    );
+    assert_eq!(history_double_click_branch(&repo, "feature"), None);
 }

@@ -22,6 +22,23 @@ pub(super) fn for_window(root: WeakEntity<GitCometView>) -> DiffCommands {
                 });
                 return;
             }
+            if let DiffCommand::ReviewWorkingTree { repo, window } = command {
+                let _ = window.update(cx, |_, window, cx| {
+                    let _ = root.update(cx, |root, cx| {
+                        if root.active_repo_id() != Some(repo) {
+                            return;
+                        }
+                        root.store
+                            .dispatch(Msg::ReviewWorkingTree { repo_id: repo });
+                        root.navigate_review(
+                            super::review_navigation::ReviewNavigation::WorkingCopy,
+                            window,
+                            cx,
+                        );
+                    });
+                });
+                return;
+            }
             if let DiffCommand::OpenHostedMenu {
                 id,
                 items,
@@ -173,6 +190,7 @@ pub(super) fn for_window(root: WeakEntity<GitCometView>) -> DiffCommands {
                 }
                 DiffCommand::OpenPopover { .. }
                 | DiffCommand::FocusReviewFiles { .. }
+                | DiffCommand::ReviewWorkingTree { .. }
                 | DiffCommand::OpenHostedMenu { .. }
                 | DiffCommand::OpenFileHistory { .. } => unreachable!(),
             });

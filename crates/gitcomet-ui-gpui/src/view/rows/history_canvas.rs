@@ -1225,7 +1225,33 @@ fn history_branch_chip_menu_invoker(
     .into()
 }
 
+pub(super) fn history_ref_click_target(
+    targets: &[(Bounds<Pixels>, HistoryMenuRef)],
+    pressed: Point<Pixels>,
+    released: Point<Pixels>,
+) -> Option<HistoryMenuRef> {
+    targets
+        .iter()
+        .find(|(bounds, _)| bounds.contains(&pressed) && bounds.contains(&released))
+        .map(|(_, target)| target.clone())
+}
+
+fn history_branch_chip_target(chip: &HistoryBranchChipVm) -> Option<HistoryMenuRef> {
+    let HistoryBranchChipKind::Branch { targets, .. } = &chip.kind else {
+        return None;
+    };
+    // A local branch and its remote tracking refs share the local branch label.
+    // The hover list still exposes each remote ref separately.
+    targets
+        .iter()
+        .find(|target| matches!(target, BranchMenuTarget::Local { name } if name == chip.text.as_ref()))
+        .or_else(|| (targets.len() == 1).then(|| &targets[0]))
+        .cloned()
+        .map(HistoryMenuRef::Branch)
+}
+
 struct HistoryRefChipPaint {
+    target: Option<HistoryMenuRef>,
     bounds: Bounds<Pixels>,
     visual: HistoryChipVisual,
     shaped: gpui::ShapedLine,
@@ -1474,7 +1500,12 @@ fn layout_history_ref_chips(
 
         let chip_w = shaped.width + icons_width + chip_pad_x * 2.0;
         let chip_bounds = Bounds::new(point(x, chip_y), size(chip_w, chip_height));
+        let target = match &entry {
+            ChipEntry::Tag(name) => Some(HistoryMenuRef::Tag(name.as_ref().to_string())),
+            ChipEntry::Branch(chip, _) => history_branch_chip_target(chip),
+        };
         chips.push(HistoryRefChipPaint {
+            target,
             bounds: chip_bounds,
             visual,
             shaped,
@@ -1513,6 +1544,7 @@ fn layout_history_ref_chips(
         occupied_right = chip_bounds.right();
 
         chips.push(HistoryRefChipPaint {
+            target: None,
             bounds: chip_bounds,
             visual,
             shaped,
@@ -1696,6 +1728,7 @@ pub(super) fn history_commit_row_canvas(
     comparison_mark: Option<SharedString>,
     // Left edge of the worktree chips laid over the end of the message cell.
     worktree_chips_left: Option<std::rc::Rc<std::cell::Cell<Option<Pixels>>>>,
+    ref_hit_targets: std::rc::Rc<RefCell<Vec<(Bounds<Pixels>, HistoryMenuRef)>>>,
     // For each mark (leading, trailing), the annotator whose menu it opens.
     mark_menus: [Option<usize>; 2],
     // The commit, on a row with a mark that opens a menu.
@@ -2292,6 +2325,11 @@ pub(super) fn history_commit_row_canvas(
                 );
             }
 
+            *ref_hit_targets.borrow_mut() = refs
+                .chips
+                .iter()
+                .filter_map(|chip| chip.target.clone().map(|target| (chip.bounds, target)))
+                .collect();
             paint_history_ref_chips(&refs, window, cx);
 
             let summary_text_bounds = if branch_names == HistoryBranchNamesMode::Inline {
@@ -2715,6 +2753,7 @@ pub(super) fn history_commit_row_canvas(
             );
             let view = view.clone();
             let commit_id = commit_id.clone();
+            let ref_hit_targets = ref_hit_targets.clone();
             crate::kit::click::on_canvas_click(
                 window,
                 target,
@@ -2729,6 +2768,11 @@ pub(super) fn history_commit_row_canvas(
                         gpui::ClickEvent::Mouse(click) => click.down.position,
                         _ => event.position(),
                     };
+                    let clicked_ref = history_ref_click_target(
+                        &ref_hit_targets.borrow(),
+                        pressed,
+                        event.position(),
+                    );
                     let chip = mark_chips
                         .iter()
                         .find(|(_, _, bounds)| bounds.contains(&pressed))
@@ -2778,10 +2822,20 @@ pub(super) fn history_commit_row_canvas(
                                 cx,
                             );
                         } else {
-                            let kind = PopoverKind::CommitMenu {
-                                repo_id,
-                                commit_id: commit_id.clone(),
-                                refs: CommitMenuRefs::All,
+                            let kind = match clicked_ref.clone() {
+                                Some(HistoryMenuRef::Branch(target)) => {
+                                    PopoverKind::BranchMenu { repo_id, target }
+                                }
+                                Some(target) => PopoverKind::CommitMenu {
+                                    repo_id,
+                                    commit_id: commit_id.clone(),
+                                    refs: CommitMenuRefs::Only(target),
+                                },
+                                None => PopoverKind::CommitMenu {
+                                    repo_id,
+                                    commit_id: commit_id.clone(),
+                                    refs: CommitMenuRefs::All,
+                                },
                             };
                             this.open_popover_at(
                                 kind.invoked_by(context_menu_invoker),

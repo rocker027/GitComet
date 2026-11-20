@@ -1039,10 +1039,18 @@ impl BarItemOwner for ActionBarView {
         let worktree_badge = self.active_repo().map(|repo| {
             let repo_id = repo.id;
             let label = truncate_badge_label_to(
-                &crate::view::path_display::repo_path_name(&repo.spec.workdir),
+                &super::repo_tabs_bar::workdir_label(repo, &self.state.repos),
                 worktree_label_max_chars,
             );
             let workdir = repo.spec.workdir.display().to_string();
+            let repository = crate::view::path_display::repo_path_name(
+                super::repo_tabs_bar::primary_workdir(repo),
+            );
+            let worktree = crate::view::path_display::repo_path_name(&repo.spec.workdir);
+            let identity = match repo.head_branch.ready() {
+                Some(branch) => format!("{repository} / {worktree} · {branch}"),
+                None => format!("{repository} / {worktree}"),
+            };
             let invoker: SharedString = "worktree_badge".into();
             let is_active = active_invoker
                 .as_ref()
@@ -1067,7 +1075,7 @@ impl BarItemOwner for ActionBarView {
                 .gitcomet_tooltip(
                     theme,
                     format!(
-                        "{}\n{workdir}",
+                        "{}\n{identity}\n{workdir}",
                         language.text("Switch worktree", "切換工作樹")
                     )
                     .into(),

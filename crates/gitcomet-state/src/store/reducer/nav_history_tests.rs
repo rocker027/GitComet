@@ -314,6 +314,7 @@ fn view_navigation_messages_push_others_fold_in_place() {
         repo_id: RepoId(1),
         commit_id: CommitId("a".into()),
     }));
+    assert!(pushes(&Msg::ReviewWorkingTree { repo_id: RepoId(1) }));
     // The file-content viewer's own back/forward does NOT land a global
     // step — it operates on a separate viewer-level stack so it does not
     // pollute the global back/forward history.

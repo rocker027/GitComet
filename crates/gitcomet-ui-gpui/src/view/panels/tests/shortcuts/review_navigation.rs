@@ -96,6 +96,62 @@ fn open_file(cx: &mut gpui::VisualTestContext, view: &Entity<GitCometView>, path
     assert!(diff_panel_is_focused(cx, view));
 }
 
+#[gpui::test]
+fn historical_diff_opens_staged_changes_and_back_restores_the_commit(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    prepare(cx, &view);
+    let mut repo = review_repo();
+    let repo_id = repo.id;
+    let commit = repo.history_state.selected_commit.clone().unwrap();
+    repo.staged_status = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::FileStatus {
+        path: "staged.rs".into(),
+        kind: FileStatusKind::Modified,
+        conflict: None,
+    }]));
+    repo.staged_status_rev += 1;
+    apply_state(cx, &view, app_state_with_active_repo(repo));
+    let target = DiffTarget::commit(commit.clone(), "a.rs".into());
+    cx.update(|_, app| {
+        view.read(app).store.dispatch(Msg::SelectDiff {
+            repo_id,
+            target: target.clone(),
+        });
+    });
+    wait_until_store_diff_target_path(cx, &view, std::path::Path::new("a.rs"));
+    sync_store_snapshot(cx, &view);
+    draw_and_drain_test_window(cx);
+    let changes = cx
+        .debug_bounds("diff_bar_working_tree_changes")
+        .expect("staged-only changes are reachable from a historical diff");
+    cx.simulate_click(changes.center(), gpui::Modifiers::default());
+    wait_until(cx, "working tree changes selected", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.update(|_, app| {
+            let snapshot = view.read(app).store.snapshot();
+            let repo = &snapshot.repos[0];
+            repo.history_state.selected_commit.is_none()
+                && repo.diff_state.diff_target.is_none()
+                && repo.navigation.main_history.can_back()
+        })
+    });
+    cx.update(|_, app| {
+        view.update(app, |root, cx| root.dispatch_global_nav(false, cx));
+    });
+    wait_until(cx, "original commit and file restored", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.update(|_, app| {
+            let snapshot = view.read(app).store.snapshot();
+            let repo = &snapshot.repos[0];
+            repo.history_state.selected_commit.as_ref() == Some(&commit)
+                && repo.diff_state.diff_target.as_ref() == Some(&target)
+        })
+    });
+}
+
 fn close_commit_details(
     cx: &mut gpui::VisualTestContext,
     view: &Entity<GitCometView>,

@@ -196,8 +196,13 @@ pub(super) fn model(
             }
         }
         items.push(ContextMenuItem::Separator);
+        branch_entry_source_labels.insert(items.len(), "Merge into current".into());
         items.push(ContextMenuItem::Entry {
-            label: label_with_current_branch(items.len(), "Merge into current", "合併至目前分支"),
+            label: match language {
+                Language::English => format!("Merge {name} into {current_branch_label}"),
+                Language::TraditionalChinese => format!("將 {name} 合併至 {current_branch_label}"),
+            }
+            .into(),
             icon: Some("icons/swap.svg".into()),
             shortcut: None,
             disabled: merge_disabled,
@@ -206,12 +211,15 @@ pub(super) fn model(
                 reference: action_reference.clone(),
             }),
         });
+        branch_entry_source_labels.insert(items.len(), "Squash into current".into());
         items.push(ContextMenuItem::Entry {
-            label: label_with_current_branch(
-                items.len(),
-                "Squash into current",
-                "壓縮合併至目前分支",
-            ),
+            label: match language {
+                Language::English => format!("Squash {name} into {current_branch_label}"),
+                Language::TraditionalChinese => {
+                    format!("將 {name} 壓縮合併至 {current_branch_label}")
+                }
+            }
+            .into(),
             icon: Some("icons/arrow_right.svg".into()),
             shortcut: None,
             disabled: merge_disabled,

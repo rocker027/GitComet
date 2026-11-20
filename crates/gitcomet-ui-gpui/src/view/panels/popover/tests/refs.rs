@@ -1315,7 +1315,7 @@ fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppConte
                     [
                         vec!["Checkout", "Open in new worktree"],
                         vec!["Pull into current (main)", "Set as tracking upstream"],
-                        vec!["Merge into current (main)", "Squash into current (main)", "Rebase main onto origin/feature/topic"],
+                        vec!["Merge origin/feature/topic into main", "Squash origin/feature/topic into main", "Rebase main onto origin/feature/topic"],
                         vec!["Create branch", "Create tag…"],
                         vec!["Delete remote branch…"],
                         vec!["Mark origin/feature/topic for comparison", "Compare with working tree"],
@@ -1505,7 +1505,7 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Merge into current (main)" => {
+            } if label.as_ref() == format!("Merge {branch_name} into main") => {
                 Some(((**action).clone(), *disabled))
             }
             _ => None,
@@ -1532,7 +1532,7 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Squash into current (main)" => {
+            } if label.as_ref() == format!("Squash {branch_name} into main") => {
                 Some(((**action).clone(), *disabled))
             }
             _ => None,
@@ -1757,7 +1757,7 @@ fn remote_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCo
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Merge into current (main)" => {
+            } if label.as_ref() == format!("Merge {branch_name} into main") => {
                 Some(((**action).clone(), *disabled))
             }
             _ => None,
@@ -1784,7 +1784,7 @@ fn remote_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCo
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Squash into current (main)" => {
+            } if label.as_ref() == format!("Squash {branch_name} into main") => {
                 Some(((**action).clone(), *disabled))
             }
             _ => None,
@@ -1937,11 +1937,11 @@ fn remote_branch_menu_preserves_exact_identity_and_uses_its_loaded_tip(
             }) if target == selected_tip
         ));
         assert!(matches!(
-            action("Merge into current (feature/local)"),
+            action("Merge team/alice/main into feature/local"),
             Some(ContextMenuAction::MergeRef { reference, .. }) if reference == selected_tip
         ));
         assert!(matches!(
-            action("Squash into current (feature/local)"),
+            action("Squash team/alice/main into feature/local"),
             Some(ContextMenuAction::SquashRef { reference, .. }) if reference == selected_tip
         ));
         assert!(matches!(
@@ -1970,8 +1970,8 @@ fn branch_destination_labels_name_the_current_branch_when_known(cx: &mut gpui::T
             Loadable::Ready("feature/本機".into()),
             [
                 "Pull into current (feature/本機)",
-                "Merge into current (feature/本機)",
-                "Squash into current (feature/本機)",
+                "Merge origin/feature/topic into feature/本機",
+                "Squash origin/feature/topic into feature/本機",
             ],
         ),
         (
@@ -1979,8 +1979,8 @@ fn branch_destination_labels_name_the_current_branch_when_known(cx: &mut gpui::T
             Loadable::Ready("feature/本機".into()),
             [
                 "拉取至目前分支（feature/本機）",
-                "合併至目前分支（feature/本機）",
-                "壓縮合併至目前分支（feature/本機）",
+                "將 origin/feature/topic 合併至 feature/本機",
+                "將 origin/feature/topic 壓縮合併至 feature/本機",
             ],
         ),
         (
@@ -1988,14 +1988,18 @@ fn branch_destination_labels_name_the_current_branch_when_known(cx: &mut gpui::T
             Loadable::Ready("HEAD".into()),
             [
                 "Pull into current",
-                "Merge into current",
-                "Squash into current",
+                "Merge origin/feature/topic into HEAD",
+                "Squash origin/feature/topic into HEAD",
             ],
         ),
         (
             Language::TraditionalChinese,
             Loadable::NotLoaded,
-            ["拉取至目前分支", "合併至目前分支", "壓縮合併至目前分支"],
+            [
+                "拉取至目前分支",
+                "將 origin/feature/topic 合併至 HEAD",
+                "將 origin/feature/topic 壓縮合併至 HEAD",
+            ],
         ),
     ] {
         cx.update(|_, app| {

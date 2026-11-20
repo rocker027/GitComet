@@ -25,9 +25,10 @@ pub(super) fn commit_target_summary(
     } else {
         format!("{count} {kind} files")
     };
-    Some(match branch.filter(|name| *name != "HEAD") {
+    Some(match branch {
+        Some("HEAD" | "") => format!("{files} on a detached HEAD"),
         Some(branch) => format!("{files} on {branch}"),
-        None => format!("{files} on a detached HEAD"),
+        None => format!("{files} · branch unavailable"),
     })
 }
 
@@ -62,8 +63,17 @@ impl CommitOptions {
 
     /// The Commit button's label and tooltip when it stages every change
     /// first. Commit & Push never does: it stays with what is staged.
-    pub(super) fn stage_all_button_text(self) -> (&'static str, &'static str) {
-        if self.skip_hooks {
+    pub(super) fn stage_all_button_text(self, language: Language) -> (&'static str, &'static str) {
+        if language == Language::TraditionalChinese {
+            if self.skip_hooks {
+                (
+                    "暫存全部並提交（略過掛鉤）",
+                    "暫存全部變更（包含未追蹤檔案）並提交，略過 pre-commit 和 commit-msg 掛鉤。",
+                )
+            } else {
+                ("暫存全部並提交", "暫存全部變更（包含未追蹤檔案）並提交。")
+            }
+        } else if self.skip_hooks {
             (
                 "Stage All & Commit without Hooks",
                 "Stage all changes, untracked files included, and commit them without running the pre-commit and commit-msg hooks",
@@ -151,6 +161,55 @@ impl CommitOptions {
 }
 
 impl DetailsPaneView {
+    /// The scope shown by both commit entry points, even before typing a message.
+    pub(in crate::view) fn commit_scope_summary(
+        repo: &RepoState,
+        amend: bool,
+        language: Language,
+    ) -> String {
+        let target = match &repo.head_branch {
+            Loadable::Ready(branch) if !branch.is_empty() && branch != "HEAD" => branch.as_str(),
+            Loadable::Ready(_) => language.text("Detached HEAD", "分離 HEAD"),
+            _ => language.text("Branch unavailable", "分支尚未載入"),
+        };
+        let Some(staged) = repo.staged_status_entries() else {
+            return format!(
+                "{target} · {}",
+                language.text("File status unavailable", "檔案狀態尚未載入")
+            );
+        };
+        let count = staged.len();
+        let scope = if amend {
+            match language {
+                Language::English => format!("Amend previous commit · {count} staged file(s)"),
+                Language::TraditionalChinese => {
+                    format!("修訂上一筆提交 · 納入 {count} 個已暫存檔案")
+                }
+            }
+        } else if merge_in_progress(repo) {
+            match language {
+                Language::English => format!("Complete merge · {count} staged file(s)"),
+                Language::TraditionalChinese => format!("完成合併提交 · 納入 {count} 個已暫存檔案"),
+            }
+        } else if let Ok(paths) = stage_all_commit_paths(repo, false) {
+            let count = paths.len();
+            match language {
+                Language::English => {
+                    format!("Stage all & commit {count} changed file(s), including untracked files")
+                }
+                Language::TraditionalChinese => {
+                    format!("暫存全部並提交 {count} 個變更檔案，包含未追蹤檔案")
+                }
+            }
+        } else {
+            match language {
+                Language::English => format!("Commit only {count} staged file(s)"),
+                Language::TraditionalChinese => format!("僅提交 {count} 個已暫存檔案"),
+            }
+        };
+        format!("{target} · {scope}")
+    }
+
     /// The active repository, when a commit with `message` may start at all.
     fn commit_submit_repo(&self, message: &str) -> Option<&RepoState> {
         let repo = self.active_repo()?;
@@ -368,12 +427,15 @@ impl DetailsPaneView {
         let options = self.commit_options();
         let amend = options.amend;
         let language = Language::current(cx);
+        let scope_summary = self
+            .active_repo()
+            .map(|repo| Self::commit_scope_summary(repo, amend, language));
         let commit_options = CommitOptions {
             push_after: false,
             ..options
         };
         let (commit_label, commit_tooltip) = if stage_all_count.is_some() {
-            commit_options.stage_all_button_text()
+            commit_options.stage_all_button_text(language)
         } else {
             commit_options.button_text(language)
         };
@@ -633,6 +695,16 @@ impl DetailsPaneView {
             .flex_col()
             .gap_2()
             .child(message_card)
+            .when_some(scope_summary, |view, summary| {
+                view.child(
+                    div()
+                        .id("commit_scope_summary")
+                        .debug_selector(|| "commit_scope_summary".to_string())
+                        .text_size(theme.ui_text(11.0))
+                        .text_color(theme.colors.foreground.secondary)
+                        .child(summary),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -672,6 +744,86 @@ impl DetailsPaneView {
 #[cfg(test)]
 mod tests {
     use super::commit_target_summary;
+    use super::*;
+    use gitcomet_core::domain::{FileStatus, FileStatusKind, RepoSpec, RepoStatus};
+
+    fn repo_with_changes(staged: &[&str], unstaged: &[&str]) -> RepoState {
+        let mut repo = RepoState::new_opening(
+            RepoId(1),
+            RepoSpec {
+                workdir: "/tmp/commit-scope".into(),
+            },
+        );
+        repo.repository_mode = Some(gitcomet_core::domain::RepositoryMode::WorkingTree);
+        repo.head_branch = Loadable::Ready("main".into());
+        let entries = |paths: &[&str]| {
+            Arc::new(
+                paths
+                    .iter()
+                    .map(|path| FileStatus {
+                        path: (*path).into(),
+                        kind: if *path == "untracked" {
+                            FileStatusKind::Untracked
+                        } else {
+                            FileStatusKind::Modified
+                        },
+                        conflict: None,
+                    })
+                    .collect(),
+            )
+        };
+        repo.status = Loadable::Ready(
+            RepoStatus {
+                staged: entries(staged),
+                unstaged: entries(unstaged),
+            }
+            .into(),
+        );
+        repo
+    }
+
+    #[test]
+    fn commit_scope_distinguishes_partial_staging_from_stage_all() {
+        let staged = repo_with_changes(&["a"], &["b", "untracked"]);
+        assert_eq!(
+            DetailsPaneView::commit_scope_summary(&staged, false, Language::TraditionalChinese),
+            "main · 僅提交 1 個已暫存檔案"
+        );
+        let unstaged = repo_with_changes(&[], &["b", "untracked"]);
+        assert_eq!(
+            DetailsPaneView::commit_scope_summary(&unstaged, false, Language::TraditionalChinese),
+            "main · 暫存全部並提交 2 個變更檔案，包含未追蹤檔案"
+        );
+    }
+
+    #[test]
+    fn commit_scope_names_merge_amend_detached_and_unknown_states() {
+        let mut repo = repo_with_changes(&[], &["unstaged"]);
+        assert_eq!(
+            DetailsPaneView::commit_scope_summary(&repo, true, Language::English),
+            "main · Amend previous commit · 0 staged file(s)"
+        );
+        repo.merge_commit_message = Loadable::Ready(Some("merge".into()));
+        assert_eq!(
+            DetailsPaneView::commit_scope_summary(&repo, false, Language::English),
+            "main · Complete merge · 0 staged file(s)"
+        );
+        repo.head_branch = Loadable::Ready("HEAD".into());
+        assert!(
+            DetailsPaneView::commit_scope_summary(&repo, false, Language::English)
+                .starts_with("Detached HEAD ·")
+        );
+        repo.head_branch = Loadable::Loading;
+        assert!(
+            DetailsPaneView::commit_scope_summary(&repo, false, Language::English)
+                .starts_with("Branch unavailable ·")
+        );
+        repo.status = Loadable::NotLoaded;
+        assert_eq!(
+            DetailsPaneView::commit_scope_summary(&repo, false, Language::English),
+            "Branch unavailable · File status unavailable"
+        );
+    }
 
     #[test]
     fn commit_target_summary_counts_files_and_names_the_branch() {
@@ -690,7 +842,7 @@ mod tests {
         );
         assert_eq!(
             commit_target_summary(2, "staged", None).as_deref(),
-            Some("2 staged files on a detached HEAD")
+            Some("2 staged files · branch unavailable")
         );
     }
 }

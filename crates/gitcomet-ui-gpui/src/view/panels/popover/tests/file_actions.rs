@@ -2252,15 +2252,27 @@ fn review_adjusted_branch_menus_disable_merge_and_squash(cx: &mut gpui::TestAppC
                     BranchMenuTarget::remote("origin".to_string(), "feature".to_string()),
                 ] {
                     let model = host
-                        .context_menu_model(&PopoverKind::BranchMenu { repo_id, target }, cx)
+                        .context_menu_model(
+                            &PopoverKind::BranchMenu {
+                                repo_id,
+                                target: target.clone(),
+                            },
+                            cx,
+                        )
                         .unwrap();
                     assert!(context_menu_entry_disabled(
                         &model,
-                        "Merge into current (adjusted/main(unlocked))"
+                        &format!(
+                            "Merge {} into adjusted/main(unlocked)",
+                            target.display_name()
+                        )
                     ));
                     assert!(context_menu_entry_disabled(
                         &model,
-                        "Squash into current (adjusted/main(unlocked))"
+                        &format!(
+                            "Squash {} into adjusted/main(unlocked)",
+                            target.display_name()
+                        )
                     ));
                 }
                 let model = host

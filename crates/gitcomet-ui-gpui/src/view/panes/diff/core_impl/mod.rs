@@ -204,6 +204,7 @@ impl DiffRenderer {
         repo_id: RepoId,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.stage_file_transfer = None;
         if !self.store.policy.close_button {
             return;
         }
@@ -1984,6 +1985,7 @@ impl DiffRenderer {
             }
             // The status lanes and the action count are not in the fingerprint.
             self.resolve_next_file_advance(cx);
+            self.resolve_stage_file_transfer(cx);
             return false;
         }
         self.notify_fingerprint = fingerprint;
@@ -2042,6 +2044,7 @@ impl DiffRenderer {
 
         self.ensure_rendered_patch_diff_cache(cx);
         self.resolve_next_file_advance(cx);
+        self.resolve_stage_file_transfer(cx);
 
         cx.notify();
         true

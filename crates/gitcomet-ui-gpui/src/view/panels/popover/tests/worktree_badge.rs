@@ -204,6 +204,12 @@ fn worktree_badge_picker_switches_labels_without_changing_row_payloads(
         assert_eq!(english.items[0].debug_display_text(), "Create new worktree");
         assert_eq!(chinese.items[0].debug_display_text(), "新增工作樹");
         assert_eq!(chinese.items[0].debug_secondary_text(), "起始參照 main");
+        assert!(english.items[2].debug_secondary_text().contains("main / "));
+        assert!(
+            english.items[2]
+                .debug_secondary_text()
+                .contains("/tmp/ws/feature")
+        );
         assert_eq!(english.payloads, chinese.payloads);
         assert_eq!(english.marked_index, chinese.marked_index);
         assert_eq!(

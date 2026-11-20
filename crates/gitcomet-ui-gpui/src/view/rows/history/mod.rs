@@ -602,6 +602,7 @@ fn history_table_row(
     // Where the first worktree chip starts, so the canvas can end the message
     // there. The chips' layer prepaints before the canvas paints.
     let worktree_chips_left = (!worktree_chips.is_empty()).then(Default::default);
+    let ref_hit_targets = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     let commit_row = history_canvas::history_commit_row_canvas(
         theme,
         cx.entity(),
@@ -645,6 +646,7 @@ fn history_table_row(
         annotation.clone(),
         comparison_mark,
         worktree_chips_left.clone(),
+        ref_hit_targets.clone(),
         mark_menus,
         mark_menus
             .iter()
@@ -676,16 +678,33 @@ fn history_table_row(
         .on_activate(
             false,
             controls::ControlActivation::Composite,
-            cx.listener(move |this, e: &ClickEvent, _w, cx| {
+            cx.listener(move |this, e: &ClickEvent, window, cx| {
                 let modifiers = e.modifiers();
-                // GitKraken checks out a branch double-clicked in the graph.
                 if e.standard_click()
                     && e.click_count() == 2
                     && modifiers.number_of_modifiers() == 0
+                    && let ClickEvent::Mouse(click) = e
+                    && let Some(HistoryMenuRef::Branch(BranchMenuTarget::Local { name })) =
+                        history_canvas::history_ref_click_target(
+                            &ref_hit_targets.borrow(),
+                            click.down.position,
+                            e.position(),
+                        )
                     && let Some(repo) = this.active_repo().filter(|repo| repo.id == repo_id)
-                    && let Some(name) = history_double_click_checkout(repo, &commit_id)
+                    && let Some(action) = history_double_click_branch(repo, &name)
                 {
-                    this.store.dispatch(Msg::CheckoutBranch { repo_id, name });
+                    match action {
+                        HistoryBranchActivation::Checkout(name) => {
+                            this.store.dispatch(Msg::CheckoutBranch { repo_id, name });
+                        }
+                        HistoryBranchActivation::Open(path) => {
+                            crate::app::open_repository_from_view(
+                                cx,
+                                window.window_handle().window_id(),
+                                path,
+                            );
+                        }
+                    }
                     cx.notify();
                     return;
                 }
@@ -1356,27 +1375,30 @@ fn working_tree_summary_history_row(
     place_history_row(row, row_top).into_any_element()
 }
 
-/// The branch a double-click on a commit row checks out, as GitKraken does
-/// for a branch label: the one local branch at that commit, unless it is
-/// already checked out here or held by another worktree. Several branches,
-/// or none, leave the double-click as a selection.
-pub(in crate::view) fn history_double_click_checkout(
+#[derive(Debug, PartialEq)]
+pub(in crate::view) enum HistoryBranchActivation {
+    Checkout(String),
+    Open(std::path::PathBuf),
+}
+
+/// Only the exact local branch label under the completed double-click acts.
+pub(in crate::view) fn history_double_click_branch(
     repo: &RepoState,
-    commit_id: &CommitId,
-) -> Option<String> {
-    if repo.is_bare() {
+    name: &str,
+) -> Option<HistoryBranchActivation> {
+    if repo.is_bare()
+        || !repo
+            .branches
+            .ready()?
+            .iter()
+            .any(|branch| branch.name == name)
+    {
         return None;
     }
-    let branches = repo.branches.ready()?;
-    let mut at_commit = branches.iter().filter(|branch| branch.target == *commit_id);
-    let branch = at_commit.next()?;
-    if at_commit.next().is_some() {
-        return None;
+    if let Some(path) = crate::view::rows::branch_checked_out_at(repo, name) {
+        return (path != repo.spec.workdir).then_some(HistoryBranchActivation::Open(path));
     }
-    if crate::view::rows::branch_checked_out_at(repo, &branch.name).is_some() {
-        return None;
-    }
-    Some(branch.name.clone())
+    Some(HistoryBranchActivation::Checkout(name.to_string()))
 }
 
 mod markdown_preview_rows;

@@ -132,6 +132,17 @@ fn rows_for_language(repo: &RepoState, query: &str, language: Language) -> Workt
         // Detail line: where it is on disk, and which commit it sits on. The path
         // stays searchable so a path query still finds its row.
         let mut secondary = Vec::with_capacity(3);
+        if let Some(primary) = worktrees.first()
+            && primary.path != worktree.path
+        {
+            secondary.push(
+                components::PickerPromptItemPart::new(format!(
+                    "{} / ",
+                    crate::view::path_display::repo_path_name(&primary.path)
+                ))
+                .flexible(false),
+            );
+        }
         if let Some(head) = &worktree.head {
             let sha = head.as_ref();
             secondary.push(

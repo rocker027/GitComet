@@ -221,6 +221,18 @@ pub(in crate::view) struct NextFileAdvance {
     pub(in crate::view) ops_rev: u64,
 }
 
+/// A whole-file button follows its file to the other index lane once the
+/// command and its status refresh finish. Keyboard review keeps advancing.
+pub(in crate::view) struct StageFileTransfer {
+    pub(in crate::view) repo_id: RepoId,
+    pub(in crate::view) path: std::path::PathBuf,
+    pub(in crate::view) from: DiffArea,
+    pub(in crate::view) ops_rev: u64,
+    pub(in crate::view) canvas_requests: u64,
+    pub(in crate::view) opened: bool,
+    pub(in crate::view) scroll_offsets: [Point<Pixels>; 2],
+}
+
 /// The change block F2/F3 last landed on, for the accent bar and outline
 /// that mark it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -650,6 +662,7 @@ pub(crate) struct DiffRenderer {
     pub(in crate::view) diff_stage_advance: Option<DiffStageAdvance>,
     /// Set by Stage, Unstage or Discard: open the next file once this one has no changes left.
     pub(in crate::view) next_file_advance: Option<NextFileAdvance>,
+    pub(in crate::view) stage_file_transfer: Option<StageFileTransfer>,
     pub(in crate::view) diff_text_selecting: bool,
     pub(in crate::view) diff_text_anchor: Option<DiffTextPos>,
     pub(in crate::view) diff_text_head: Option<DiffTextPos>,

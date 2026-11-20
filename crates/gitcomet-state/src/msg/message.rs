@@ -537,6 +537,10 @@ pub enum Msg {
         request_id: Option<u64>,
         repo_id: RepoId,
     },
+    /// Show the live changes as a distinct step in main-view navigation.
+    ReviewWorkingTree {
+        repo_id: RepoId,
+    },
     /// Compare two points (commits, or branch/tag tips resolved to commit ids).
     /// `from` is the base/older side. Loads the changed-file list and drives the
     /// whole-range patch into the diff pane.

@@ -612,8 +612,8 @@ fn f10_active_finish_run_disables_conflicting_branch_and_commit_menu_entries(
                 .expect("branch context menu model");
             for required_disabled in [
                 "Checkout",
-                "Merge into current",
-                "Squash into current",
+                "Merge feat/a into main",
+                "Squash feat/a into main",
                 "Rename branch",
                 "Delete branch",
             ] {
@@ -707,5 +707,143 @@ fn f10_active_finish_run_disables_conflicting_branch_and_commit_menu_entries(
                 );
             }
         });
+    });
+}
+
+#[test]
+fn worktree_finish_merge_execution_location_waits_for_a_resolved_preview() {
+    use super::super::worktree_finish_setup::execution_location_summary;
+
+    let language = Language::TraditionalChinese;
+    let mut run = sample_run(
+        RepoId(1),
+        WorktreeFinishRunId(301),
+        RunPhase::Previewing,
+        ItemPhase::Queued,
+    );
+    run.target.host = TargetHost::NotNeeded;
+    assert_eq!(
+        execution_location_summary(language, FinishMode::MergeInto, true, Some(&run)),
+        "正在確認執行地點…"
+    );
+    assert_eq!(
+        execution_location_summary(language, FinishMode::MergeInto, true, None),
+        "正在確認執行地點…"
+    );
+    assert!(
+        execution_location_summary(language, FinishMode::MergeInto, false, None)
+            .contains("請選取來源工作樹")
+    );
+    assert!(
+        execution_location_summary(language, FinishMode::RebaseOnto, true, Some(&run))
+            .contains("目標分支不會移動")
+    );
+
+    run.phase = RunPhase::AwaitingConfirm { fingerprint: 31 };
+    run.preview_blockers.push("Preview failed".to_string());
+    assert_eq!(
+        execution_location_summary(language, FinishMode::MergeInto, true, Some(&run)),
+        "無法確認執行地點，請查看預覽錯誤。"
+    );
+    run.target.host = TargetHost::OpenTab {
+        repo_id: RepoId(1),
+        path: PathBuf::from(MAIN_WT),
+    };
+    assert_eq!(
+        execution_location_summary(language, FinishMode::MergeInto, true, Some(&run)),
+        format!("執行地點：{MAIN_WT}（已開分頁）")
+    );
+    assert!(
+        !run.can_confirm(),
+        "preview errors must retain their confirmation blocker"
+    );
+}
+
+#[gpui::test]
+fn worktree_finish_conflict_paths_expand_and_clear_when_the_draft_changes(
+    cx: &mut gpui::TestAppContext,
+) {
+    let repo_id = RepoId(1);
+    let state = app_state_with_repo(repo_with_worktrees(repo_id), repo_id);
+    let (view, cx) = open_view(cx, state);
+    open_popover(
+        &view,
+        cx,
+        PopoverKind::worktree(
+            repo_id,
+            WorktreePopoverKind::FinishSetup {
+                preselected: vec![PathBuf::from(FEAT_A_WT)],
+                target: Some("main".to_string()),
+                mode: Some(FinishMode::MergeInto),
+            },
+        ),
+    );
+    let mut state = app_state_with_repo(repo_with_worktrees(repo_id), repo_id);
+    let mut run = sample_run(
+        repo_id,
+        WorktreeFinishRunId(302),
+        RunPhase::AwaitingConfirm { fingerprint: 32 },
+        ItemPhase::Queued,
+    );
+    let Loadable::Ready(preview) = &mut run.sources[0].preview else {
+        unreachable!();
+    };
+    preview.conflict_paths = vec![PathBuf::from("src/main.rs"), PathBuf::from("README.md")];
+    Arc::make_mut(&mut state).worktree_finish_runs.push(run);
+    cx.update(|window, app| {
+        view.update(app, |this, cx| push_test_state(this, state, cx));
+        let _ = window.draw(app);
+    });
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("worktree_finish_conflicts_toggle_1")
+            .is_some()
+    );
+    assert!(
+        cx.debug_bounds("worktree_finish_conflict_path_1_0")
+            .is_none()
+    );
+
+    let click = |cx: &mut gpui::VisualTestContext, selector: &'static str| {
+        let center = cx
+            .debug_bounds(selector)
+            .expect("visible conflict control")
+            .center();
+        cx.simulate_mouse_move(center, None, gpui::Modifiers::default());
+        cx.simulate_mouse_down(center, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(center, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.run_until_parked();
+        redraw(cx);
+    };
+    click(cx, "worktree_finish_conflicts_toggle_1");
+    assert!(
+        cx.debug_bounds("worktree_finish_conflict_path_1_0")
+            .is_some()
+    );
+    assert!(
+        cx.debug_bounds("worktree_finish_conflict_path_1_1")
+            .is_some()
+    );
+    click(cx, "worktree_finish_conflicts_toggle_1");
+    assert!(
+        cx.debug_bounds("worktree_finish_conflict_path_1_0")
+            .is_none()
+    );
+    click(cx, "worktree_finish_conflicts_toggle_1");
+    click(cx, "worktree_finish_mode_rebase");
+    assert!(
+        cx.debug_bounds("worktree_finish_conflict_path_1_0")
+            .is_none()
+    );
+    cx.update(|_window, app| {
+        let draft = view
+            .read(app)
+            .popover_host
+            .read(app)
+            .worktree_finish_setup
+            .as_ref()
+            .unwrap();
+        assert!(draft.expanded_conflict_paths.is_empty());
+        assert_eq!(draft.mode, FinishMode::RebaseOnto);
     });
 }

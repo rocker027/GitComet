@@ -1,6 +1,80 @@
 use super::*;
 use std::rc::Rc;
 
+#[test]
+fn ref_clicks_match_the_exact_chip_and_require_both_endpoints_inside_it() {
+    let local = HistoryMenuRef::Branch(BranchMenuTarget::local("feature"));
+    let remote = HistoryMenuRef::Branch(BranchMenuTarget::remote("origin", "feature"));
+    let tag = HistoryMenuRef::Tag("feature".into());
+    let targets: Vec<_> = [local.clone(), remote.clone(), tag.clone()]
+        .into_iter()
+        .enumerate()
+        .map(|(index, target)| {
+            (
+                Bounds::new(
+                    point(px(index as f32 * 80.0), px(10.0)),
+                    size(px(70.0), px(20.0)),
+                ),
+                target,
+            )
+        })
+        .collect();
+    for (bounds, target) in &targets {
+        assert_eq!(
+            history_ref_click_target(&targets, bounds.center(), bounds.center()),
+            Some(target.clone())
+        );
+    }
+    assert_eq!(
+        history_ref_click_target(&targets, targets[0].0.center(), targets[1].0.center()),
+        None
+    );
+    let node = point(px(300.0), px(20.0));
+    assert_eq!(history_ref_click_target(&targets, node, node), None);
+    let gap = point(px(75.0), px(20.0));
+    assert_eq!(history_ref_click_target(&targets, gap, gap), None);
+}
+
+#[test]
+fn combined_tracking_ref_chip_targets_its_named_local_branch() {
+    let chip = branch_chip(
+        "feature/topic",
+        false,
+        &[
+            (BranchSection::Local, "feature/topic"),
+            (BranchSection::Remote, "origin/feature/topic"),
+            (BranchSection::Remote, "team/feature/topic"),
+        ],
+    );
+    assert_eq!(
+        history_branch_chip_target(&chip),
+        Some(HistoryMenuRef::Branch(BranchMenuTarget::local(
+            "feature/topic"
+        )))
+    );
+    let remote = branch_chip(
+        "origin/feature/topic",
+        false,
+        &[(BranchSection::Remote, "origin/feature/topic")],
+    );
+    assert_eq!(
+        history_branch_chip_target(&remote),
+        Some(HistoryMenuRef::Branch(BranchMenuTarget::remote(
+            "origin",
+            "feature/topic"
+        )))
+    );
+    let grouped_remotes = branch_chip(
+        "feature/topic",
+        false,
+        &[
+            (BranchSection::Remote, "origin/feature/topic"),
+            (BranchSection::Remote, "team/feature/topic"),
+        ],
+    );
+    assert_eq!(history_branch_chip_target(&grouped_remotes), None);
+}
+
 fn test_row_visual(theme: AppTheme) -> HistoryRowVisual {
     HistoryRowVisual {
         lane: history_graph::lane_color(theme, 3),

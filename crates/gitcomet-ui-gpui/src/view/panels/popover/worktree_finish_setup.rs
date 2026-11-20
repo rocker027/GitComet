@@ -29,6 +29,7 @@ pub(super) struct SetupDraft {
     pub(super) rows: Vec<SetupSourceRow>,
     pub(super) editing_squash_row: Option<usize>,
     pub(super) last_preview_key: Option<u64>,
+    pub(super) expanded_conflict_paths: Vec<PathBuf>,
 }
 
 impl SetupDraft {
@@ -186,6 +187,7 @@ pub(super) fn prepare_setup_draft(
         rows,
         editing_squash_row: None,
         last_preview_key: None,
+        expanded_conflict_paths: Vec::new(),
     };
 
     if !draft.selected_requests().is_empty() && !draft.target_branch.is_empty() {
@@ -214,6 +216,7 @@ pub(super) fn trigger_preview_if_needed(this: &mut PopoverHost) {
     };
     let sources = draft.selected_requests();
     if sources.is_empty() || draft.target_branch.is_empty() {
+        draft.expanded_conflict_paths.clear();
         draft.last_preview_key = None;
         return;
     }
@@ -221,6 +224,7 @@ pub(super) fn trigger_preview_if_needed(this: &mut PopoverHost) {
     if draft.last_preview_key == Some(key) {
         return;
     }
+    draft.expanded_conflict_paths.clear();
     draft.last_preview_key = Some(key);
     let repo_id = draft.repo_id;
     let target_branch = draft.target_branch.clone();
@@ -241,6 +245,69 @@ pub(super) fn trigger_preview_if_needed(this: &mut PopoverHost) {
 /// also opens while the root view is being updated (command palette), where that read panics.
 pub(super) fn running_terminal_paths(this: &PopoverHost) -> Vec<PathBuf> {
     this.store.running_terminal_paths()
+}
+
+pub(super) fn execution_location_summary(
+    language: Language,
+    mode: FinishMode,
+    has_sources: bool,
+    matching_run: Option<&WorktreeFinishRun>,
+) -> String {
+    match matching_run {
+        Some(run) if mode == FinishMode::MergeInto && run.phase == RunPhase::Previewing => language
+            .text("Confirming execution location…", "正在確認執行地點…")
+            .to_string(),
+        Some(run) => match &run.target.host {
+            TargetHost::OpenTab { path, .. } => match language {
+                Language::English => format!("Execution worktree: {} (open tab)", path.display()),
+                Language::TraditionalChinese => format!("執行地點：{}（已開分頁）", path.display()),
+            },
+            TargetHost::LinkedWorktree { path } => match language {
+                Language::English => {
+                    format!("Execution worktree: {} (linked worktree)", path.display())
+                }
+                Language::TraditionalChinese => {
+                    format!("執行地點：{}（連結工作樹）", path.display())
+                }
+            },
+            TargetHost::Temporary { path, .. } => match language {
+                Language::English => format!(
+                    "Target branch is not checked out; a temporary worktree will be created after confirm at {}",
+                    path.display()
+                ),
+                Language::TraditionalChinese => format!(
+                    "目標分支尚未簽出，確認後將於 {} 建立專用暫時工作樹",
+                    path.display()
+                ),
+            },
+            TargetHost::NotNeeded if mode == FinishMode::MergeInto => language
+                .text("Execution location is unavailable; check the preview errors.", "無法確認執行地點，請查看預覽錯誤。")
+                .to_string(),
+            TargetHost::NotNeeded => language
+                .text(
+                    "Execution location: each selected source worktree (target branch will not move)",
+                    "執行地點：各個選取的來源工作樹（目標分支不會移動）",
+                )
+                .to_string(),
+        },
+        None if has_sources && mode == FinishMode::MergeInto => language
+            .text("Confirming execution location…", "正在確認執行地點…")
+            .to_string(),
+        None => match mode {
+            FinishMode::MergeInto => language
+                .text(
+                    "Select source worktrees to preview merge into the target branch.",
+                    "請選取來源工作樹以預覽合併至目標分支。",
+                )
+                .to_string(),
+            FinishMode::RebaseOnto => language
+                .text(
+                    "Select source worktrees to preview rebasing onto the target branch.",
+                    "請選取來源工作樹以預覽變基至目標分支。",
+                )
+                .to_string(),
+        },
+    }
 }
 
 pub(super) fn panel(
@@ -297,52 +364,12 @@ pub(super) fn panel(
     let squash_count = selected_requests.iter().filter(|r| r.squash).count();
     let remove_count = selected_requests.iter().filter(|r| r.remove_after).count();
 
-    let host_summary = match &matching_run {
-        Some(run) => match &run.target.host {
-            TargetHost::OpenTab { path, .. } => match language {
-                Language::English => format!("Execution worktree: {} (open tab)", path.display()),
-                Language::TraditionalChinese => format!("執行地點：{}（已開分頁）", path.display()),
-            },
-            TargetHost::LinkedWorktree { path } => match language {
-                Language::English => {
-                    format!("Execution worktree: {} (linked worktree)", path.display())
-                }
-                Language::TraditionalChinese => {
-                    format!("執行地點：{}（連結工作樹）", path.display())
-                }
-            },
-            TargetHost::Temporary { path, .. } => match language {
-                Language::English => format!(
-                    "Target branch is not checked out; a temporary worktree will be created after confirm at {}",
-                    path.display()
-                ),
-                Language::TraditionalChinese => format!(
-                    "目標分支尚未簽出，確認後將於 {} 建立專用暫時工作樹",
-                    path.display()
-                ),
-            },
-            TargetHost::NotNeeded => language
-                .text(
-                    "Execution location: each selected source worktree (target branch will not move)",
-                    "執行地點：各個選取的來源工作樹（目標分支不會移動）",
-                )
-                .to_string(),
-        },
-        None => match draft.mode {
-            FinishMode::MergeInto => language
-                .text(
-                    "Select source worktrees to preview merge into the target branch.",
-                    "請選取來源工作樹以預覽合併至目標分支。",
-                )
-                .to_string(),
-            FinishMode::RebaseOnto => language
-                .text(
-                    "Select source worktrees to preview rebasing onto the target branch.",
-                    "請選取來源工作樹以預覽變基至目標分支。",
-                )
-                .to_string(),
-        },
-    };
+    let host_summary = execution_location_summary(
+        language,
+        draft.mode,
+        selected_count > 0,
+        matching_run.as_ref(),
+    );
 
     let mode_row = super::prompt_footer_row().gap_2().child(
         div()
@@ -763,6 +790,78 @@ pub(super) fn panel(
                     .text_color(theme.colors.foreground.secondary)
                     .child(summary),
             );
+        }
+
+        let conflict_paths = matching_run
+            .as_ref()
+            .filter(|run| matches!(run.phase, RunPhase::AwaitingConfirm { .. }))
+            .and_then(|run| run.sources.iter().find(|source| source.path == row.path))
+            .and_then(|source| source.preview.ready())
+            .map(|preview| preview.conflict_paths.as_slice())
+            .unwrap_or_default();
+        if row.selected && !conflict_paths.is_empty() {
+            let expanded = draft.expanded_conflict_paths.contains(&row.path);
+            let source_path = row.path.clone();
+            row_el = row_el.child(
+                components::Button::new(
+                    format!("worktree_finish_conflicts_toggle_{ix}"),
+                    language.text(
+                        if expanded {
+                            "Hide conflict files"
+                        } else {
+                            "Show conflict files"
+                        },
+                        if expanded {
+                            "收合衝突檔案"
+                        } else {
+                            "查看衝突檔案"
+                        },
+                    ),
+                )
+                .style(components::ButtonStyle::Subtle)
+                .on_click(theme, cx, move |this, _e, _w, cx| {
+                    if let Some(draft) = this.worktree_finish_setup.as_mut() {
+                        if draft.expanded_conflict_paths.contains(&source_path) {
+                            draft
+                                .expanded_conflict_paths
+                                .retain(|path| path != &source_path);
+                        } else {
+                            draft.expanded_conflict_paths.push(source_path.clone());
+                        }
+                    }
+                    cx.notify();
+                })
+                .debug_selector(move || format!("worktree_finish_conflicts_toggle_{ix}")),
+            );
+            if expanded {
+                let mut paths = div()
+                    .id(("worktree_finish_conflicts", ix))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .max_h(scaled_px(120.0))
+                    .overflow_y_scroll();
+                for (path_ix, path) in conflict_paths.iter().enumerate() {
+                    paths = paths.child(
+                        div()
+                            .text_size(theme.ui_text(11.0))
+                            .text_color(theme.colors.status.warning.foreground)
+                            .debug_selector(move || {
+                                format!("worktree_finish_conflict_path_{ix}_{path_ix}")
+                            })
+                            .child(path.display().to_string()),
+                    );
+                }
+                row_el = row_el.child(paths).child(
+                    div()
+                        .text_size(theme.ui_text(11.0))
+                        .text_color(theme.colors.foreground.secondary)
+                        .child(language.text(
+                            "If a conflict occurs, the run pauses at its execution worktree. Open it from the queue to resolve conflicts, then recheck and continue.",
+                            "若發生衝突，執行會在該工作樹暫停。可從佇列開啟分頁處理衝突，再重新檢查並繼續。",
+                        )),
+                );
+            }
         }
 
         if row.selected && row.squash {

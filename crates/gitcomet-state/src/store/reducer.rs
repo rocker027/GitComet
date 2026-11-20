@@ -814,6 +814,7 @@ fn view_navigation(msg: &Msg) -> Option<(RepoId, ViewNavigation)> {
         Msg::SelectDiff { repo_id, .. }
         | Msg::SelectConflictDiff { repo_id, .. }
         | Msg::SelectCommit { repo_id, .. }
+        | Msg::ReviewWorkingTree { repo_id }
         // Selecting a linked-worktree row is a destination like any other
         // history selection; it just is not a commit.
         | Msg::SelectWorktreeUncommitted { repo_id, .. }
@@ -1416,6 +1417,10 @@ fn reduce_inner(
         ),
         Msg::ClearCommitSelection { repo_id, .. } => {
             effects::clear_commit_selection(state, repo_id)
+        }
+        Msg::ReviewWorkingTree { repo_id } => {
+            effects::clear_commit_selection(state, repo_id);
+            diff_selection::clear_diff_selection(state, repo_id)
         }
         Msg::CompareCommitRange {
             repo_id,

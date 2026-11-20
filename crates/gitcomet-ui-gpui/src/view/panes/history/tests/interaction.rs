@@ -1064,9 +1064,9 @@ fn history_refs_hover_lists_refs_and_opens_item_menus_in_mode(
         redraw(cx);
     };
 
-    // The first chip represents both `main` and `origin/main`. A direct
-    // right-click must disambiguate those exact refs rather than silently
-    // choosing whichever one happened to be inserted first.
+    // The first chip names local `main` and includes its tracking `origin/main`.
+    // A direct right-click uses the named local branch; the hover list below
+    // still exposes the remote ref and every other ref independently.
     let combined_chip_point = refs_column_point(cx, 0);
     cx.simulate_mouse_move(combined_chip_point, None, gpui::Modifiers::default());
     cx.simulate_mouse_down(
@@ -1091,14 +1091,13 @@ fn history_refs_hover_lists_refs_and_opens_item_menus_in_mode(
                 .as_ref()
                 .map(|invoker| invoker.as_ref()),
             Some("history_commit_menu_1_tip"),
-            "every chip opens the same commit-row menu"
+            "the clicked row keeps its active menu styling"
         );
         assert_eq!(
             crate::view::test_support::popover_kind(view.read(app), app),
-            Some(PopoverKind::CommitMenu {
+            Some(PopoverKind::BranchMenu {
                 repo_id,
-                commit_id: commit_id.clone(),
-                refs: CommitMenuRefs::All,
+                target: BranchMenuTarget::local("main"),
             })
         );
     });
@@ -3700,5 +3699,101 @@ fn history_bounds_belong_to_the_active_repository(cx: &mut gpui::TestAppContext)
     ensure_history_cache_for_tests(cx, &view, state_for(RepoId(2)));
     wait_until(cx, "the second repository's list laid out", |cx| {
         bounds(cx).is_some()
+    });
+}
+
+#[gpui::test]
+fn graph_ref_menu_targets_the_clicked_branch_and_node_double_click_only_browses(
+    cx: &mut gpui::TestAppContext,
+) {
+    let page = Arc::new(log_page(
+        vec![
+            commit("tip", &["base"], "feature tip"),
+            commit("base", &[], "main"),
+        ],
+        None,
+    ));
+    let (view, cx, mut state, store) = refresh::mount(cx, page);
+    let repo_id = RepoId(1);
+    state.repos[0].head_branch = Loadable::Ready("main".into());
+    state.repos[0].head_branch_rev += 1;
+    state.repos[0].branches = Loadable::Ready(Arc::new(vec![
+        branch("main", "base"),
+        branch("feature", "tip"),
+    ]));
+    state.repos[0].branches_rev += 1;
+    state.repos[0].remote_branches =
+        Loadable::Ready(Arc::new(vec![remote_branch("origin", "feature", "tip")]));
+    state.repos[0].remote_branches_rev += 1;
+    cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.set_history_branch_names(HistoryBranchNamesMode::SeparateColumn, cx);
+        });
+    });
+    store.replace_snapshot_for_test(Arc::new(state.clone()));
+    ensure_history_cache_for_tests(cx, &view, Arc::new(state));
+    wait_until(cx, "feature row", |cx| {
+        cx.debug_bounds("history_row_0").is_some()
+    });
+    let row = cx.debug_bounds("history_row_0").unwrap();
+    let graph = cx.debug_bounds("history_graph_header_cell").unwrap();
+    let node = point(graph.center().x, row.center().y);
+    cx.simulate_mouse_move(node, None, gpui::Modifiers::default());
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: node,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: node,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    cx.run_until_parked();
+    assert_eq!(store.snapshot().repos[0].local_actions_in_flight, 0);
+    assert_eq!(
+        store.snapshot().repos[0].history_state.selected_commit,
+        Some(CommitId("tip".into()))
+    );
+
+    let branch_chip = point(row.left() + px(30.0), row.center().y);
+    cx.simulate_mouse_move(branch_chip, None, gpui::Modifiers::default());
+    cx.simulate_mouse_down(
+        branch_chip,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_up(
+        branch_chip,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|_, app| {
+        assert_eq!(
+            crate::view::test_support::popover_kind(view.read(app), app),
+            Some(PopoverKind::BranchMenu {
+                repo_id,
+                target: BranchMenuTarget::local("feature")
+            })
+        );
+    });
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    cx.simulate_mouse_move(node, None, gpui::Modifiers::default());
+    cx.simulate_mouse_down(node, gpui::MouseButton::Right, gpui::Modifiers::default());
+    cx.simulate_mouse_up(node, gpui::MouseButton::Right, gpui::Modifiers::default());
+    cx.run_until_parked();
+    cx.update(|_, app| {
+        assert_eq!(
+            crate::view::test_support::popover_kind(view.read(app), app),
+            Some(PopoverKind::CommitMenu {
+                repo_id,
+                commit_id: CommitId("tip".into()),
+                refs: CommitMenuRefs::All
+            })
+        );
     });
 }

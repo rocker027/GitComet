@@ -50,6 +50,9 @@ fn commit_prompt_field_aligns_with_its_footer_and_scrolls_inside_the_border(
             let field = cx.debug_bounds("scrollable_text_input_field").unwrap();
             let submit = cx.debug_bounds("commit_prompt_submit").unwrap();
             let rule = cx.debug_bounds("commit_prompt_rule").unwrap();
+            let scope = cx.debug_bounds("commit_prompt_scope_summary").unwrap();
+            assert!(scope.bottom() <= rule.top());
+            assert!(scope.left() >= field.left() && scope.right() <= field.right());
             assert!(
                 ((field.top() - rule.bottom()) - (submit.top() - field.bottom())).abs()
                     <= gpui::px(1.0),
