@@ -1,5 +1,5 @@
 // Use the GUI subsystem on Windows for packaged builds so launching
-// `gitcomet.exe` from Explorer or Start Menu shortcuts does not create a
+// `revweave.exe` from Explorer or Start Menu shortcuts does not create a
 // separate console window. Keep debug/test builds attached to the invoking
 // console so subprocess-heavy Windows test runs do not pop extra terminals.
 #![cfg_attr(

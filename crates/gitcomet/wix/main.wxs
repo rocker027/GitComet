@@ -68,9 +68,9 @@
                         <Component Id='MainBinary' Guid='*'>
                             <File
                                 Id='MainExeFile'
-                                Name='gitcomet.exe'
+                                Name='revweave.exe'
                                 DiskId='1'
-                                Source='$(var.CargoTargetBinDir)\gitcomet.exe'
+                                Source='$(var.CargoTargetBinDir)\revweave.exe'
                                 KeyPath='yes'/>
                         </Component>
                     </Directory>
@@ -85,7 +85,7 @@
                             Directory='RevWeaveProgramMenuDir'
                             Name='RevWeave'
                             Description='Git GUI built with GPUI'
-                            Target='[Bin]gitcomet.exe'
+                            Target='[Bin]revweave.exe'
                             WorkingDirectory='APPLICATIONFOLDER'
                             Icon='ProductICO'
                             IconIndex='0'
@@ -131,7 +131,7 @@
 
         <Icon Id='ProductICO' SourceFile='assets\\revweave.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
-        <Property Id='ARPHELPLINK' Value='https://github.com/rocker027/GitComet'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/rocker027/RevWeave'/>
 
         <UI>
             <UIRef Id='WixUI_FeatureTree'/>

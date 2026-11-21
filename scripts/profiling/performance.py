@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local, witnessed GitComet performance investigations on Linux, macOS and Windows.
+"""Local, witnessed RevWeave performance investigations on Linux, macOS and Windows.
 
 Build first. Measurements never build or download repositories. Use doctor,
 prepare, run, compare and profile --help for the individual commands.
@@ -303,7 +303,7 @@ def main():
     prep.add_argument("--commits", nargs="+", type=int, help="custom fixture sizes (recorded in the corpus)")
     measure = commands.add_parser("run")
     measure.add_argument("--repo-root", type=Path, default=DEFAULT_CORPUS)
-    measure.add_argument("--binary", type=Path, default=ROOT / f"target/release/gitcomet{EXE}")
+    measure.add_argument("--binary", type=Path, default=ROOT / f"target/release/revweave{EXE}")
     measure.add_argument("--baseline", type=Path)
     measure.add_argument("--backend", type=Path)
     measure.add_argument("--baseline-backend", type=Path)
@@ -358,7 +358,7 @@ def main():
             if min(args.pairs, args.cycles, args.timeout, args.refresh_hz, args.ui_scale) <= 0 or min(args.latency_ms, args.bandwidth_mib) < 0:
                 parser.error("counts must be positive; transport limits must be non-negative")
             if not 80 <= args.ui_scale <= 200:
-                parser.error("GitComet supports UI scale percentages from 80 to 200")
+                parser.error("RevWeave supports UI scale percentages from 80 to 200")
             return run(args)
         elif args.command == "compare":
             result = perf_report.compare([json.loads((p / "manifest.json").read_text(encoding="utf-8")) for p in args.runs], allocations=args.allocations)

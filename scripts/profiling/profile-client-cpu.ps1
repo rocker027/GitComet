@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$Repository,
-    [string]$Binary = (Join-Path $PSScriptRoot '../../target/release-with-debug/gitcomet.exe'),
+    [string]$Binary = (Join-Path $PSScriptRoot '../../target/release-with-debug/revweave.exe'),
     [ValidateSet('idle','scroll','activate')][string]$Scenario = 'idle',
     [ValidateRange(1, 86400)][int]$Seconds = 45,
     [switch]$VerifySignatures,
@@ -38,11 +38,11 @@ if ($NoProbe) { Remove-Item Env:GITCOMET_REPO_LOAD_TRACE -ErrorAction SilentlyCo
 else { $env:GITCOMET_REPO_LOAD_TRACE = Join-Path $outputDir 'loads.log' }
 $env:LOCALAPPDATA = Join-Path $outputDir 'appdata'
 New-Item -ItemType Directory -Path $env:LOCALAPPDATA | Out-Null
-if (-not ('GitCometBenchmarkWindow' -as [type])) {
+if (-not ('RevWeaveBenchmarkWindow' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class GitCometBenchmarkWindow {
+public static class RevWeaveBenchmarkWindow {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
     [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
     [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out Rect r);
@@ -71,7 +71,7 @@ public static class GitCometBenchmarkWindow {
 $targetArgs = @($Repository)
 $appArgs = ($targetArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
     $targetPid = 0
-    $jobHandle = [GitCometBenchmarkJob]::Start($Binary,$appArgs,[ref]$targetPid)
+    $jobHandle = [RevWeaveBenchmarkJob]::Start($Binary,$appArgs,[ref]$targetPid)
     $capture = Get-Process -Id $targetPid
     $app = $capture
 $samples = [Collections.Generic.List[object]]::new()
@@ -84,14 +84,14 @@ try {
         $app.Refresh()
         if ($app.HasExited) { $outcome = 'early-exit'; break }
         if ($testWindow -eq 0) {
-            $testWindow = [GitCometBenchmarkWindow]::Find($app.Id)
-            if ($testWindow -ne 0) { [void][GitCometBenchmarkWindow]::ShowWindow($testWindow,4) }
+            $testWindow = [RevWeaveBenchmarkWindow]::Find($app.Id)
+            if ($testWindow -ne 0) { [void][RevWeaveBenchmarkWindow]::ShowWindow($testWindow,4) }
         }
         $elapsed = $clock.Elapsed.TotalSeconds
         if ($elapsed -ge $nextSample) {
             $hwnd = $testWindow
-            $jobStats = [GitCometBenchmarkJob]::Read($jobHandle)
-            $samples.Add([pscustomobject]@{seconds=$elapsed; cpu_seconds=$app.TotalProcessorTime.TotalSeconds; tree_cpu_seconds=$jobStats.CpuSeconds; tree_processes=$jobStats.TotalProcesses; active_tree_processes=$jobStats.ActiveProcesses; working_set=$app.WorkingSet64; private_bytes=$app.PrivateMemorySize64; threads=$app.Threads.Count; hwnd=$hwnd.ToInt64(); visible=($hwnd -ne 0 -and [GitCometBenchmarkWindow]::IsWindowVisible($hwnd))})
+            $jobStats = [RevWeaveBenchmarkJob]::Read($jobHandle)
+            $samples.Add([pscustomobject]@{seconds=$elapsed; cpu_seconds=$app.TotalProcessorTime.TotalSeconds; tree_cpu_seconds=$jobStats.CpuSeconds; tree_processes=$jobStats.TotalProcesses; active_tree_processes=$jobStats.ActiveProcesses; working_set=$app.WorkingSet64; private_bytes=$app.PrivateMemorySize64; threads=$app.Threads.Count; hwnd=$hwnd.ToInt64(); visible=($hwnd -ne 0 -and [RevWeaveBenchmarkWindow]::IsWindowVisible($hwnd))})
             $nextSample += 1
         }
         if ($elapsed -ge $nextAction -and $testWindow -ne 0) {
@@ -99,18 +99,18 @@ try {
             if ($Scenario -eq 'scroll') {
                 # Leave time to verify the final settled viewport after a scroll burst.
                 if ($elapsed -ge ($Seconds - 3)) { $nextAction = $Seconds + 1; continue }
-                $rect = [GitCometBenchmarkWindow+Rect]::new()
-                [void][GitCometBenchmarkWindow]::GetClientRect($hwnd,[ref]$rect)
+                $rect = [RevWeaveBenchmarkWindow+Rect]::new()
+                [void][RevWeaveBenchmarkWindow]::GetClientRect($hwnd,[ref]$rect)
                 $x = [int]($rect.Right * 0.55)
                 $y = [int]($rect.Bottom * 0.30)
                 $delta = if (([int][math]::Floor(($elapsed - 15) / 8) % 2) -eq 0) { -120 } else { 120 }
-                [GitCometBenchmarkWindow]::Wheel($hwnd,$delta,$x,$y)
+                [RevWeaveBenchmarkWindow]::Wheel($hwnd,$delta,$x,$y)
                 $actionCount += 1
                 $nextAction += 0.033333333
             } elseif ($Scenario -eq 'activate') {
-                [void][GitCometBenchmarkWindow]::PostMessage($hwnd,6,[IntPtr]::Zero,[IntPtr]::Zero)
+                [void][RevWeaveBenchmarkWindow]::PostMessage($hwnd,6,[IntPtr]::Zero,[IntPtr]::Zero)
                 Start-Sleep -Milliseconds 30
-                [void][GitCometBenchmarkWindow]::PostMessage($hwnd,6,[IntPtr]1,[IntPtr]::Zero)
+                [void][RevWeaveBenchmarkWindow]::PostMessage($hwnd,6,[IntPtr]1,[IntPtr]::Zero)
                 $events.Add([pscustomobject]@{seconds=$elapsed;action='synthetic deactivate/activate'})
                 $actionCount += 1
                 $nextAction += 6
@@ -121,17 +121,17 @@ try {
     if ($outcome -eq 'unknown') { $outcome = 'completed' }
     $app.Refresh()
     if (-not $app.HasExited) {
-        [void][GitCometBenchmarkWindow]::PostMessage($testWindow,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
+        [void][RevWeaveBenchmarkWindow]::PostMessage($testWindow,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
         if (-not $app.WaitForExit(5000)) { $app.Kill(); $outcome += '-forced-shutdown' }
     }
     if (-not $capture.WaitForExit(30000)) { throw 'Application did not exit' }
 } finally {
     if ($app -and -not $app.HasExited) { $app.Kill() }
     if ($jobHandle -ne 0) {
-        [GitCometBenchmarkJob]::Read($jobHandle) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputDir 'final-tree-cpu.json')
-        [void][GitCometBenchmarkJob]::TerminateJobObject($jobHandle, 1)
-        [void][GitCometBenchmarkJob]::CloseHandle($jobHandle)
-        $nativeExit = [GitCometBenchmarkJob]::ExitCodeAndRelease($app.Id)
+        [RevWeaveBenchmarkJob]::Read($jobHandle) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputDir 'final-tree-cpu.json')
+        [void][RevWeaveBenchmarkJob]::TerminateJobObject($jobHandle, 1)
+        [void][RevWeaveBenchmarkJob]::CloseHandle($jobHandle)
+        $nativeExit = [RevWeaveBenchmarkJob]::ExitCodeAndRelease($app.Id)
     }
     $samples | Export-Csv -LiteralPath (Join-Path $outputDir 'resources.csv') -NoTypeInformation
     $events | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputDir 'events.json')

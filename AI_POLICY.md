@@ -1,12 +1,12 @@
-# GitComet AI Policy
+# RevWeave AI Policy
 
-You may use AI tools to write code, tests and documentation for GitComet, but a human must review every change before it is merged.
+You may use AI tools to write code, tests and documentation for RevWeave, but a human must review every change before it is merged.
 
 This policy covers everyone who contributes, maintainers included, and every kind of contribution: code, tests, documentation, commit messages, pull requests, issues and review comments. An AI tool is any generative model or agent, from inline code completion to a coding agent that edits files and runs commands.
 
 ## Human review
 
-No change merges into GitComet until a human has reviewed all of it.
+No change merges into RevWeave until a human has reviewed all of it.
 
 - **The submitter reviews first.** Before you ask anyone else to review a change, read every line of it, including the tests and documentation an AI tool wrote. You understand what each part does and why, and can explain it to a reviewer without asking the tool again.
 - **The submitter verifies.** Run the builds and checks in [Testing](CONTRIBUTING.md#testing) that apply to the change. State what you verified and identify any applicable checks you could not run, with the reason. Check that the tests an AI tool wrote can fail when the behavior they test breaks.
@@ -18,7 +18,7 @@ No change merges into GitComet until a human has reviewed all of it.
 A coding agent may edit files, run commands and draft commits on your machine. A human decides what leaves it.
 
 - **No autonomous submissions.** An agent may open pull requests or issues, post comments, push changes or merge only after a human has reviewed the relevant content or changes and approved the action. Pull requests and issues an agent opens on its own are closed.
-- **Automation is separate.** Rule-based automation, such as dependency updates, builds, tests and CLA checks, falls outside this policy. Any AI-generated contributions produced through those systems remain covered. Dependabot's pull requests still get a maintainer's review before they merge.
+- **Automation is separate.** Rule-based automation, such as dependency updates, builds and tests, falls outside this policy. Any AI-generated contributions produced through those systems remain covered. Automated pull requests still get a maintainer's review before they merge.
 
 ## Disclosure
 
@@ -26,9 +26,9 @@ A coding agent may edit files, run commands and draft commits on your machine. A
 
 ## Copyright and licensing
 
-You are responsible for AI output the same way you are for code you type yourself, and the [CLA](CLA.md) applies to it unchanged.
+You are responsible for AI output the same way you are for code you type yourself, and the [Developer Certificate of Origin](CONTRIBUTING.md#developer-certificate-of-origin) applies to it unchanged.
 
-- **Tool terms.** Use a tool whose terms let you contribute its output under AGPL-3.0-only and grant the rights the CLA describes.
+- **Tool terms.** Use a tool whose terms let you contribute its output under AGPL-3.0-only and certify it under the Developer Certificate of Origin.
 - **Recognizable code.** If an AI tool's output reproduces existing code or documentation, such as a recognizable function from another project or its license header, treat it as third-party material under [Third-party material](CONTRIBUTING.md#third-party-material-and-employer-owned-contributions), or remove it. Asking a tool to rewrite copyrighted code does not remove its copyright.
 
 ## Security and private data

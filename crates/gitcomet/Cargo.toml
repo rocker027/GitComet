@@ -6,6 +6,8 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# The package keeps its upstream name; the shipped command is `revweave`.
+autobins = false
 
 [lints]
 workspace = true
@@ -46,6 +48,10 @@ rustix = { workspace = true, features = ["pty"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = { workspace = true }
+
+[[bin]]
+name = "revweave"
+path = "src/main.rs"
 
 [[bin]]
 name = "perf-app-launch"

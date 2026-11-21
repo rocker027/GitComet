@@ -239,10 +239,35 @@ fn percent_encode_encodes_reserved_characters() {
 }
 
 #[test]
-fn build_issue_url_uses_package_repository_issue_endpoint() {
+fn build_issue_url_uses_identity_repository_issue_endpoint() {
+    // Tests run with the default (GitComet) identity installed.
     let url = build_issue_url("Crash: boom", "details");
-    let expected_prefix = format!("{}/issues/new?", env!("CARGO_PKG_REPOSITORY"));
-    assert!(url.starts_with(&expected_prefix));
+    let expected_prefix = "https://github.com/Auto-Explore/GitComet/issues/new?";
+    assert!(url.starts_with(expected_prefix));
+}
+
+#[test]
+fn crash_section_titles_accept_the_product_and_legacy_gitcomet_headers() {
+    assert_eq!(
+        crash_section_title_for("=== RevWeave crash (panic) ===", "RevWeave"),
+        Some("crash (panic)")
+    );
+    assert_eq!(
+        crash_section_title_for("=== GitComet runtime error ===", "RevWeave"),
+        Some("runtime error")
+    );
+    assert_eq!(
+        crash_section_title_for("=== RevWeaveX environment ===", "RevWeave"),
+        None
+    );
+    assert_eq!(
+        crash_section_title_for("=== Other tool ===", "RevWeave"),
+        None
+    );
+    assert_eq!(
+        crash_section_title_for("RevWeave crash (panic)", "RevWeave"),
+        None
+    );
 }
 
 #[test]

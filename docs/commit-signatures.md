@@ -1,11 +1,11 @@
 # Commit Signature Verification
 
-GitComet shows a badge next to signed commits in the history list and in the commit details. GitComet does not check signatures itself. It asks Git, and Git runs:
+RevWeave shows a badge next to signed commits in the history list and in the commit details. RevWeave does not check signatures itself. It asks Git, and Git runs:
 
 - **gpg** for GPG and X.509 signatures
 - **ssh-keygen** for SSH signatures
 
-A badge appears only when the matching program is installed and knows the signer's public key. **Settings → Executables** shows which programs GitComet found. When a program is **Not found**, commits signed in that format get no badge and GitComet does not try to verify them.
+A badge appears only when the matching program is installed and knows the signer's public key. **Settings → Executables** shows which programs RevWeave found. When a program is **Not found**, commits signed in that format get no badge and RevWeave does not try to verify them.
 
 Verification can slow down the Git log, so it is disabled by default, including when upgrading from a version that enabled it automatically. Enable **Settings → Git log → Verify commit signatures** to opt in. Only visible commits and the selected commit are verified; offscreen history is not verified in the background. Disabling the setting stops verification and signing-tool discovery.
 
@@ -27,7 +27,7 @@ To see what Git reports for a commit, run this inside the repository:
 git log -1 --format='%G? %GK %GS' <commit>
 ```
 
-GitComet remembers up to 4,096 verification attempts per repository, including unsigned commits. Unchanged history refreshes reuse those results. Replacing the history, changing Git or signing configuration, disabling verification, or closing the repository clears them. After importing or trusting a key, choose **Settings → Executables → Recheck** (with verification enabled), reload the repository, or reopen it to refresh its badges. Keyring files are not watched directly.
+RevWeave remembers up to 4,096 verification attempts per repository, including unsigned commits. Unchanged history refreshes reuse those results. Replacing the history, changing Git or signing configuration, disabling verification, or closing the repository clears them. After importing or trusting a key, choose **Settings → Executables → Recheck** (with verification enabled), reload the repository, or reopen it to refresh its badges. Keyring files are not watched directly.
 
 ## GPG signatures
 
@@ -42,7 +42,7 @@ Commits created or merged on GitHub's website are signed with GitHub's own GPG k
 | Fedora | `sudo dnf install gnupg2` |
 | Windows | Included with Git for Windows. Run the commands on this page in Git Bash. |
 
-On macOS, GitComet opened from Finder or the Dock does not inherit your shell's `PATH`. It adds the Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) and MacPorts (`/opt/local/bin`) directories and those listed in `/etc/paths` and `/etc/paths.d`, but not directories that only your shell profile adds. If `gpg` is installed somewhere else, tell Git where it is:
+On macOS, RevWeave opened from Finder or the Dock does not inherit your shell's `PATH`. It adds the Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) and MacPorts (`/opt/local/bin`) directories and those listed in `/etc/paths` and `/etc/paths.d`, but not directories that only your shell profile adds. If `gpg` is installed somewhere else, tell Git where it is:
 
 ```bash
 git config --global gpg.program "$(command -v gpg)"
@@ -64,7 +64,7 @@ Import the keys a GitHub user signs with (replace `USERNAME`):
 curl -fsSL https://github.com/USERNAME.gpg | gpg --import
 ```
 
-Without the signer's public key, Git reports `E` and GitComet shows no badge.
+Without the signer's public key, Git reports `E` and RevWeave shows no badge.
 
 GitHub's previous key `4AEE18F83AFDEB23` expired on 2024-01-16, so commits GitHub signed with it show **Expired key**.
 

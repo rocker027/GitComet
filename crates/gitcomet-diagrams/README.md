@@ -1,6 +1,6 @@
 # Native Mermaid previews
 
-GitComet renders Mermaid offline with Rust. File previews recognize `.mmd` and
+RevWeave renders Mermaid offline with Rust. File previews recognize `.mmd` and
 `.mermaid`; Markdown recognizes those fence labels and unlabelled fences with
 an explicit native Mermaid header. Other diagram languages remain source code.
 Their syntax fixtures are retained.

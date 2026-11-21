@@ -4,7 +4,7 @@
 Importable (`collect`) and usable as a command:
 
   python3 scripts/profiling/perf_metadata.py --output run/environment.json \
-      --binary gitcomet=target/release/gitcomet --cargo-profile release --command "..."
+      --binary revweave=target/release/revweave --cargo-profile release --command "..."
 
 Everything is best effort: a missing tool is recorded as unavailable rather than
 failing the run. Compare two captures with `--compare A B`, which lists the

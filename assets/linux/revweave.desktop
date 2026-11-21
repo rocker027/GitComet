@@ -2,7 +2,7 @@
 Type=Application
 Name=RevWeave
 Comment=Open-source desktop Git client
-Exec=gitcomet
+Exec=revweave
 Icon=revweave
 StartupWMClass=revweave
 Terminal=false

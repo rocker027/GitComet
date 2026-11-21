@@ -9,16 +9,15 @@ usage() {
 Usage: scripts/symbolicate-minidump.sh [--symbols-url URL] [--cache DIR] [--json] MINIDUMP [-- EXTRA_ARGS...]
 
 Turns a user-submitted minidump into a readable stack trace by resolving it
-against GitComet's Breakpad symbol store. Symbols are fetched lazily over HTTP
+against a Breakpad symbol store you host for your builds. Symbols are fetched lazily over HTTP
 and cached, so only the modules a crash actually touches are downloaded, and
 only once per build.
 
-Only builds produced after the symbol store landed can be resolved; releases
-built before it have no symbols anywhere and never will.
+Only builds whose symbols you published to that store can be resolved.
 
 Options:
-  --symbols-url  Symbol store base URL (default: https://apt.gitcomet.dev/symbols/)
-  --cache        Local symbol cache (default: ${XDG_CACHE_HOME:-$HOME/.cache}/gitcomet-symbols)
+  --symbols-url  Symbol store base URL (required unless GITCOMET_SYMBOLS_URL is set)
+  --cache        Local symbol cache (default: ${XDG_CACHE_HOME:-$HOME/.cache}/revweave-symbols)
   --json         Emit the JSON report instead of the human-readable one
 
 Environment:
@@ -27,12 +26,10 @@ Environment:
 EOF
 }
 
-# Published by the release workflow into the same static-website container that
-# serves the APT repository and the Windows installer. Moving the store means
-# changing this default as well as the SYMBOLS_STORAGE_ACCOUNT variable — see
+# RevWeave has no public symbol store, so there is no default URL; see
 # docs/crash-symbolication.md.
-symbols_url="${GITCOMET_SYMBOLS_URL:-https://apt.gitcomet.dev/symbols/}"
-cache_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/gitcomet-symbols"
+symbols_url="${GITCOMET_SYMBOLS_URL:-}"
+cache_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/revweave-symbols"
 output_flag="--human"
 minidump=""
 

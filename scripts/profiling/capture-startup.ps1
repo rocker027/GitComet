@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-Capture startup stages from the normal GitComet executable.
+Capture startup stages from the normal RevWeave executable.
 .DESCRIPTION
-Close existing GitComet windows first. By default this uses your usual saved
+Close existing RevWeave windows first. By default this uses your usual saved
 settings and leaves the app running. -EmptyProfile uses a fresh isolated profile
 to measure the repository picker. -AutoExit requests normal window closure one
 second after its first interactive frame (or the ready picker with
 -EmptyProfile), then waits up to five seconds for exit. If the app stays open,
 it is left running. Neither switch is needed for reporter diagnostics.
 .EXAMPLE
-./scripts/profiling/capture-startup.ps1 -Binary ./target/release/gitcomet.exe
+./scripts/profiling/capture-startup.ps1 -Binary ./target/release/revweave.exe
 .EXAMPLE
-./scripts/profiling/capture-startup.ps1 -Binary ./target/release/gitcomet.exe -EmptyProfile -AutoExit
+./scripts/profiling/capture-startup.ps1 -Binary ./target/release/revweave.exe -EmptyProfile -AutoExit
 #>
 [CmdletBinding()]
 param(
@@ -159,7 +159,7 @@ $records | Where-Object { $_.kind -ne 'begin' } |
         @{n='duration_ms';e={if ($null -ne $_.duration_ms) {[Math]::Round($_.duration_ms, 2)}}} |
     Format-Table -AutoSize
 if ($null -eq $markerObservedMs) {
-    Write-Warning "No $targetMarker marker was observed. Check startup.jsonl and stderr.log. Close existing GitComet windows before retrying; the executable must include startup tracing support."
+    Write-Warning "No $targetMarker marker was observed. Check startup.jsonl and stderr.log. Close existing RevWeave windows before retrying; the executable must include startup tracing support."
     if (-not $process.HasExited) { Write-Output 'The launched app is still running; it has been left open.' }
 }
 Write-Output "Capture saved to $captureRoot"

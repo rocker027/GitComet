@@ -146,18 +146,20 @@ impl HistoryRefPreset {
     }
 }
 
+const CODEX_BACKUPS: HistoryRefPreset = HistoryRefPreset::hidden(
+    "codex-backups",
+    "Codex backup refs",
+    &["refs/codex-backups"],
+    "Refs saved before rebasing or rewriting branches with Codex.\n\
+     They keep the earlier history visible alongside the current branches.",
+);
+
 /// GitComet's presets: the defaults, plus the refs the Pro edition writes into
 /// repositories both editions open.
 const GITCOMET_HISTORY_REF_PRESETS: &[HistoryRefPreset] = &[
     HistoryRefPreset::T3_CODE,
     HistoryRefPreset::CLAUDE_CODE,
-    HistoryRefPreset::hidden(
-        "codex-backups",
-        "Codex backup refs",
-        &["refs/codex-backups"],
-        "Refs saved before rebasing or rewriting branches with Codex.\n\
-         They keep the earlier history visible alongside the current branches.",
-    ),
+    CODEX_BACKUPS,
     HistoryRefPreset::hidden(
         "gitcomet-pro",
         "GitComet Pro review refs",
@@ -165,6 +167,21 @@ const GITCOMET_HISTORY_REF_PRESETS: &[HistoryRefPreset] = &[
         "Pull request and review refs the Pro edition fetches into repositories it opens.\n\
          They serve Pro's review views and are not branches of yours.",
     ),
+    HistoryRefPreset::JUJUTSU,
+    HistoryRefPreset::MAGIT_WIP,
+    HistoryRefPreset::PREFETCH,
+    HistoryRefPreset::FILTER_BRANCH,
+    HistoryRefPreset::NOTES,
+    HistoryRefPreset::GITHUB_PULL_REQUESTS,
+    HistoryRefPreset::GERRIT_CHANGES,
+];
+
+/// RevWeave's presets: the defaults plus Codex backups. RevWeave has no Pro
+/// edition, so it offers no switch for Pro review refs.
+const REVWEAVE_HISTORY_REF_PRESETS: &[HistoryRefPreset] = &[
+    HistoryRefPreset::T3_CODE,
+    HistoryRefPreset::CLAUDE_CODE,
+    CODEX_BACKUPS,
     HistoryRefPreset::JUJUTSU,
     HistoryRefPreset::MAGIT_WIP,
     HistoryRefPreset::PREFETCH,
@@ -501,41 +518,50 @@ impl ProductIdentity {
         }
     }
 
-    /// The desktop fork's identity, with its own profile and release channel.
+    /// The desktop fork's identity: its own names, profile, command, Git tool
+    /// name, and release channel, with GitComet credited as its upstream.
     pub const fn revweave() -> Self {
+        const REPOSITORY: &str = "https://github.com/rocker027/RevWeave";
         const LOGO: &[u8] = include_bytes!("../../../assets/revweave.svg");
-        static LINKS: ProductLinks = ProductLinks::new()
-            .with_repository("https://github.com/rocker027/GitComet")
-            .with_upstream(NamedLink::new(
-                Cow::Borrowed("GitComet (AutoExplore Oy)"),
-                Cow::Borrowed(GITCOMET_REPOSITORY),
-            ))
-            .with_releases("https://github.com/rocker027/GitComet/releases")
-            .with_documentation("https://github.com/rocker027/GitComet/blob/HEAD/docs")
-            .with_license(NamedLink::new(
-                Cow::Borrowed("AGPL-3.0-only"),
-                Cow::Borrowed("https://github.com/rocker027/GitComet/blob/HEAD/LICENSE-AGPL-3.0"),
-            ));
-        static UPDATES: UpdateSource =
-            UpdateSource::github_releases(Cow::Borrowed("rocker027"), Cow::Borrowed("GitComet"));
-
-        Self::gitcomet()
-            .with_display_name("RevWeave")
-            .with_directory_name("revweave")
-            .with_app_id("revweave")
-            .with_macos_bundle_id("io.github.rocker027.revweave")
-            .with_links(&LINKS)
-            .with_update_source(&UPDATES)
-            .with_branding(
-                ProductBranding::new()
-                    .with_app_icon_png(include_bytes!("../../../assets/revweave-512.png"))
-                    .with_window_icon_png(include_bytes!(
-                        "../../../assets/linux/hicolor/32x32/apps/revweave.png"
-                    ))
-                    .with_logo_svg(LOGO)
-                    .with_mark_svg(LOGO)
-                    .with_tagline("Open-source desktop Git client"),
-            )
+        Self {
+            display_name: Cow::Borrowed("RevWeave"),
+            executable_name: Cow::Borrowed("revweave"),
+            directory_name: Cow::Borrowed("revweave"),
+            app_id: Cow::Borrowed("revweave"),
+            macos_bundle_id: Cow::Borrowed("io.github.rocker027.revweave"),
+            version: Cow::Borrowed(env!("CARGO_PKG_VERSION")),
+            git_tool_name: Cow::Borrowed("revweave"),
+            links: ProductLinks::new()
+                .with_repository(REPOSITORY)
+                .with_upstream(NamedLink::new(
+                    Cow::Borrowed("GitComet (AutoExplore Oy)"),
+                    Cow::Borrowed(GITCOMET_REPOSITORY),
+                ))
+                .with_new_issue("https://github.com/rocker027/RevWeave/issues/new")
+                .with_releases("https://github.com/rocker027/RevWeave/releases")
+                .with_documentation("https://github.com/rocker027/RevWeave/blob/HEAD/docs")
+                .with_license(NamedLink::new(
+                    Cow::Borrowed("AGPL-3.0-only"),
+                    Cow::Borrowed(
+                        "https://github.com/rocker027/RevWeave/blob/HEAD/LICENSE-AGPL-3.0",
+                    ),
+                )),
+            update_source: UpdateSource::github_releases(
+                Cow::Borrowed("rocker027"),
+                Cow::Borrowed("RevWeave"),
+            ),
+            branding: ProductBranding::new()
+                .with_app_icon_png(include_bytes!("../../../assets/revweave-512.png"))
+                .with_window_icon_png(include_bytes!(
+                    "../../../assets/linux/hicolor/32x32/apps/revweave.png"
+                ))
+                .with_logo_svg(LOGO)
+                .with_mark_svg(LOGO)
+                .with_tagline("Open-source desktop Git client"),
+            hidden_ref_prefixes: &[],
+            history_ref_presets: REVWEAVE_HISTORY_REF_PRESETS,
+            overrides: StaticOverrides::EMPTY,
+        }
     }
 
     /// A compile-time identity, including a distinct reverse-DNS macOS bundle id.
@@ -944,11 +970,11 @@ mod tests {
         assert_eq!(identity.version(), env!("CARGO_PKG_VERSION"));
         assert_eq!(
             identity.links().new_issue.as_deref(),
-            Some(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues/new"))
+            Some("https://github.com/Auto-Explore/GitComet/issues/new")
         );
         assert_eq!(
             identity.links().repository.as_deref(),
-            Some(env!("CARGO_PKG_REPOSITORY"))
+            Some(GITCOMET_REPOSITORY)
         );
         assert_eq!(
             identity.links().documentation_page("themes").as_deref(),
@@ -1112,21 +1138,32 @@ mod tests {
     fn revweave_uses_its_own_brand_and_release_channel() {
         let product = ProductIdentity::revweave();
         assert_eq!(product.display_name(), "RevWeave");
-        assert_eq!(product.executable_name(), "gitcomet");
-        assert_eq!(product.git_tool_name(), "gitcomet");
+        assert_eq!(product.executable_name(), "revweave");
+        assert_eq!(product.git_tool_name(), "revweave");
+        assert_eq!(product.git_gui_tool_name(), "revweave-gui");
+        assert_eq!(product.directory_name(), "revweave");
         assert_eq!(product.macos_bundle_id(), "io.github.rocker027.revweave");
         assert_eq!(product.window_app_id(WindowKind::Main), "revweave");
+        assert_eq!(product.version(), ProductIdentity::gitcomet().version());
         assert_eq!(
             product.links().repository.as_deref(),
-            Some("https://github.com/rocker027/GitComet")
+            Some("https://github.com/rocker027/RevWeave")
         );
         assert_eq!(
             product.links().upstream.as_ref().unwrap().url,
             "https://github.com/Auto-Explore/GitComet"
         );
+        assert!(product.links().website.is_none());
+        assert!(product.links().survey.is_none());
         assert_eq!(
             product.update_source(),
-            &UpdateSource::github_releases("rocker027".into(), "GitComet".into())
+            &UpdateSource::github_releases("rocker027".into(), "RevWeave".into())
+        );
+        assert!(
+            product
+                .history_ref_presets()
+                .iter()
+                .all(|preset| !preset.label.contains("GitComet"))
         );
         assert!(product.branding().logo_svg.is_some());
         assert!(product.branding().mark_svg.is_some());

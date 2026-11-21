@@ -143,7 +143,7 @@ if [[ -z "$module_name" && ( -d "$input" || "$input" == *.dSYM ) ]]; then
   echo "--module-name is required when reading a .dSYM: $input" >&2
   echo "Without it the module is named after the bundle or the hashed file inside" >&2
   echo "it, and a stackwalker looking up MODULE/DEBUG_ID/MODULE.sym finds neither." >&2
-  echo "Pass the executable's name, e.g. --module-name gitcomet." >&2
+  echo "Pass the executable's name, e.g. --module-name revweave." >&2
   exit 2
 fi
 
@@ -247,7 +247,7 @@ while IFS= read -r sym; do
     echo "::warning title=No inline records::${rel} has no INLINE records; frames inlined by LTO will collapse."
   else
     echo "Symbol file has no INLINE records: ${rel}" >&2
-    echo "GitComet builds with fat LTO, so missing inline records collapse most frames." >&2
+    echo "RevWeave builds with fat LTO, so missing inline records collapse most frames." >&2
     echo "Pass --allow-missing-inlines to downgrade this to a warning." >&2
     exit 1
   fi

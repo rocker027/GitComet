@@ -16,11 +16,11 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let _timer = FixtureTimer::new("subprocess", "gitcomet");
+    let _timer = FixtureTimer::new("subprocess", "revweave");
     no_window_command(gitcomet_bin())
         .args(args)
         .output()
-        .expect("gitcomet command to run")
+        .expect("revweave command to run")
 }
 
 fn run_gitcomet_in_dir<I, S>(dir: &Path, args: I) -> Output
@@ -28,12 +28,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let _timer = FixtureTimer::new("subprocess", "gitcomet");
+    let _timer = FixtureTimer::new("subprocess", "revweave");
     no_window_command(gitcomet_bin())
         .current_dir(dir)
         .args(args)
         .output()
-        .expect("gitcomet command to run")
+        .expect("revweave command to run")
 }
 
 fn run_gitcomet_in_dir_with_global_env<I, S>(
@@ -45,14 +45,14 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let _timer = FixtureTimer::new("subprocess", "gitcomet");
+    let _timer = FixtureTimer::new("subprocess", "revweave");
     let mut command = no_window_command(gitcomet_bin());
     env.apply_to_command(&mut command);
     command
         .current_dir(dir)
         .args(args)
         .output()
-        .expect("gitcomet command to run")
+        .expect("revweave command to run")
 }
 
 fn git_config_get(repo_dir: &Path, key: &str) -> Option<String> {
@@ -1436,11 +1436,11 @@ fn setup_dry_run_prints_commands_without_writing() {
         "expected diff.tool\n{text}"
     );
     assert!(
-        stdout.contains("mergetool.gitcomet.cmd"),
+        stdout.contains("mergetool.revweave.cmd"),
         "expected mergetool cmd\n{text}"
     );
     assert!(
-        stdout.contains("difftool.gitcomet.cmd"),
+        stdout.contains("difftool.revweave.cmd"),
         "expected difftool cmd\n{text}"
     );
     assert!(
@@ -1448,8 +1448,8 @@ fn setup_dry_run_prints_commands_without_writing() {
         "expected mergetool.trustExitCode\n{text}"
     );
     assert!(
-        stdout.contains("mergetool.gitcomet.trustExitCode"),
-        "expected mergetool.gitcomet.trustExitCode\n{text}"
+        stdout.contains("mergetool.revweave.trustExitCode"),
+        "expected mergetool.revweave.trustExitCode\n{text}"
     );
     assert!(
         stdout.contains("difftool.trustExitCode"),
@@ -1457,19 +1457,19 @@ fn setup_dry_run_prints_commands_without_writing() {
     );
     // GUI tool entries
     assert!(
-        stdout.contains("mergetool.gitcomet-gui.cmd"),
+        stdout.contains("mergetool.revweave-gui.cmd"),
         "expected GUI mergetool cmd\n{text}"
     );
     assert!(
-        stdout.contains("difftool.gitcomet-gui.cmd"),
+        stdout.contains("difftool.revweave-gui.cmd"),
         "expected GUI difftool cmd\n{text}"
     );
     assert!(
-        stdout.contains("mergetool.gitcomet-gui.trustExitCode"),
+        stdout.contains("mergetool.revweave-gui.trustExitCode"),
         "expected GUI mergetool trustExitCode\n{text}"
     );
     assert!(
-        stdout.contains("difftool.gitcomet-gui.trustExitCode"),
+        stdout.contains("difftool.revweave-gui.trustExitCode"),
         "expected GUI difftool trustExitCode\n{text}"
     );
 }
@@ -1543,21 +1543,21 @@ fn setup_dry_run_commands_execute_verbatim_in_shell() {
         );
     }
 
-    let merge_cmd = git_config_get(dir.path(), "mergetool.gitcomet.cmd")
+    let merge_cmd = git_config_get(dir.path(), "mergetool.revweave.cmd")
         .expect("mergetool cmd should be configured by dry-run commands");
     assert_placeholder_is_quoted(&merge_cmd, "BASE");
     assert_placeholder_is_quoted(&merge_cmd, "LOCAL");
     assert_placeholder_is_quoted(&merge_cmd, "REMOTE");
     assert_placeholder_is_quoted(&merge_cmd, "MERGED");
 
-    let diff_cmd = git_config_get(dir.path(), "difftool.gitcomet.cmd")
+    let diff_cmd = git_config_get(dir.path(), "difftool.revweave.cmd")
         .expect("difftool cmd should be configured by dry-run commands");
     assert_placeholder_is_quoted(&diff_cmd, "LOCAL");
     assert_placeholder_is_quoted(&diff_cmd, "REMOTE");
     assert_placeholder_is_quoted(&diff_cmd, "MERGED");
 
     // GUI tool commands should also be configured and shell-valid.
-    let gui_merge_cmd = git_config_get(dir.path(), "mergetool.gitcomet-gui.cmd")
+    let gui_merge_cmd = git_config_get(dir.path(), "mergetool.revweave-gui.cmd")
         .expect("GUI mergetool cmd should be configured by dry-run commands");
     assert!(
         gui_merge_cmd.contains("--gui"),
@@ -1568,7 +1568,7 @@ fn setup_dry_run_commands_execute_verbatim_in_shell() {
     assert_placeholder_is_quoted(&gui_merge_cmd, "REMOTE");
     assert_placeholder_is_quoted(&gui_merge_cmd, "MERGED");
 
-    let gui_diff_cmd = git_config_get(dir.path(), "difftool.gitcomet-gui.cmd")
+    let gui_diff_cmd = git_config_get(dir.path(), "difftool.revweave-gui.cmd")
         .expect("GUI difftool cmd should be configured by dry-run commands");
     assert!(
         gui_diff_cmd.contains("--gui"),
@@ -1580,13 +1580,13 @@ fn setup_dry_run_commands_execute_verbatim_in_shell() {
 
     assert_eq!(
         git_config_get(dir.path(), "merge.guitool").as_deref(),
-        Some("gitcomet-gui"),
-        "merge.guitool should reference gitcomet-gui"
+        Some("revweave-gui"),
+        "merge.guitool should reference revweave-gui"
     );
     assert_eq!(
         git_config_get(dir.path(), "diff.guitool").as_deref(),
-        Some("gitcomet-gui"),
-        "diff.guitool should reference gitcomet-gui"
+        Some("revweave-gui"),
+        "diff.guitool should reference revweave-gui"
     );
 }
 
@@ -1611,19 +1611,19 @@ fn setup_local_writes_config_to_repo() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Configured gitcomet as local diff/merge tool"),
+        stdout.contains("Configured revweave as local diff/merge tool"),
         "{text}"
     );
 
     // Verify key config entries were written.
     assert_eq!(
         git_config_get(dir.path(), "merge.tool").as_deref(),
-        Some("gitcomet"),
+        Some("revweave"),
         "merge.tool not set"
     );
     assert_eq!(
         git_config_get(dir.path(), "diff.tool").as_deref(),
-        Some("gitcomet"),
+        Some("revweave"),
         "diff.tool not set"
     );
     assert_eq!(
@@ -1632,9 +1632,9 @@ fn setup_local_writes_config_to_repo() {
         "mergetool.trustExitCode not set"
     );
     assert_eq!(
-        git_config_get(dir.path(), "mergetool.gitcomet.trustExitCode").as_deref(),
+        git_config_get(dir.path(), "mergetool.revweave.trustExitCode").as_deref(),
         Some("true"),
-        "mergetool.gitcomet.trustExitCode not set"
+        "mergetool.revweave.trustExitCode not set"
     );
     assert_eq!(
         git_config_get(dir.path(), "mergetool.prompt").as_deref(),
@@ -1653,13 +1653,13 @@ fn setup_local_writes_config_to_repo() {
     );
     assert_eq!(
         git_config_get(dir.path(), "merge.guitool").as_deref(),
-        Some("gitcomet-gui"),
-        "merge.guitool not set to gitcomet-gui"
+        Some("revweave-gui"),
+        "merge.guitool not set to revweave-gui"
     );
     assert_eq!(
         git_config_get(dir.path(), "diff.guitool").as_deref(),
-        Some("gitcomet-gui"),
-        "diff.guitool not set to gitcomet-gui"
+        Some("revweave-gui"),
+        "diff.guitool not set to revweave-gui"
     );
     assert_eq!(
         git_config_get(dir.path(), "mergetool.guiDefault").as_deref(),
@@ -1674,7 +1674,7 @@ fn setup_local_writes_config_to_repo() {
 
     // Verify headless cmd contains the binary path and proper variable quoting.
     let merge_cmd =
-        git_config_get(dir.path(), "mergetool.gitcomet.cmd").expect("mergetool cmd should be set");
+        git_config_get(dir.path(), "mergetool.revweave.cmd").expect("mergetool cmd should be set");
     assert_placeholder_is_quoted(&merge_cmd, "BASE");
     assert_placeholder_is_quoted(&merge_cmd, "LOCAL");
     assert_placeholder_is_quoted(&merge_cmd, "REMOTE");
@@ -1685,7 +1685,7 @@ fn setup_local_writes_config_to_repo() {
     );
 
     let diff_cmd =
-        git_config_get(dir.path(), "difftool.gitcomet.cmd").expect("difftool cmd should be set");
+        git_config_get(dir.path(), "difftool.revweave.cmd").expect("difftool cmd should be set");
     assert_placeholder_is_quoted(&diff_cmd, "LOCAL");
     assert_placeholder_is_quoted(&diff_cmd, "REMOTE");
     assert_placeholder_is_quoted(&diff_cmd, "MERGED");
@@ -1695,7 +1695,7 @@ fn setup_local_writes_config_to_repo() {
     );
 
     // Verify GUI cmd includes --gui flag.
-    let gui_merge_cmd = git_config_get(dir.path(), "mergetool.gitcomet-gui.cmd")
+    let gui_merge_cmd = git_config_get(dir.path(), "mergetool.revweave-gui.cmd")
         .expect("GUI mergetool cmd should be set");
     assert!(
         gui_merge_cmd.contains("--gui"),
@@ -1706,19 +1706,19 @@ fn setup_local_writes_config_to_repo() {
     assert_placeholder_is_quoted(&gui_merge_cmd, "REMOTE");
     assert_placeholder_is_quoted(&gui_merge_cmd, "MERGED");
     assert_eq!(
-        git_config_get(dir.path(), "mergetool.gitcomet-gui.trustExitCode").as_deref(),
+        git_config_get(dir.path(), "mergetool.revweave-gui.trustExitCode").as_deref(),
         Some("true"),
         "GUI mergetool.trustExitCode not set"
     );
 
-    let gui_diff_cmd = git_config_get(dir.path(), "difftool.gitcomet-gui.cmd")
+    let gui_diff_cmd = git_config_get(dir.path(), "difftool.revweave-gui.cmd")
         .expect("GUI difftool cmd should be set");
     assert!(gui_diff_cmd.contains("--gui"), "GUI diff cmd missing --gui");
     assert_placeholder_is_quoted(&gui_diff_cmd, "LOCAL");
     assert_placeholder_is_quoted(&gui_diff_cmd, "REMOTE");
     assert_placeholder_is_quoted(&gui_diff_cmd, "MERGED");
     assert_eq!(
-        git_config_get(dir.path(), "difftool.gitcomet-gui.trustExitCode").as_deref(),
+        git_config_get(dir.path(), "difftool.revweave-gui.trustExitCode").as_deref(),
         Some("true"),
         "GUI difftool.trustExitCode not set"
     );
@@ -1747,12 +1747,12 @@ fn setup_local_mergetool_tool_help_lists_headless_and_gui_entries() {
         "git mergetool --tool-help failed\n{text}"
     );
     assert!(
-        text.contains("gitcomet.cmd"),
-        "expected headless gitcomet tool in mergetool --tool-help output\n{text}"
+        text.contains("revweave.cmd"),
+        "expected headless revweave tool in mergetool --tool-help output\n{text}"
     );
     assert!(
-        text.contains("gitcomet-gui.cmd"),
-        "expected gui gitcomet-gui tool in mergetool --tool-help output\n{text}"
+        text.contains("revweave-gui.cmd"),
+        "expected gui revweave-gui tool in mergetool --tool-help output\n{text}"
     );
     assert!(
         text.contains("mergetool --base"),
@@ -1787,12 +1787,12 @@ fn setup_local_difftool_tool_help_lists_headless_and_gui_entries() {
         "git difftool --tool-help failed\n{text}"
     );
     assert!(
-        text.contains("gitcomet.cmd"),
-        "expected headless gitcomet tool in difftool --tool-help output\n{text}"
+        text.contains("revweave.cmd"),
+        "expected headless revweave tool in difftool --tool-help output\n{text}"
     );
     assert!(
-        text.contains("gitcomet-gui.cmd"),
-        "expected gui gitcomet-gui tool in difftool --tool-help output\n{text}"
+        text.contains("revweave-gui.cmd"),
+        "expected gui revweave-gui tool in difftool --tool-help output\n{text}"
     );
     assert!(
         text.contains("difftool --local"),
@@ -1820,7 +1820,7 @@ fn uninstall_dry_run_local_after_setup_lists_unset_commands() {
 
     let stdout = String::from_utf8_lossy(&uninstall.stdout);
     assert!(
-        stdout.contains("git config --local --unset-all mergetool.gitcomet.cmd"),
+        stdout.contains("git config --local --unset-all mergetool.revweave.cmd"),
         "expected headless mergetool unset command\n{text}"
     );
     assert!(
@@ -1848,7 +1848,7 @@ fn uninstall_local_removes_setup_keys_from_repo() {
     assert_eq!(uninstall.status.code(), Some(0), "expected exit 0\n{text}");
     assert!(
         String::from_utf8_lossy(&uninstall.stdout)
-            .contains("Unconfigured gitcomet from local diff/merge tool"),
+            .contains("Unconfigured revweave from local diff/merge tool"),
         "expected uninstall summary message\n{text}"
     );
 
@@ -1859,14 +1859,14 @@ fn uninstall_local_removes_setup_keys_from_repo() {
     assert_eq!(git_config_get_local(repo, "diff.guitool"), None);
 
     // Tool-specific command registrations should be removed.
-    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
-    assert_eq!(git_config_get_local(repo, "difftool.gitcomet.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "mergetool.revweave.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.revweave.cmd"), None);
     assert_eq!(
-        git_config_get_local(repo, "mergetool.gitcomet-gui.cmd"),
+        git_config_get_local(repo, "mergetool.revweave-gui.cmd"),
         None
     );
     assert_eq!(
-        git_config_get_local(repo, "difftool.gitcomet-gui.cmd"),
+        git_config_get_local(repo, "difftool.revweave-gui.cmd"),
         None
     );
 
@@ -1887,7 +1887,7 @@ fn uninstall_local_keeps_non_gitcomet_generic_settings() {
     git_config_set_local(repo, "merge.tool", "meld");
     git_config_set_local(repo, "mergetool.prompt", "false");
     git_config_set_local(repo, "mergetool.trustExitCode", "true");
-    git_config_set_local(repo, "mergetool.gitcomet.cmd", "echo custom");
+    git_config_set_local(repo, "mergetool.revweave.cmd", "echo custom");
 
     let uninstall = run_gitcomet_in_dir(repo, ["uninstall", "--local"]);
     let text = output_text(&uninstall);
@@ -1907,8 +1907,8 @@ fn uninstall_local_keeps_non_gitcomet_generic_settings() {
         Some("true")
     );
 
-    // Remove GitComet tool-specific key regardless of command content.
-    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
+    // Remove RevWeave tool-specific key regardless of command content.
+    assert_eq!(git_config_get_local(repo, "mergetool.revweave.cmd"), None);
 }
 
 #[test]
@@ -1982,22 +1982,22 @@ fn setup_then_uninstall_local_restores_preexisting_user_settings() {
         Some("false")
     );
 
-    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
-    assert_eq!(git_config_get_local(repo, "difftool.gitcomet.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "mergetool.revweave.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.revweave.cmd"), None);
     assert_eq!(
-        git_config_get_local(repo, "mergetool.gitcomet-gui.cmd"),
+        git_config_get_local(repo, "mergetool.revweave-gui.cmd"),
         None
     );
     assert_eq!(
-        git_config_get_local(repo, "difftool.gitcomet-gui.cmd"),
+        git_config_get_local(repo, "difftool.revweave-gui.cmd"),
         None
     );
     assert_eq!(
-        git_config_get_local(repo, "gitcomet.backup.merge-tool"),
+        git_config_get_local(repo, "revweave.backup.merge-tool"),
         None
     );
     assert_eq!(
-        git_config_get_local(repo, "gitcomet.backup.diff-tool"),
+        git_config_get_local(repo, "revweave.backup.diff-tool"),
         None
     );
 }
@@ -2074,14 +2074,14 @@ fn uninstall_local_preserves_user_changes_made_after_setup() {
         git_config_get_local(repo, "difftool.prompt").as_deref(),
         Some("true")
     );
-    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
-    assert_eq!(git_config_get_local(repo, "difftool.gitcomet.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "mergetool.revweave.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.revweave.cmd"), None);
     assert_eq!(
-        git_config_get_local(repo, "gitcomet.backup.merge-tool"),
+        git_config_get_local(repo, "revweave.backup.merge-tool"),
         None
     );
     assert_eq!(
-        git_config_get_local(repo, "gitcomet.backup.difftool-prompt"),
+        git_config_get_local(repo, "revweave.backup.difftool-prompt"),
         None
     );
 }
@@ -2114,8 +2114,8 @@ fn uninstall_local_is_idempotent() {
 
     assert_eq!(git_config_get_local(repo, "merge.tool"), None);
     assert_eq!(git_config_get_local(repo, "diff.tool"), None);
-    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
-    assert_eq!(git_config_get_local(repo, "difftool.gitcomet.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "mergetool.revweave.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.revweave.cmd"), None);
 }
 
 // ── Auto-resolve mode E2E ───────────────────────────────────────────
@@ -2362,7 +2362,7 @@ fn standalone_mergetool_auto_crlf_subchunk_preserves_line_endings() {
 
 // ── Setup E2E integration ────────────────────────────────────────────
 //
-// These tests verify that `gitcomet setup --local` produces config that
+// These tests verify that `revweave setup --local` produces config that
 // actually works when Git invokes `git mergetool` / `git difftool`.  This
 // closes the gap between "config keys are written" and "the configured tool
 // is invoked end-to-end" — directly validating acceptance criteria 2-3 from
@@ -2547,12 +2547,12 @@ fn git_config_get_global_with_env(env: &IsolatedGlobalGitEnv, key: &str) -> Opti
     }
 }
 
-/// After `gitcomet setup --local`, `git mergetool` should invoke
-/// gitcomet's built-in 3-way merge for conflicted files.
+/// After `revweave setup --local`, `git mergetool` should invoke
+/// revweave's built-in 3-way merge for conflicted files.
 ///
-/// For a true content conflict, gitcomet exits 1 and git mergetool
+/// For a true content conflict, revweave exits 1 and git mergetool
 /// restores the original file (expected behavior with trustExitCode=true).
-/// We verify the tool was invoked by checking for gitcomet's specific
+/// We verify the tool was invoked by checking for revweave's specific
 /// stderr messages, which differ from git's own merge output.
 #[test]
 fn setup_local_enables_git_mergetool_end_to_end() {
@@ -2582,33 +2582,33 @@ fn setup_local_enables_git_mergetool_end_to_end() {
         "expected merge conflict but git merge succeeded"
     );
 
-    // 3. Run `git mergetool` — should invoke gitcomet via setup config.
+    // 3. Run `git mergetool` — should invoke revweave via setup config.
     //    DISPLAY is removed so guiDefault=auto selects the headless tool.
     let mt = setup_e2e_git_capture(repo, &["mergetool"]);
     let mt_stderr = String::from_utf8_lossy(&mt.stderr);
 
-    // 4. Verify gitcomet was invoked by checking for its specific stderr
-    //    messages.  "conflict(s) remain" is emitted by gitcomet's mergetool
+    // 4. Verify revweave was invoked by checking for its specific stderr
+    //    messages.  "conflict(s) remain" is emitted by revweave's mergetool
     //    mode and is NOT part of git's own output (git says "fix conflicts and
     //    then commit the result" instead).
     assert!(
         mt_stderr.contains("conflict(s) remain"),
-        "expected gitcomet's conflict message in mergetool stderr\n\
+        "expected revweave's conflict message in mergetool stderr\n\
          stdout: {}\nstderr: {}",
         String::from_utf8_lossy(&mt.stdout),
         mt_stderr,
     );
 
-    // Also verify gitcomet's "CONFLICT (content)" message is present.
+    // Also verify revweave's "CONFLICT (content)" message is present.
     assert!(
         mt_stderr.contains("CONFLICT (content)"),
-        "expected CONFLICT marker from gitcomet\nstderr: {}",
+        "expected CONFLICT marker from revweave\nstderr: {}",
         mt_stderr,
     );
 }
 
-/// After `gitcomet setup --local`, `git difftool` should invoke
-/// gitcomet's built-in diff and produce unified diff output.
+/// After `revweave setup --local`, `git difftool` should invoke
+/// revweave's built-in diff and produce unified diff output.
 #[test]
 fn setup_local_enables_git_difftool_end_to_end() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2625,7 +2625,7 @@ fn setup_local_enables_git_difftool_end_to_end() {
     setup_e2e_commit(repo, "initial");
     write_file(&repo.join("file.txt"), "line1\nMODIFIED\nline3\n");
 
-    // 3. Run `git difftool` — should invoke gitcomet difftool.
+    // 3. Run `git difftool` — should invoke revweave difftool.
     //    DISPLAY is removed so guiDefault=auto selects the headless tool.
     let dt = setup_e2e_git_capture(repo, &["difftool"]);
     let dt_text = output_text(&dt);
@@ -2636,7 +2636,7 @@ fn setup_local_enables_git_difftool_end_to_end() {
         "git difftool should exit 0\n{dt_text}"
     );
 
-    // gitcomet difftool produces unified diff output.
+    // revweave difftool produces unified diff output.
     let stdout = String::from_utf8_lossy(&dt.stdout);
     assert!(
         stdout.contains("@@"),
@@ -2652,7 +2652,7 @@ fn setup_local_enables_git_difftool_end_to_end() {
     );
 }
 
-/// After `gitcomet setup --local`, quoted stage variables in the generated
+/// After `revweave setup --local`, quoted stage variables in the generated
 /// mergetool command must preserve paths containing spaces/unicode.
 #[test]
 fn setup_local_mergetool_handles_spaced_unicode_path_end_to_end() {
@@ -2692,7 +2692,7 @@ fn setup_local_mergetool_handles_spaced_unicode_path_end_to_end() {
     );
     assert!(
         mt_stderr.contains("CONFLICT (content)"),
-        "expected gitcomet conflict output\n{mt_text}"
+        "expected revweave conflict output\n{mt_text}"
     );
     assert!(
         mt_stderr.contains(conflict_path),
@@ -2704,7 +2704,7 @@ fn setup_local_mergetool_handles_spaced_unicode_path_end_to_end() {
     );
 }
 
-/// After `gitcomet setup --local`, quoted stage variables in the generated
+/// After `revweave setup --local`, quoted stage variables in the generated
 /// difftool command must preserve paths containing spaces/unicode.
 #[test]
 fn setup_local_difftool_handles_spaced_unicode_path_end_to_end() {
@@ -2749,7 +2749,7 @@ fn setup_local_difftool_handles_spaced_unicode_path_end_to_end() {
     );
 }
 
-/// `gitcomet setup` (global scope) should configure an isolated global
+/// `revweave setup` (global scope) should configure an isolated global
 /// gitconfig so `git mergetool` works end-to-end without local repo config.
 #[test]
 fn setup_global_enables_git_mergetool_end_to_end_with_isolated_global_config() {
@@ -2764,18 +2764,18 @@ fn setup_global_enables_git_mergetool_end_to_end_with_isolated_global_config() {
     let setup_text = output_text(&setup);
     assert_eq!(setup.status.code(), Some(0), "setup failed\n{setup_text}");
     assert!(
-        String::from_utf8_lossy(&setup.stdout).contains("Configured gitcomet as global"),
+        String::from_utf8_lossy(&setup.stdout).contains("Configured revweave as global"),
         "expected global setup message\n{setup_text}"
     );
 
     assert_eq!(
         git_config_get_global_with_env(&env, "merge.tool").as_deref(),
-        Some("gitcomet"),
+        Some("revweave"),
         "expected merge.tool in isolated global config"
     );
     assert_eq!(
         git_config_get_global_with_env(&env, "diff.tool").as_deref(),
-        Some("gitcomet"),
+        Some("revweave"),
         "expected diff.tool in isolated global config"
     );
 
@@ -2809,17 +2809,17 @@ fn setup_global_enables_git_mergetool_end_to_end_with_isolated_global_config() {
     );
     assert!(
         mt_stderr.contains("conflict(s) remain"),
-        "expected gitcomet conflict message in mergetool stderr\n{}",
+        "expected revweave conflict message in mergetool stderr\n{}",
         output_text(&mt)
     );
     assert!(
         mt_stderr.contains("CONFLICT (content)"),
-        "expected CONFLICT marker from gitcomet\n{}",
+        "expected CONFLICT marker from revweave\n{}",
         output_text(&mt)
     );
 }
 
-/// `gitcomet setup` (global scope) should configure an isolated global
+/// `revweave setup` (global scope) should configure an isolated global
 /// gitconfig so `git difftool` works end-to-end without local repo config.
 #[test]
 fn setup_global_enables_git_difftool_end_to_end_with_isolated_global_config() {
@@ -2842,7 +2842,7 @@ fn setup_global_enables_git_difftool_end_to_end_with_isolated_global_config() {
     );
     assert_eq!(
         git_config_get_global_with_env(&env, "diff.tool").as_deref(),
-        Some("gitcomet"),
+        Some("revweave"),
         "expected diff.tool in isolated global config"
     );
 
@@ -2873,7 +2873,7 @@ fn setup_global_enables_git_difftool_end_to_end_with_isolated_global_config() {
     );
 }
 
-/// `gitcomet setup` (global scope) should make both headless and GUI
+/// `revweave setup` (global scope) should make both headless and GUI
 /// mergetool entries discoverable via `git mergetool --tool-help`.
 #[test]
 fn setup_global_mergetool_tool_help_lists_headless_and_gui_entries() {
@@ -2889,7 +2889,7 @@ fn setup_global_mergetool_tool_help_lists_headless_and_gui_entries() {
     assert_eq!(setup.status.code(), Some(0), "setup failed\n{setup_text}");
     assert_eq!(
         git_config_get_global_with_env(&env, "merge.guitool").as_deref(),
-        Some("gitcomet-gui"),
+        Some("revweave-gui"),
         "expected merge.guitool in isolated global config"
     );
     assert_eq!(
@@ -2907,12 +2907,12 @@ fn setup_global_mergetool_tool_help_lists_headless_and_gui_entries() {
         "git mergetool --tool-help failed\n{text}"
     );
     assert!(
-        text.contains("gitcomet.cmd"),
-        "expected headless gitcomet tool in mergetool --tool-help output\n{text}"
+        text.contains("revweave.cmd"),
+        "expected headless revweave tool in mergetool --tool-help output\n{text}"
     );
     assert!(
-        text.contains("gitcomet-gui.cmd"),
-        "expected gui gitcomet-gui tool in mergetool --tool-help output\n{text}"
+        text.contains("revweave-gui.cmd"),
+        "expected gui revweave-gui tool in mergetool --tool-help output\n{text}"
     );
     assert!(
         text.contains("mergetool --base"),
@@ -2924,7 +2924,7 @@ fn setup_global_mergetool_tool_help_lists_headless_and_gui_entries() {
     );
 }
 
-/// `gitcomet setup` (global scope) should make both headless and GUI
+/// `revweave setup` (global scope) should make both headless and GUI
 /// difftool entries discoverable via `git difftool --tool-help`.
 #[test]
 fn setup_global_difftool_tool_help_lists_headless_and_gui_entries() {
@@ -2940,7 +2940,7 @@ fn setup_global_difftool_tool_help_lists_headless_and_gui_entries() {
     assert_eq!(setup.status.code(), Some(0), "setup failed\n{setup_text}");
     assert_eq!(
         git_config_get_global_with_env(&env, "diff.guitool").as_deref(),
-        Some("gitcomet-gui"),
+        Some("revweave-gui"),
         "expected diff.guitool in isolated global config"
     );
     assert_eq!(
@@ -2958,12 +2958,12 @@ fn setup_global_difftool_tool_help_lists_headless_and_gui_entries() {
         "git difftool --tool-help failed\n{text}"
     );
     assert!(
-        text.contains("gitcomet.cmd"),
-        "expected headless gitcomet tool in difftool --tool-help output\n{text}"
+        text.contains("revweave.cmd"),
+        "expected headless revweave tool in difftool --tool-help output\n{text}"
     );
     assert!(
-        text.contains("gitcomet-gui.cmd"),
-        "expected gui gitcomet-gui tool in difftool --tool-help output\n{text}"
+        text.contains("revweave-gui.cmd"),
+        "expected gui revweave-gui tool in difftool --tool-help output\n{text}"
     );
     assert!(
         text.contains("difftool --local"),
@@ -2991,7 +2991,7 @@ fn help_flag_exits_zero() {
         "help should identify the desktop fork"
     );
     assert!(
-        stdout.contains("gitcomet"),
+        stdout.contains("revweave"),
         "help output should mention the binary name"
     );
 }
@@ -3006,7 +3006,7 @@ fn version_flag_exits_zero() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("gitcomet"),
+        stdout.contains("revweave"),
         "version output should mention the binary name"
     );
 }

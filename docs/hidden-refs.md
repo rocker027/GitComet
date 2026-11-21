@@ -2,7 +2,7 @@
 
 **All branches** walks every ref under `refs/` except tags, the same set as
 `git log --all`. Coding agents, review systems and Git's own bookkeeping write
-refs there that are not branches. GitComet hides those namespaces from the log by
+refs there that are not branches. RevWeave hides those namespaces from the log by
 default.
 
 ## Settings
@@ -16,7 +16,6 @@ its own switch:
 | `refs/t3` | T3 Code checkpoints, one per agent turn |
 | `refs/claude` | Claude Code checkpoints |
 | `refs/codex-backups` | Backups saved before rebasing or rewriting branches with Codex |
-| `refs/gitcomet-pro` | GitComet Pro review refs |
 | `refs/jj/keep` | Jujutsu, keeping hidden commits alive |
 | `refs/wip` | Magit work-in-progress snapshots |
 | `refs/prefetch` | `git maintenance` background prefetch |

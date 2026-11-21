@@ -1,16 +1,27 @@
 Copyright (C) 2026 AutoExplore Oy
 Contact: info@autoexplore.ai
 
+Modifications Copyright (C) 2026 rocker027
+
 This project is licensed under the GNU Affero General Public License Version 3
 (AGPL-3.0-only). See LICENSE-AGPL-3.0.
 
 RevWeave is maintained by rocker027 and is based on GitComet by AutoExplore Oy:
 https://github.com/Auto-Explore/GitComet
 
+RevWeave is an independent fork and is not endorsed by AutoExplore Oy.
+Under AGPL-3.0 section 7(e), the AGPL grants no rights to the RevWeave name or
+logo. The AGPL also grants no trademark rights in GitComet or AutoExplore Oy's
+names and logos.
+
 2026-11-19: The fork revised the desktop toolbar and branch menus and added
 Traditional Chinese localization and changes to the commit history graph.
 2026-11-20: The fork introduced the RevWeave name and artwork, separate
 application identifiers and profile, and its own release and source links.
 2026-11-21: The fork adopted its own version numbering, starting at 1.1.0.
+2026-11-21: The fork renamed its command and Git tool to `revweave`, moved its
+links to https://github.com/rocker027/RevWeave, removed the upstream CI and
+package-repository deployment, and replaced the contributor license agreement
+with the Developer Certificate of Origin.
 
-Source and release downloads: https://github.com/rocker027/GitComet/releases
+Source and release downloads: https://github.com/rocker027/RevWeave/releases

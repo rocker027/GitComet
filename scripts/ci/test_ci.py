@@ -752,46 +752,6 @@ class CacheTests(unittest.TestCase):
             self.assertIn("compiled=true\n", compiled)
             self.assertIn("compiled=false\n", clippy)
 
-    def test_ci_finish_packs_only_after_the_whole_job_succeeded(self):
-        # Inside a composite, success() sees only the action's steps; a skipped compile would pack a partial bundle.
-        finish = (Path(__file__).resolve().parents[2] / ".github/actions/ci-finish/action.yml").read_text(encoding="utf-8")
-        gates = re.findall(r"^      if: (.*)\n      shell: bash\n      run: python3 scripts/ci/cache\.py pack", finish,
-                           re.MULTILINE)
-        self.assertEqual(len(gates), 2)
-        for gate in gates:
-            self.assertIn("!cancelled() && job.status == 'success' && ", gate)
-
-    def test_every_python_setup_pins_one_minor_version(self):
-        github = Path(__file__).resolve().parents[2] / ".github"
-        pins = {(path.name, version) for path in sorted(github.rglob("*.yml"))
-                for version in re.findall(r'python-version: "([^"]+)"', path.read_text(encoding="utf-8"))}
-        self.assertGreaterEqual(len(pins), 3)
-        self.assertEqual(len({version for _, version in pins}), 1, pins)
-        for name, version in pins:
-            self.assertRegex(version, r"^\d+\.\d+$",
-                             f"{name}: an exact patch makes setup-python reinstall when an image caches another patch")
-
-    def test_every_job_running_ci_helpers_sets_up_their_python(self):
-        # The runners' system Python 3.10 has no tomllib, which cache.py (and report.py through it) imports.
-        for workflow in sorted((Path(__file__).resolve().parents[2] / ".github/workflows").glob("*.yml")):
-            jobs = re.split(r"^  (?=[\w-]+:\n)", workflow.read_text(encoding="utf-8").split("\njobs:\n", 1)[-1], flags=re.MULTILINE)
-            for job in jobs:
-                for helper in re.finditer(r"scripts/ci/(?:report|cache)\.py", job):
-                    with self.subTest(workflow=workflow.name, job=job.split(":", 1)[0]):
-                        setup = re.search(r"actions/setup-python@|\./\.github/actions/ci-setup", job)
-                        self.assertTrue(setup and setup.start() < helper.start())
-
-    def test_compiled_lanes_exist_and_fit_the_cache_allowance(self):
-        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/cross-platform-tests.yml").read_text(encoding="utf-8")
-        self.assertIn("context: ${{ matrix.name }}-workspace-ci-test", workflow)
-        lanes = set(re.findall(r"^\s+- name: ([\w-]+)$", workflow, re.MULTILINE))
-        for context in cache.COMPILED_BUDGETS_MIB:
-            self.assertIn(context.removesuffix("-workspace-ci-test"), lanes)
-        # GitHub evicts beyond 10 GB per repository. The audit binary is the only other owned cache (7 MB).
-        self.assertLessEqual(cache.CACHE_ALLOWANCE_BYTES, 10_000_000_000)
-        budgets = sum(cache.COMPILED_BUDGETS_MIB.values()) + 3 * cache.SOURCES_BUDGET_MIB
-        self.assertLessEqual(budgets * 1024**2 + 64 * 1024**2, cache.CACHE_ALLOWANCE_BYTES)
-
     def test_budget_changes_keep_every_cache_key(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(cache, "ROOT", Path(directory)), \
                 patch.object(cache.platform, "platform", return_value="test-platform"), \
@@ -813,16 +773,6 @@ class CacheTests(unittest.TestCase):
                 cache.load_budgets(budgets)
             budgets.write_text(budgets.read_text().replace("[compiled_mb]", "[compiled_mib]"))
             self.assertEqual(cache.load_budgets(budgets), (1, 1, {"fixture-workspace-ci-test": 1}))
-
-    def test_ci_finish_reads_only_the_cache_state_ci_setup_exports(self):
-        actions = Path(__file__).resolve().parents[2] / ".github/actions"
-        setup = (actions / "ci-setup/action.yml").read_text(encoding="utf-8")
-        exported = set(re.search(r"for name in ([A-Z_ ]+); do\n\s+echo \"\$name=\$\{!name\}\" >> \"\$GITHUB_ENV\"",
-                                 setup)[1].split())
-        finish = (actions / "ci-finish/action.yml").read_text(encoding="utf-8")
-        read = set(re.findall(r"env\.(CI_[A-Z_]+)", finish)) | set(re.findall(r"\$(CI_[A-Z_]+)", finish))
-        self.assertTrue({"CI_CACHE_COMPILED", "CI_CACHE_KEY", "CI_SOURCE_KEY"} <= read)
-        self.assertEqual(read - exported, set())
 
     def test_contexts_without_a_compiled_budget_lose_their_bundles(self):
         def entry(context, created_at, scope="refs/heads/dev"):

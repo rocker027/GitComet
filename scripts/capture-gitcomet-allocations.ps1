@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-Capture GitComet startup timings and allocation totals.
+Capture RevWeave startup timings and allocation totals.
 .DESCRIPTION
-Build first with build-gitcomet-allocations.ps1 and close existing GitComet
+Build first with build-gitcomet-allocations.ps1 and close existing RevWeave
 windows. The default capture uses saved settings and leaves the app open.
 Allow repository loading to finish, then close the app normally.
 
@@ -37,13 +37,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($Binary)) {
-    $Binary = Join-Path $repoRoot 'target/alloc-profile/release-with-debug/gitcomet.exe'
+    $Binary = Join-Path $repoRoot 'target/alloc-profile/release-with-debug/revweave.exe'
 }
 if (-not (Test-Path -LiteralPath $Binary -PathType Leaf)) {
     throw "Missing $Binary. Run build-gitcomet-allocations.ps1 first."
 }
-if (-not $EmptyProfile -and (Get-Process -Name gitcomet -ErrorAction SilentlyContinue)) {
-    throw 'Close existing GitComet windows before capturing a new startup.'
+if (-not $EmptyProfile -and (Get-Process -Name revweave -ErrorAction SilentlyContinue)) {
+    throw 'Close existing RevWeave windows before capturing a new startup.'
 }
 if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)

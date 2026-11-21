@@ -1,36 +1,20 @@
 ## Contributing
 
-<!-- gitcomet-cla:start -->
-### Contributor License Agreement
+### Developer Certificate of Origin
 
-GitComet's open-source edition is licensed under AGPL-3.0-only. AutoExplore Oy also plans a paid proprietary GitComet Pro edition.
+RevWeave is licensed under AGPL-3.0-only. By submitting a contribution you agree that it is licensed under AGPL-3.0-only, the same license as the project (inbound = outbound). Contributors keep the copyright in their work.
 
-Before we merge a contribution, its rights holders must have accepted the applicable Contributor License Agreement (CLA), or AutoExplore must have verified equivalent permission under another agreement. Contributors retain ownership of their work. The CLA permits AutoExplore Oy to include their contributions in proprietary GitComet products without royalty payments while also licensing those contributions under the project's license at submission. The full agreement governs; this paragraph is a summary.
-
-Read the [Individual CLA](CLA.md). Company-owned contributions use the separate [Entity CLA](CLA-ENTITY.md) and the authorization process below.
-
-#### CLA signing instructions
-
-After opening a pull request, follow the CLA Assistant comment to read and accept the Individual CLA using your GitHub account. Provide your full legal name and a contact email address. Sign only after you have read the agreement and obtained any necessary employer permission.
-
-For an unchanged agreement, returning signers normally do not need to sign again. An agreement change may require renewed acceptance.
-
-The acceptance record identifies the agreement version that was accepted. The text shown during signing is the agreement you accept; the repository copy must be kept consistent with it.
-
-For company-owned work, have an authorized representative complete the Entity CLA and send it privately to info@gitcomet.dev. Include the company's legal name, the relevant GitHub usernames, and the contribution references. Do not sign the individual agreement as a substitute for obtaining the rights holder's authorization.
-
-Contributors under eighteen should contact info@gitcomet.dev with a parent or guardian to arrange the signing process before contributing.
+Every commit must carry a `Signed-off-by:` line. Add it with `git commit -s`. The line certifies the [Developer Certificate of Origin](https://developercertificate.org/): you wrote the contribution or otherwise have the right to submit it under the project's license.
 
 #### Third-party material and employer-owned contributions
 
-Identify copied or adapted third-party code, documentation, images, and other material in the pull request. Include its source, copyright notices, license, and the affected files. A CLA cannot grant rights you do not hold, and it does not automatically change a dependency's license.
+Identify copied or adapted third-party code, documentation, images, and other material in the pull request. Include its source, copyright notices, license, and the affected files. A sign-off cannot grant rights you do not hold, and it does not automatically change a dependency's license.
 
-Do not submit employer-owned or other third-party-owned material as if you personally own it. Obtain the necessary permission and contact info@gitcomet.dev to resolve the appropriate agreement before the contribution is merged.
+Do not submit employer-owned or other third-party-owned material as if you personally own it. Obtain the necessary permission from the rights holder before you submit it.
 
-Preserve the actual authors and co-authors of contributions. Ask maintainers for help with an unrecognized GitHub account or an incorrectly attributed commit; do not remove attribution to make the check pass.
+Preserve the actual authors and co-authors of contributions. Ask maintainers for help with an unrecognized GitHub account or an incorrectly attributed commit; do not remove attribution to make a check pass.
 
-Questions about contribution permissions or signing records: info@gitcomet.dev. Do not include private signing details in public issue comments.
-<!-- gitcomet-cla:end -->
+Questions about contribution permissions: open an issue on the [RevWeave repository](https://github.com/rocker027/RevWeave/issues). Do not include private details in public issue comments.
 
 ### AI tools
 
@@ -58,7 +42,7 @@ repository lifetimes, and document ownership.
 - `crates/gitcomet-ui-terminal`: the embedded terminal widget: an alacritty backend on a PTY and the GPUI viewport that paints it, selects text and forwards input. Terminal tabs, sessions, shutdown prompts and preferences stay in the UI host.
 - `crates/gitcomet-ui-media`: image and diagram previews: device-pixel image inspection with tiled resampling, SVG rasterization with the bundled fonts, asynchronous diagram surfaces and the shared source/rendered toggle. The host supplies inputs, opens the menus the toolbars request and saves sampling preferences.
 - `crates/gitcomet-extension-api`: the contract for compiled-in extensions: contributions (repository views, status items, settings pages, commands, key bindings, menu entries, assets, entry gates, close guards), weak window and repository handles, and per-extension session/workspace storage. Depends on core, state, and the UI kit, never on the UI host.
-- `crates/gitcomet-ui-gpui`: the GitComet window: views, panes, panels (focused diff/merge windows, conflict resolver, word diff); `UiLaunch` opens the browser window and hosts extensions (`view/extension_host.rs`). With none registered it installs nothing.
+- `crates/gitcomet-ui-gpui`: the RevWeave window: views, panes, panels (focused diff/merge windows, conflict resolver, word diff); `UiLaunch` opens the browser window and hosts extensions (`view/extension_host.rs`). With none registered it installs nothing.
 - `crates/gitcomet-app`: process launch (`AppLaunch`): identity install, crash reporting, CLI (clap), browser-instance broker, difftool/mergetool/setup/uninstall modes. GUI dependencies are optional (`ui-gpui` feature).
 - `crates/gitcomet`: the executable: allocator, platform resources, packaging, and instrumentation binaries.
 - `crates/gitcomet-extension-example` and `crates/gitcomet-extension-example-app`: a neutral example product built only on public upstream interfaces, with an extension registering most kinds of contribution; the UI host's tests run it (`view/tests/extensions.rs`), and CI builds the product in its own context.
@@ -91,9 +75,9 @@ Linux prerequisites:
   mold --version
   ```
 
-Cargo uses `scripts/linux/mold-linker.sh` to select mold through Clang for all Linux build profiles, including tests, coverage, and profiling. CI and Linux releases use the same pinned installer. See the [mold 3.0.0 release](https://github.com/rui314/mold/releases/tag/v3.0.0) for upstream binaries and source installation on other architectures.
+Cargo uses `scripts/linux/mold-linker.sh` to select mold through Clang for all Linux build profiles, including tests, coverage, and profiling. Linux releases use the same pinned installer. See the [mold 3.0.0 release](https://github.com/rui314/mold/releases/tag/v3.0.0) for upstream binaries and source installation on other architectures.
 
-To verify the linker after building, run `readelf -p .comment target/debug/gitcomet`; it should include `mold 3.0.0`. To temporarily use the system linker on x86_64 Linux, run `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc cargo build` (use `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER` on ARM64).
+To verify the linker after building, run `readelf -p .comment target/debug/revweave`; it should include `mold 3.0.0`. To temporarily use the system linker on x86_64 Linux, run `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc cargo build` (use `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER` on ARM64).
 
 Windows prerequisites (Windows 10/11):
 
@@ -117,15 +101,14 @@ cargo build --locked -p gitcomet --no-default-features --features gix
 Run (opens the repo passed as the first arg, or falls back to the current directory):
 
 ```bash
-cargo run --locked -p gitcomet --bin gitcomet -- /path/to/repo
+cargo run --locked -p gitcomet --bin revweave -- /path/to/repo
 ```
 
 ### Testing
 
 The [CI runner](scripts/ci/run.py) separates package feature contexts and runs
-GPUI suites in their libtest process. Use the Python and `cargo-nextest` versions
-in [CI setup](.github/actions/ci-setup/action.yml); its nextest installer is
-[install-nextest.py](scripts/ci/install-nextest.py).
+GPUI suites in their libtest process. Use the `cargo-nextest` version
+pinned in [install-nextest.py](scripts/ci/install-nextest.py). RevWeave has no hosted CI, so run these checks locally before you submit.
 Install Git LFS and initialize the syntax fixture submodule before running tests:
 
 ```bash
@@ -133,8 +116,7 @@ git lfs version
 git submodule update --init fixtures/syntax_test
 ```
 
-The [native CI workflow](.github/workflows/cross-platform-tests.yml) lists
-platform prerequisites and the separate git-annex test lane.
+RevWeave has no hosted CI, so run the checks below locally before you submit.
 Compile and run the workspace tests, including the UI, with:
 
 ```bash
@@ -162,7 +144,7 @@ consent overrides. In-tree tests enable it through dev dependencies; external te
 harnesses must opt in. Normal app builds leave it disabled. See the
 [profiling guide](scripts/profiling/README.md#backend-measurements) for probe builds.
 
-Formatting, Clippy, dependency boundaries, grammar symbols and the licence list (matching CI's package contexts):
+Formatting, Clippy, dependency boundaries, grammar symbols and the licence list (matching the package contexts of `scripts/ci/`):
 
 ```bash
 cargo fmt --all --check
@@ -176,7 +158,7 @@ bash scripts/generate-open-source-licenses.sh --check
 
 After a dependency change, run `scripts/generate-open-source-licenses.sh` to refresh the open-source licence list the app shows.
 
-Coverage (local + CI-compatible):
+Coverage:
 
 ```bash
 rustup component add llvm-tools-preview
@@ -186,7 +168,7 @@ bash scripts/coverage.sh
 
 This writes:
 
-- `target/llvm-cov/lcov.info` (used by CI upload)
+- `target/llvm-cov/lcov.info` (machine-readable report)
 - `target/llvm-cov/html/index.html` (local detailed report)
 
 ### Release packaging
@@ -200,43 +182,24 @@ scripts/package-macos.sh --version 0.2.0 --arch x86_64 --release
 
 Use `--skip-dmg` when running in restricted/sandboxed environments where `hdiutil create` is unavailable.
 
-The release workflow `.github/workflows/build-release-artifacts.yml` builds and publishes:
+Release artifacts are named `revweave-v<version>-<os>-<arch>.<ext>`. Build them locally with `scripts/package-macos.sh` and `scripts/package-linux.sh`. RevWeave has no release workflow, Homebrew tap, AUR or APT deployment.
 
-- Windows: portable ZIP + MSI
-- Linux: tar.gz + AppImage + .deb + .rpm
-- macOS: DMG + tar.gz for `arm64` and `x86_64`
-- Homebrew cask asset: `gitcomet.rb` (generated from macOS DMG artifacts and Linux AppImages plus their SHA256 values)
+Every GitHub release must also carry the Corresponding Source that AGPL-3.0 requires. Tag the release commit, then create the source archive from that tag and upload it with the binaries:
 
-### Homebrew deployment
+```bash
+git archive --format=tar.gz --prefix="revweave-v${VERSION}-source/" \
+  --output="dist/revweave-v${VERSION}-source.tar.gz" "v${VERSION}^{commit}"
+scripts/generate-open-source-licenses.sh --check
+```
 
-To push `Casks/gitcomet.rb` into a Homebrew tap repo automatically on release:
-
-1. Create a tap repository (default expected name: `OWNER/homebrew-gitcomet`).
-2. In this repo, configure:
-   - secret `HOMEBREW_TAP_TOKEN`: GitHub token with `contents:write` access to the tap repository.
-   - variable `HOMEBREW_TAP_REPO`: tap repository in `OWNER/REPO` form.
-   - optional variable `HOMEBREW_TAP_BRANCH`: target branch (default `main`).
-3. Run `.github/workflows/release-manual-main.yml` with `draft=false`.
-
-This release flow will:
-
-- build and upload release artifacts
-- publish the GitHub release
-- call `.github/workflows/deploy-homebrew-tap.yml` to update `Casks/gitcomet.rb` in the tap repo
-- call `.github/workflows/deploy-aur.yml` to update `gitcomet-bin` in the AUR
-
-You can also run `.github/workflows/deploy-homebrew-tap.yml` manually for backfills or dry-runs.
+The second command confirms that the third-party license list shown in the app matches `Cargo.lock`.
 
 ### Linux packages
 
-`scripts/package-linux.sh` builds the release artifacts from one staged payload. The `.deb`, `.rpm` and AppImage include the binary, desktop entry, all five icon sizes, licence files and README. The tarball preserves its historical layout for third-party packagers: only the binary, README, `LICENSE-AGPL-3.0` and `NOTICE`. Package metadata lives in `packaging/linux/`: `debian-control.in` for the `.deb`, `gitcomet.spec` for the `.rpm`, and `PKGBUILD.in` for the AUR's `gitcomet-bin`.
+`scripts/package-linux.sh` builds the release artifacts from one staged payload. The `.deb`, `.rpm` and AppImage include the binary, desktop entry, all five icon sizes, licence files and README. The tarball holds only the `revweave` binary, README, `LICENSE-AGPL-3.0` and `NOTICE` under a `revweave-v<version>-linux-<arch>/` directory. Package metadata lives in `packaging/linux/`: `debian-control.in` for the `.deb` and `revweave.spec` for the `.rpm`.
 
-Linked libraries are declared automatically by `dpkg-shlibdeps` and rpm AutoReq, and explicitly in `PKGBUILD.in`. Libraries the app loads at runtime (Vulkan, EGL, Wayland) are declared by hand. `scripts/check-linux-runtime-deps.sh` runs in CI and on every release build, and fails when the binary's libraries or its glibc baseline drift from those declarations. Update all three package templates when the runtime dependencies change. Arch requires `libglvnd` for EGL and offers `vulkan-icd-loader` as an optional dependency; `wayland` is optional because X11 is the fallback.
+Linked libraries are declared automatically by `dpkg-shlibdeps` and rpm AutoReq, and explicitly in the package templates. Libraries the app loads at runtime (Vulkan, EGL, Wayland) are declared by hand. `scripts/check-linux-runtime-deps.sh` fails when the binary's libraries or its glibc baseline drift from those declarations. Update both package templates when the runtime dependencies change.
 
-The `deb_revision` and `rpm_release` inputs of `.github/workflows/release-manual-main.yml` set the package revision (the `1` in `1.2.3-1`). Raise them when rebuilding packages for an existing version through a manual dispatch of `.github/workflows/build-release-artifacts.yml`.
+Pass `--revision` (`.deb`) and `--release` (`.rpm`) to `scripts/package-linux.sh` to set the package revision (the `1` in `1.2.3-1`). Raise them when rebuilding packages for an existing version.
 
 The RPM supports Fedora 42 and newer.
-
-The release workflow publishes `gitcomet-bin` after the GitHub release is public. `.github/workflows/deploy-aur.yml` can also be dispatched for backfills or with `dry_run: true` to verify sources and preview the generated PKGBUILD and `.SRCINFO` without pushing. It uses the existing `AUR_PRIVATE_SSH_KEY` and `AUR_PRIVATE_SSH_KEY_PASSPHRASE` secrets. `AUR_GIT_REPOSITORY` defaults to `ssh://aur@aur.archlinux.org/gitcomet-bin.git`; an existing `gitcomet.git` URL is redirected to `gitcomet-bin.git`. `AUR_GIT_BRANCH` defaults to `master`.
-
-`scripts/update-aur.sh` renders the template with checksums of both release tarballs and the tagged source archive, which supplies the desktop entry and icons. Arch's `aarch64` uses the `linux-arm64` release artifact. New versions start at `pkgrel=1`; metadata changes for the same version increment `pkgrel`, while identical reruns leave it unchanged. Release candidates use `1.2.3rc.1` as the Arch version and retain `1.2.3-rc.1` in download URLs. Run `scripts/test-aur-packaging.sh` as a non-root user on Arch to verify metadata, source checksums, and the full payload for both architectures.

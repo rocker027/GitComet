@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive the real GitComet application and measure it, or compare runs.
+"""Drive the real RevWeave application and measure it, or compare runs.
 
 The app runs normally (native window, live store, real workers, normal
 rendering) with the opt-in scenario driver and UI probe enabled. The driver
@@ -551,7 +551,7 @@ def smaps_breakdown(pid):
                         kind = "shared_libraries"
                     elif name.startswith("["):
                         kind = "kernel_special"
-                    elif os.path.basename(name).startswith("gitcomet"):
+                    elif os.path.basename(name).startswith(("revweave", "gitcomet")):
                         kind = "binary"
                     else:
                         kind = "files_mapped"
@@ -663,7 +663,7 @@ class HeadlessCompositor:
     session so it never touches the desktop's display configuration.
 
     A headless mutter has no input devices, so no window ever gets keyboard
-    focus, and GitComet (rightly) accepts text only in an active window. A
+    focus, and RevWeave (rightly) accepts text only in an active window. A
     RemoteDesktop session adds a virtual keyboard and pointer; they must exist
     before the app binds its seat. Clipboard scenarios also send a Shift
     press/release during setup so Wayland grants clipboard ownership."""
@@ -757,7 +757,7 @@ def run_once(binary, repository, name, output, timeout, metadata=True, display="
     if platform.system() == "Darwin" and ".app/Contents/MacOS/" not in str(binary):
         # A bare executable copies itself into a RevWeave.app, relaunches from
         # there and exits, so the measured process would be gone in a second.
-        raise ValueError("On macOS pass the executable inside an app bundle (RevWeave.app/Contents/MacOS/gitcomet); "
+        raise ValueError("On macOS pass the executable inside an app bundle (RevWeave.app/Contents/MacOS/revweave); "
                          "a bare binary relaunches itself from a bundle and exits")
     output.mkdir(parents=True, exist_ok=False)
     run_id = str(uuid.uuid4())
@@ -810,7 +810,7 @@ def run_once(binary, repository, name, output, timeout, metadata=True, display="
     capture["gpu_capture"] = {"requested": gpu}
     if metadata:
         environment = perf_metadata.collect(
-            binaries=[("gitcomet", binary)], fixtures=[("repository", repository)],
+            binaries=[("revweave", binary)], fixtures=[("repository", repository)],
             command=" ".join(sys.argv))
         (output / "environment.json").write_text(json.dumps(environment, indent=2) + "\n", encoding="utf-8")
         (output / "environment.txt").write_text(perf_metadata.readable(environment),encoding="utf-8")
@@ -876,7 +876,7 @@ def run_once(binary, repository, name, output, timeout, metadata=True, display="
             capture["load_after"] = perf_platform.load_average()
             (output / "process.jsonl").write_text("".join(json.dumps(s) + "\n" for s in samples), encoding="utf-8")
             (output / "capture.json").write_text(json.dumps(capture, indent=2) + "\n", encoding="utf-8")
-    crash_dir = output / "profile/state/gitcomet/crashes"
+    crash_dir = output / "profile/state/revweave/crashes"
     capture["crash_reports"] = sorted(p.name for p in crash_dir.glob("*")) if crash_dir.exists() else []
     capture["outcome"] = "passed" if process.returncode == 0 else "failed"
     capture["timeout"] = timeout_problem

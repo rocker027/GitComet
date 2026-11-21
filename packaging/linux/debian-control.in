@@ -1,11 +1,11 @@
-Source: gitcomet
+Source: revweave
 Maintainer: RevWeave Maintainers <18389739+rocker027@users.noreply.github.com>
 Section: utils
 Priority: optional
 Standards-Version: 4.7.0
-Homepage: https://github.com/rocker027/GitComet
+Homepage: https://github.com/rocker027/RevWeave
 
-Package: gitcomet
+Package: revweave
 Architecture: @DEB_ARCH@
 Depends: git, ${shlibs:Depends}, libvulkan1 | libegl1
 Recommends: libwayland-client0, libwayland-egl1, hicolor-icon-theme

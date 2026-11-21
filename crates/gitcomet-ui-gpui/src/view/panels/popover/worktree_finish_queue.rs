@@ -48,8 +48,8 @@ fn blocker_text(blocker: &CleanupBlocker, language: Language) -> String {
             .to_string(),
         CleanupBlocker::OpenGitCometTerminal => language
             .text(
-                "GitComet terminal is still running here",
-                "GitComet 終端仍在使用",
+                "A built-in terminal is still running here",
+                "內建終端仍在使用",
             )
             .to_string(),
         CleanupBlocker::ActiveOrcaAgent => language
@@ -477,7 +477,7 @@ pub(super) fn panel(
                 .text_color(theme.colors.foreground.secondary)
                 .child(language.text(
                     "Orca CLI was unavailable during cleanup; external agent occupancy was not checked.",
-                    "清理時 Orca CLI 不可用，未檢查外部 agent 佔用情形（已依 Git 與 GitComet 終端狀態核對）。",
+                    "清理時 Orca CLI 不可用，未檢查外部 agent 佔用情形（已依 Git 與內建終端狀態核對）。",
                 )),
         );
     }

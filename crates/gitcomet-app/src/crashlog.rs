@@ -11,6 +11,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gitcomet_core::environment::{self, EnvironmentSnapshot};
 use gitcomet_core::fs_utils::{open_private_append, write_private_file};
 
+/// A crash log section header, e.g. `=== RevWeave runtime error ===`.
+/// `report::parse_crash_log` reads these back.
+fn section_header(title: &str) -> String {
+    format!("=== {} {title} ===", identity::current().display_name())
+}
+
 static WRITING_CRASH_LOG: AtomicBool = AtomicBool::new(false);
 static SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SESSION_LIFECYCLE: Mutex<()> = Mutex::new(());
@@ -296,7 +302,7 @@ fn write_runtime_error_log_in_dir(
     if has_existing_log {
         writeln!(file)?;
     }
-    writeln!(file, "=== GitComet runtime error ===")?;
+    writeln!(file, "{}", section_header("runtime error"))?;
     writeln!(file, "failure_kind=runtime-error")?;
     writeln!(file, "timestamp_unix_ms={}", unix_time_ms())?;
     writeln!(
@@ -400,7 +406,7 @@ fn begin_session_in_dir(dir: &Path) -> std::io::Result<()> {
     persist_environment(dir, &environment::cached())?;
 
     let mut contents = Vec::new();
-    writeln!(contents, "=== GitComet abnormal exit candidate ===")?;
+    writeln!(contents, "{}", section_header("abnormal exit candidate"))?;
     writeln!(contents, "failure_kind=abnormal-exit")?;
     writeln!(contents, "failure_context=")?;
     writeln!(contents, "copy_source=")?;
@@ -676,7 +682,7 @@ fn read_abnormal_exit_log(
     }
     match std::fs::read_to_string(last_operation_path) {
         Ok(last_operation) => {
-            let _ = writeln!(session_log, "\n=== GitComet operation context ===");
+            let _ = writeln!(session_log, "\n{}", section_header("operation context"));
             let _ = write!(session_log, "{last_operation}");
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -705,7 +711,7 @@ fn read_abnormal_exit_log(
         && let Ok(bytes) = std::fs::read(environment_path)
         && let Ok(snapshot) = serde_json::from_slice::<EnvironmentSnapshot>(&bytes)
     {
-        let _ = writeln!(session_log, "\n=== GitComet environment ===");
+        let _ = writeln!(session_log, "\n{}", section_header("environment"));
         if let Ok(json) = serde_json::to_string(&snapshot) {
             let _ = writeln!(session_log, "environment_json={json}");
         }
@@ -780,7 +786,7 @@ fn write_panic_log(
         Err(_) => return,
     };
 
-    let _ = writeln!(file, "=== GitComet crash (panic) ===");
+    let _ = writeln!(file, "{}", section_header("crash (panic)"));
     let _ = writeln!(file, "failure_kind=panic");
     let _ = writeln!(file, "timestamp_unix_ms={}", unix_time_ms());
     let _ = writeln!(

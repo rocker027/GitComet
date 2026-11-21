@@ -1,12 +1,12 @@
 # git-annex
 
-GitComet works with repositories that manage large files with [git-annex](https://git-annex.branchable.com). GitComet does not move annexed content itself. Content commands run `git annex`, so location tracking, the numcopies check and special remotes behave exactly as they do in a terminal. Ordinary Git commands still go through Git.
+RevWeave works with repositories that manage large files with [git-annex](https://git-annex.branchable.com). RevWeave does not move annexed content itself. Content commands run `git annex`, so location tracking, the numcopies check and special remotes behave exactly as they do in a terminal. Ordinary Git commands still go through Git.
 
-**Settings → Executables** shows whether Git can run `git annex`. When it is **Not found**, GitComet still recognises annexed files, but every git-annex command is listed disabled with "(install git-annex)". git-annex older than 10.20230626 has no `pull` and `push`; GitComet runs the same one-way `git annex sync` instead.
+**Settings → Executables** shows whether Git can run `git annex`. When it is **Not found**, RevWeave still recognises annexed files, but every git-annex command is listed disabled with "(install git-annex)". git-annex older than 10.20230626 has no `pull` and `push`; RevWeave runs the same one-way `git annex sync` instead.
 
 Showing what is annexed never runs git-annex: file rows, presence and the sidebar section are read from Git, the local `git-annex` branch and `.git/annex`. git-annex runs only for commands you start and for **Where is it?** and **Find unused content…**.
 
-## What GitComet shows
+## What RevWeave shows
 
 | Where | What |
 | --- | --- |
@@ -37,11 +37,11 @@ Showing what is annexed never runs git-annex: file rows, presence and the sideba
 | Open git-annex webapp…, Stop git-annex assistant | Right-click the **git-annex** sidebar header; Stop appears while the assistant runs |
 | Sync, pull, push, get all, check, adjust, leave adjusted, initialize, refresh, find unused content, open the webapp | Command palette, under **git-annex** |
 
-git-annex refuses to drop content when it cannot verify enough copies elsewhere. GitComet shows that refusal with git-annex's reason and suggests copying first or using **Move to**. **Drop even without other copies…** passes `--force` only after you confirm.
+git-annex refuses to drop content when it cannot verify enough copies elsewhere. RevWeave shows that refusal with git-annex's reason and suggests copying first or using **Move to**. **Drop even without other copies…** passes `--force` only after you confirm.
 
 **Mark as trusted…** asks you to confirm before trusting a repository. git-annex then counts its recorded copies without checking that they still exist, which can cause data loss if those copies disappear. Semitrusted and untrusted changes apply immediately.
 
-GitComet never lets git-annex commit. Sync runs with `--no-commit`, so your changes stay in the working tree until you commit them. The one exception is the webapp, which you start on purpose: it runs the git-annex assistant, which adds and commits changes by itself until you stop it. GitComet asks before starting it.
+RevWeave never lets git-annex commit. Sync runs with `--no-commit`, so your changes stay in the working tree until you commit them. The one exception is the webapp, which you start on purpose: it runs the git-annex assistant, which adds and commits changes by itself until you stop it. RevWeave asks before starting it.
 
 **Find unused content…** lists old versions no branch or tag uses any more, corrupt copies `fsck` set aside, and partial downloads, with their sizes. **Drop** keeps anything git-annex cannot verify in another repository; **Drop without verified copies** deletes it anyway. Both refresh the list first, so they drop what is unused at that moment.
 
@@ -64,11 +64,11 @@ backup directory=/media/usb/annex
 **Settings → Large files** has three options:
 
 - **Hide git-annex bookkeeping branches** is on by default.
-- **Use git-annex pull and push on adjusted branches** is on by default. On an adjusted branch, Pull, Push and commit & push run `git annex pull` and `git annex push`. A plain merge into an adjusted branch would commit the adjusted files to the wrong branch, and a plain push would publish the adjusted branch. Pull from another branch, push with tags and force push have no git-annex equivalent, so GitComet refuses them there; check out the base branch to use them. Without git-annex installed, Pull and Push are refused on an adjusted branch for the same reason.
+- **Use git-annex pull and push on adjusted branches** is on by default. On an adjusted branch, Pull, Push and commit & push run `git annex pull` and `git annex push`. A plain merge into an adjusted branch would commit the adjusted files to the wrong branch, and a plain push would publish the adjusted branch. Pull from another branch, push with tags and force push have no git-annex equivalent, so RevWeave refuses them there; check out the base branch to use them. Without git-annex installed, Pull and Push are refused on an adjusted branch for the same reason.
 - **git-annex pull, push and sync also move file content** is off by default, so these commands only exchange branches.
 
 ## Troubleshooting
 
 - **A drop was refused.** Copy the file to another repository first, raise trust in a repository that has it, or lower numcopies with **Set number of copies…**.
-- **Files read as modified after a cancelled download.** git-annex updates Git's index at the end of a command, which a cancel skips. GitComet refreshes it after every git-annex command it runs; for files left by other tools, use **Refresh** in the git-annex section.
+- **Files read as modified after a cancelled download.** git-annex updates Git's index at the end of a command, which a cancel skips. RevWeave refreshes it after every git-annex command it runs; for files left by other tools, use **Refresh** in the git-annex section.
 - **The git-annex section lists no repositories, or misses one.** The list comes from this clone's `git-annex` branch, so it is empty until the clone is initialized. Repositories another clone added appear once a git-annex pull or sync merges its `git-annex` branch; a plain fetch does not.

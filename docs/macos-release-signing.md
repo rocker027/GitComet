@@ -4,7 +4,6 @@ This repository already contains the basic macOS release flow:
 
 - [`scripts/package-macos.sh`](../scripts/package-macos.sh) builds the macOS app bundle, signs the bundled executable and app when a signing identity is provided, and emits the macOS `.dmg` artifact.
 - [`scripts/notarize-macos.sh`](../scripts/notarize-macos.sh) submits the packaged DMG to Apple's notary service, staples the resulting ticket to the staged `.app` bundle and DMG, and validates the stapled artifacts.
-- [`.github/workflows/build-release-artifacts.yml`](../.github/workflows/build-release-artifacts.yml) wires the same process into release CI.
 
 ## What You Need
 
@@ -50,7 +49,7 @@ Then notarize and staple the generated artifacts:
 scripts/notarize-macos.sh \
   --version 0.2.0 \
   --arch arm64 \
-  --keychain-profile gitcomet-notary
+  --keychain-profile revweave-notary
 ```
 
 If you prefer direct API-key authentication instead of a stored profile:
@@ -67,7 +66,7 @@ scripts/notarize-macos.sh \
 To create a local keychain profile up front:
 
 ```bash
-xcrun notarytool store-credentials gitcomet-notary \
+xcrun notarytool store-credentials revweave-notary \
   --key /path/to/AuthKey_ABC1234567.p8 \
   --key-id ABC1234567 \
   --issuer 00000000-0000-0000-0000-000000000000
@@ -85,73 +84,39 @@ The packaging and notarization scripts already run the important checks for you:
 After a successful local run, you can manually spot-check the finished artifacts:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 dist/stage/gitcomet-v0.2.0-macos-arm64/RevWeave.app
-spctl --assess --type open --context context:primary-signature --verbose=4 dist/stage/gitcomet-v0.2.0-macos-arm64/RevWeave.app
-spctl --assess --type open --context context:primary-signature --verbose=4 dist/gitcomet-v0.2.0-macos-arm64.dmg
-xcrun stapler validate dist/stage/gitcomet-v0.2.0-macos-arm64/RevWeave.app
-xcrun stapler validate dist/gitcomet-v0.2.0-macos-arm64.dmg
+codesign --verify --deep --strict --verbose=2 dist/stage/revweave-v0.2.0-macos-arm64/RevWeave.app
+spctl --assess --type open --context context:primary-signature --verbose=4 dist/stage/revweave-v0.2.0-macos-arm64/RevWeave.app
+spctl --assess --type open --context context:primary-signature --verbose=4 dist/revweave-v0.2.0-macos-arm64.dmg
+xcrun stapler validate dist/stage/revweave-v0.2.0-macos-arm64/RevWeave.app
+xcrun stapler validate dist/revweave-v0.2.0-macos-arm64.dmg
 ```
 
 If all of those commands return success, the signed macOS app bundle and DMG are in good shape.
 
-## GitHub Setup
+## Signing Credentials
 
-Use repository-level or organization-level GitHub Actions secrets for the macOS signing values used by the reusable release workflow.
+RevWeave has no hosted CI, so signing and notarization run on a local macOS machine. Keep the signing certificate and the notary key in your login keychain or a secrets manager, never in the repository.
 
-1. Export the `Developer ID Application` identity from Keychain Access as a `.p12`.
-2. Choose an export password for that `.p12`.
-3. Base64-encode the `.p12` as a single line:
-
-```bash
-base64 -i gitcomet-signing.p12 | tr -d '\n'
-```
-
-4. In GitHub, add these Actions secrets:
-
-- `MACOS_SIGNING_IDENTITY`
-  The exact identity string, for example `Developer ID Application: Example, Inc. (TEAMID)`.
-- `MACOS_SIGNING_CERT_BASE64`
-  The single-line base64 output of the exported `.p12`.
-- `MACOS_SIGNING_CERT_PASSWORD`
-  The password you set when exporting the `.p12`.
-- `MACOS_NOTARY_KEY_ID`
-  The App Store Connect API key ID.
-- `MACOS_NOTARY_ISSUER_ID`
-  The App Store Connect issuer UUID.
-- `MACOS_NOTARY_API_KEY_P8`
-  The full contents of the downloaded `AuthKey_<KEYID>.p8` file.
-
-5. Trigger the release workflow from [`release-manual-main.yml`](../.github/workflows/release-manual-main.yml) on `main`.
+1. Export the `Developer ID Application` identity from Keychain Access as a `.p12` only if you need to move it to another machine. Choose an export password for that `.p12`.
+2. Pass the exact identity string, for example `Developer ID Application: Example, Inc. (TEAMID)`, to `--codesign-identity`.
+3. Provide notarization credentials through a stored `notarytool` keychain profile (`--keychain-profile`) or the App Store Connect API key (`--api-key`, `--key-id`, `--issuer`).
 
 ## App Store Connect Notary Key
 
-This repository's CI uses an App Store Connect API key for notarization.
+Notarization works with an App Store Connect API key.
 
-Create a Team API key, download the `.p8` file once, and store the key material securely. The key ID and issuer ID become GitHub secrets, and the `.p8` contents become `MACOS_NOTARY_API_KEY_P8`.
+Create a Team API key, download the `.p8` file once, and store the key material securely.
 
-For local testing you can either:
+For local use you can either:
 
-- use the same `.p8` file directly with [`scripts/notarize-macos.sh`](../scripts/notarize-macos.sh), or
+- use the `.p8` file directly with [`scripts/notarize-macos.sh`](../scripts/notarize-macos.sh), or
 - save the credentials into your macOS keychain with `xcrun notarytool store-credentials`.
-
-## CI Secrets
-
-Release CI enables macOS signing only when all of these secrets are present:
-
-- `MACOS_SIGNING_IDENTITY`
-- `MACOS_SIGNING_CERT_BASE64`
-- `MACOS_SIGNING_CERT_PASSWORD`
-- `MACOS_NOTARY_KEY_ID`
-- `MACOS_NOTARY_ISSUER_ID`
-- `MACOS_NOTARY_API_KEY_P8`
-
-The workflow imports the `.p12` certificate into a temporary keychain, signs the macOS artifacts, notarizes the DMG, staples the `.app` and `.dmg`, and uploads the resulting release assets.
 
 ## Artifact Expectations
 
 Treat the DMG as the canonical trusted macOS download.
 
 - The DMG is the notarized and stapled end-user artifact.
-- The DMG is the macOS installation artifact. The cross-platform corresponding-source archive is published on the same Release. The macOS binary `.tar.gz` that used to accompany it was dropped: it duplicated the binary the DMG already ships, and the bare copy at its root was the one file that could not be notarized, since Apple's notary service does not accept `.tar.gz` uploads and that copy was not inside the submitted DMG. Users who want `gitcomet` on `PATH` get a notarized one from the Homebrew cask, which symlinks `RevWeave.app/Contents/MacOS/gitcomet`.
+- The DMG is the macOS installation artifact. The macOS binary is not published as a separate `.tar.gz`: it would duplicate the binary the DMG already ships, and a bare copy is the one file that cannot be notarized, since Apple's notary service does not accept `.tar.gz` uploads. Users who want `revweave` on `PATH` can link `RevWeave.app/Contents/MacOS/revweave` themselves.
 
 If you want a separately trusted CLI-only macOS artifact, publish it in a notary-supported container such as a ZIP, DMG, or signed flat PKG and update downstream packaging accordingly.

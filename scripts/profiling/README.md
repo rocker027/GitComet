@@ -1,10 +1,8 @@
-# Profiling GitComet
+# Profiling RevWeave
 
-Profiling and benchmark drivers live here. CI execution, cache management and
-test-runtime reports stay in `scripts/ci/`. Application profiling runs locally;
-it does not add application builds to the CI test matrix. Capture-policy and
-fixture tests run in the existing CI configuration lane; deterministic history
-and picker work limits also run in the performance workflow.
+Profiling and benchmark drivers live here. Check execution, cache management and
+test-runtime reports stay in `scripts/ci/`, which you run locally because RevWeave
+has no hosted CI. Application profiling runs locally as well.
 
 The [performance finalization record](../../docs/performance-finalization.md)
 tracks the verified branch, framework fork ports, fresh Linux evidence and the
@@ -30,11 +28,11 @@ directories, normally under `target/` or `tmp/`.
 ## Capture a slow startup from the normal app
 
 Use a build that includes startup tracing; no benchmark features are required.
-Close existing GitComet windows first so the new process does not forward its
+Close existing RevWeave windows first so the new process does not forward its
 request to an already running instance. On Windows, run:
 
 ```powershell
-./scripts/profiling/capture-startup.ps1 -Binary ./target/release/gitcomet.exe
+./scripts/profiling/capture-startup.ps1 -Binary ./target/release/revweave.exe
 ```
 
 This uses the usual saved settings, leaves the app open, and prints the capture
@@ -48,7 +46,7 @@ the app. The helper restores all environment variables it sets.
 To measure the empty repository picker independently of saved settings, use:
 
 ```powershell
-./scripts/profiling/capture-startup.ps1 -Binary ./target/release/gitcomet.exe -EmptyProfile -AutoExit
+./scripts/profiling/capture-startup.ps1 -Binary ./target/release/revweave.exe -EmptyProfile -AutoExit
 ```
 
 `-EmptyProfile` uses a fresh `GITCOMET_PROFILE_ROOT` below the capture directory,
@@ -66,7 +64,7 @@ The marker time is recorded before the optional shutdown delay.
 The same opt-in trace works on Linux and macOS without the PowerShell helper:
 
 ```sh
-GITCOMET_STARTUP_TRACE="$PWD/startup.jsonl" ./target/release/gitcomet
+GITCOMET_STARTUP_TRACE="$PWD/startup.jsonl" ./target/release/revweave
 ```
 
 Choose a file in an existing local directory. The app appends JSON lines tagged
@@ -92,13 +90,13 @@ comparisons and traced runs to locate the delay.
 ## Application investigation and regression workflow
 
 `performance.py` joins corpus preparation, native UI scenarios, Git/LFS/annex
-transfers, diagnostics and paired reports. It is a local/manual workflow; no CI
-job or network account is needed. Start with:
+transfers, diagnostics and paired reports. It is a local/manual workflow; no
+network account is needed. Start with:
 
 ```sh
 python3 scripts/profiling/performance.py doctor
 cargo build --release -p gitcomet-git-gix --features benchmarks --example interaction-probe
-cargo build --release -p gitcomet --bin gitcomet
+cargo build --release -p gitcomet --bin revweave
 python3 scripts/profiling/performance.py prepare --suite deep --real --repo-root /home/sampo/git/git_test_repos
 python3 scripts/profiling/performance.py run --suite smoke --backend target/release/examples/interaction-probe --output target/performance/smoke --session initial
 ```
@@ -196,8 +194,8 @@ python3 scripts/profiling/performance.py compare target/performance/first target
 
 # Dev A/A: build once, then measure the same binary in two sessions.
 cargo build -p gitcomet
-python3 scripts/profiling/performance.py run --binary target/debug/gitcomet --baseline target/debug/gitcomet --cargo-profile dev --scenario 'ui/*/repo-picker' --pairs 3 --session dev-aa-first --output target/performance/dev-aa-first
-python3 scripts/profiling/performance.py run --binary target/debug/gitcomet --baseline target/debug/gitcomet --cargo-profile dev --scenario 'ui/*/repo-picker' --pairs 2 --reverse --session dev-aa-second --output target/performance/dev-aa-second
+python3 scripts/profiling/performance.py run --binary target/debug/revweave --baseline target/debug/revweave --cargo-profile dev --scenario 'ui/*/repo-picker' --pairs 3 --session dev-aa-first --output target/performance/dev-aa-first
+python3 scripts/profiling/performance.py run --binary target/debug/revweave --baseline target/debug/revweave --cargo-profile dev --scenario 'ui/*/repo-picker' --pairs 2 --reverse --session dev-aa-second --output target/performance/dev-aa-second
 python3 scripts/profiling/performance.py compare target/performance/dev-aa-first target/performance/dev-aa-second --output target/performance/dev-aa.json
 ```
 
@@ -286,8 +284,8 @@ reported as skipped tests.
 
 ```sh
 scripts/profiling/build_release_debug.sh
-python3 scripts/profiling/performance.py profile --kind cpu --binary target/release-with-debug/gitcomet --repository /home/sampo/git/git_test_repos/history-20000 --scenario history-hover --output target/performance/cpu --execute
-python3 scripts/profiling/performance.py profile --kind waits --binary target/release-with-debug/gitcomet --repository /home/sampo/git/git_test_repos/history-20000 --scenario history-scroll --output target/performance/waits --execute
+python3 scripts/profiling/performance.py profile --kind cpu --binary target/release-with-debug/revweave --repository /home/sampo/git/git_test_repos/history-20000 --scenario history-hover --output target/performance/cpu --execute
+python3 scripts/profiling/performance.py profile --kind waits --binary target/release-with-debug/revweave --repository /home/sampo/git/git_test_repos/history-20000 --scenario history-scroll --output target/performance/waits --execute
 python3 scripts/profiling/performance.py run --suite deep --scenario 'cancel/clone' --wrap 'strace -ff -tt -T -o {output}/syscalls' --output target/performance/clone-waits --session clone-waits
 cargo build --release -p gitcomet --features perf-alloc
 python3 scripts/profiling/performance.py run --scenario 'ui/*/history-hover*' --output target/performance/allocations --session allocations
@@ -354,14 +352,14 @@ compatibility code is confined to the measurement driver.
 
 ```sh
 python scripts/profiling/application-probe.py --profiles release --samples 35 --output target/profiling/application
-python scripts/profiling/local-performance.py build --baseline ../GitComet-baseline --output target/profiling/backend
+python scripts/profiling/local-performance.py build --baseline ../RevWeave-baseline --output target/profiling/backend
 python scripts/profiling/local-performance.py measure --build target/profiling/backend --session first --pairs 3 --samples 35 --warmups 5
 python scripts/profiling/local-performance.py measure --build target/profiling/backend --session second --pairs 3 --samples 35 --reverse
 python scripts/profiling/local-performance.py report target/profiling/backend
 ```
 
 Create the baseline at your chosen revision, for example with
-`git worktree add --detach ../GitComet-baseline dev`. The paired build installs
+`git worktree add --detach ../RevWeave-baseline dev`. The paired build installs
 the same standalone driver under each checkout's `target/` and freezes its
 executable in the output directory. Both revisions must support the driver's
 APIs and build profile. Use `build --offline` only after caching dependencies.
@@ -378,7 +376,7 @@ For local LFS/annex metadata and commit-click costs, the same probe supports
 `large-file-support`, `large-file-status` (status plus row classification), and
 `commit-details`. The third argument is a commit for `commit-details` and an
 unused placeholder for the other two. These report result counts as witnesses
-and commands issued through GitComet's command runner. Filter processes started
+and commands issued through RevWeave's command runner. Filter processes started
 inside gix are not included; use a process trace when checking all subprocess
 work. For example:
 
@@ -411,8 +409,8 @@ publication, UI application, draw) under one operation id.
 ```sh
 python3 scripts/profiling/live-ui.py fixture target/profiling/live-fixture
 python3 scripts/profiling/live-ui.py clone ~/git/bun target/profiling/bun --revision <sha>
-python3 scripts/profiling/live-ui.py run --binary target/release/gitcomet --repository target/profiling/live-fixture --scenario history-select --output target/profiling/live/select-1
-python3 scripts/profiling/live-ui.py measure --baseline base/gitcomet --candidate cand/gitcomet --repository target/profiling/live-fixture --scenarios history-select diff-search --session first --pairs 3 --output target/profiling/live/s1
+python3 scripts/profiling/live-ui.py run --binary target/release/revweave --repository target/profiling/live-fixture --scenario history-select --output target/profiling/live/select-1
+python3 scripts/profiling/live-ui.py measure --baseline base/revweave --candidate cand/revweave --repository target/profiling/live-fixture --scenarios history-select diff-search --session first --pairs 3 --output target/profiling/live/s1
 python3 scripts/profiling/live-ui.py measure ... --session second --reverse --output target/profiling/live/s2
 python3 scripts/profiling/live-ui.py report target/profiling/live/s1 target/profiling/live/s2
 ```
@@ -464,17 +462,17 @@ selections unchanged. It does not change worktree files.
 
 ```sh
 # Repeat with --repositories /path/to/git alone to compare copies of the same repo.
-python3 scripts/profiling/multi-window.py --binary target/release/gitcomet \
+python3 scripts/profiling/multi-window.py --binary target/release/revweave \
   --repositories /path/to/git /path/to/bun /path/to/history-100000 /path/to/history-20000 \
   --windows 1 2 4 --samples 3 --output target/profiling/windows-different
 
 # Exercise the foreground window while a large repository opens in another.
-python3 scripts/profiling/multi-window.py --binary target/release/gitcomet \
+python3 scripts/profiling/multi-window.py --binary target/release/revweave \
   --repositories /path/to/git /path/to/history-2000000 --mode background \
   --samples 3 --output target/profiling/windows-background
 
 # Compare 10 and 30 cycles in separate output directories after three warmups.
-python3 scripts/profiling/multi-window.py --binary target/release/gitcomet \
+python3 scripts/profiling/multi-window.py --binary target/release/revweave \
   --repositories /path/to/git /path/to/history-20000 --mode lifecycle \
   --cycles 10 --samples 3 --output target/profiling/windows-close-10
 ```
@@ -509,7 +507,7 @@ Add `--gpu` to `live-ui.py run`, `live-ui.py measure`, or `multi-window.py` to
 capture GPU telemetry alongside the existing CPU/input traces:
 
 ```sh
-python3 scripts/profiling/multi-window.py --binary target/release/gitcomet \
+python3 scripts/profiling/multi-window.py --binary target/release/revweave \
   --repositories /path/to/git /path/to/bun /path/to/history-100000 /path/to/history-20000 \
   --windows 1 2 4 --samples 2 --inputs 600 --idle-seconds 10 --gpu \
   --output target/profiling/windows-gpu
@@ -519,11 +517,11 @@ On **Linux with NVIDIA's `nvidia-smi`**, the collector runs two
 persistent external monitors at one-second intervals, without adding work to the
 application's main thread. It records:
 
-- **GitComet process:** SM activity, memory-engine activity, framebuffer memory,
-  and encoder/decoder activity when the driver provides them. All GitComet
+- **RevWeave process:** SM activity, memory-engine activity, framebuffer memory,
+  and encoder/decoder activity when the driver provides them. All RevWeave
   windows in the process are included. This is not attribution to each window.
 - **Isolated Mutter compositor:** the same counters, under its own PID. Desktop
-  captures do not attribute the shared desktop compositor to GitComet.
+  captures do not attribute the shared desktop compositor to RevWeave.
 - **Whole device:** GPU/memory activity, used/total VRAM, board power and
   temperature, graphics/memory clocks, and performance state. These include
   other applications; board power is not app power. Clock changes can explain
@@ -547,12 +545,12 @@ driver samples, and do not fill unreported intervals with zero.
 
 On macOS, `--gpu` uses IOKit and IOReport instead, without root:
 - each process's Metal GPU time (`accumulatedGPUTime` of its AGX clients), for
-  GitComet and for WindowServer;
+  RevWeave and for WindowServer;
 - whole-device utilization;
 - whole-GPU energy and performance-state residency.
 
 `perf_macos.py` has the details. Launch the executable inside an app bundle
-(`RevWeave.app/Contents/MacOS/gitcomet`). A bare binary relaunches itself from
+(`RevWeave.app/Contents/MacOS/revweave`). A bare binary relaunches itself from
 a bundle and exits.
 
 These measurements describe coarse GPU utilization and memory, not GPU duration
@@ -567,7 +565,7 @@ window sizes. `multi-window.py` and `live-ui.py run` accept
 `--window-size WIDTH HEIGHT`; the headless monitor grows to fit. For example:
 
 ```sh
-python3 scripts/profiling/multi-window.py --binary target/release/gitcomet \
+python3 scripts/profiling/multi-window.py --binary target/release/revweave \
   --repositories /path/to/git --windows 1 --samples 2 --inputs 600 \
   --idle-seconds 10 --gpu --window-size 2560 1440 \
   --output target/profiling/gpu-large
@@ -608,7 +606,7 @@ Results and the reference builds are in the
 GPUI repaints only what changed on both Windows backends and on Linux WGPU,
 copies the retained frame to supported DX12 swapchains, and crops path targets;
 DX12 always presents in immediate mode. Nothing turns these off at run time and
-`gitcomet.exe` sets no renderer environment variables, so a comparison needs two
+`revweave.exe` sets no renderer environment variables, so a comparison needs two
 builds (see the reference builds in `docs/gpu-performance-inventory.md`).
 
 The renderer preference is unchanged: **Automatic** tries DirectX 12 and falls
@@ -629,7 +627,7 @@ powermetrics on macOS.
 
 `live-ui.py --gpu` now collects Windows PDH GPU Engine and GPU Process/Adapter
 Memory counters on a background thread at one-second intervals. It keeps the
-GitComet PID, same-session DWM PID and whole adapter separate. Per-process busiest
+RevWeave PID, same-session DWM PID and whole adapter separate. Per-process busiest
 engine occupancy is not GPU power, shader throughput, or execution milliseconds.
 Shared memory is never summed across processes. Invalid/unsupported counters stay
 missing. Phase occupancy summaries exclude the first unprimed rate sample and
@@ -643,7 +641,7 @@ Reports expose app, DWM and whole-device occupancy separately.
 Each is the busiest observed adapter's duration-weighted engine occupancy, never
 a sum across processes or GPUs. App occupancy remains the acceptance counter;
 DWM/device rankings are descriptive desktop context and cannot attribute work
-to GitComet. Missing or invalid active-adapter counters remain unavailable.
+to RevWeave. Missing or invalid active-adapter counters remain unavailable.
 Windows GPU clocks, thermals, HAGS and power policy may need separate recording;
 unavailable metadata never establishes identical operating conditions.
 
@@ -660,7 +658,7 @@ active base power plan/effective power overlay, driver, nominal display refresh
 and collector DPI. Missing API fields remain explicit. Nominal refresh
 does not establish VRR state, and GPU clocks/thermals/HAGS still need a separate
 collector. Preserve the separate GPUI checkout's source identity as well as the
-GitComet source identity when using a local dependency checkout.
+RevWeave source identity when using a local dependency checkout.
 
 ## GUI and process captures
 
@@ -678,7 +676,7 @@ GITCOMET_UI_PROBE=1 \
 GITCOMET_UI_PROBE_LOG=/tmp/gitcomet-ui.log \
 GITCOMET_UI_PROBE_JSONL=/tmp/gitcomet-ui.jsonl \
 GITCOMET_REPO_LOAD_TRACE=/tmp/gitcomet-repository.jsonl \
-target/release/gitcomet /path/to/repository
+target/release/revweave /path/to/repository
 ```
 
 The probe writes environment updates directly to stderr and its optional logs;
@@ -752,7 +750,7 @@ binaries count every allocation, so use their timings to understand
 mechanisms and confirm user-facing claims with `live-ui.py` on a release
 build. Symbolized CPU profiles come from the `release-with-debug` profile,
 for example `perf record -F 199 --call-graph dwarf,16384 -o cpu.data --
-target/release-with-debug/gitcomet` with the scenario environment; those runs
+target/release-with-debug/revweave` with the scenario environment; those runs
 are diagnostics, not latency evidence.
 
 See [indexed-history measurements](../../docs/indexed-history-performance.md)

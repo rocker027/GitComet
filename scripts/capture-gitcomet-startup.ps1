@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-Launch the release-with-debug GitComet build with startup-stage tracing.
+Launch the release-with-debug RevWeave build with startup-stage tracing.
 .DESCRIPTION
 For CPU profiling, first run record-gitcomet-startup.ps1 in another window and
 wait for "Profiling all processes...". This script records startup stages using
 the existing capture helper. It returns after the first interactive milestone,
-which can precede repository readiness, and leaves GitComet running by default.
+which can precede repository readiness, and leaves RevWeave running by default.
 .EXAMPLE
 .\scripts\capture-gitcomet-startup.ps1
 .EXAMPLE
@@ -23,13 +23,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($Binary)) {
-    $Binary = Join-Path $repoRoot 'target/release-with-debug/gitcomet.exe'
+    $Binary = Join-Path $repoRoot 'target/release-with-debug/revweave.exe'
 }
 if (-not (Test-Path -LiteralPath $Binary -PathType Leaf)) {
-    throw "Missing $Binary. Finish building GitComet with --profile release-with-debug."
+    throw "Missing $Binary. Finish building RevWeave with --profile release-with-debug."
 }
-if (-not $EmptyProfile -and (Get-Process -Name gitcomet -ErrorAction SilentlyContinue)) {
-    throw 'Close existing GitComet windows before capturing a new startup.'
+if (-not $EmptyProfile -and (Get-Process -Name revweave -ErrorAction SilentlyContinue)) {
+    throw 'Close existing RevWeave windows before capturing a new startup.'
 }
 $captureArguments = @{
     Binary = $Binary

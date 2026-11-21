@@ -9,7 +9,7 @@ usage() {
 Usage: scripts/package-macos.sh [--version VERSION] [--arch arm64|x86_64] [--release|--debug] [--no-build] [--skip-dmg] [--out-dir PATH] [--symbols-out PATH] [--codesign-identity NAME] [--codesign-keychain PATH]
 
 Builds a macOS app bundle and release artifacts:
-  - gitcomet-v<VERSION>-macos-<ARCH>.dmg
+  - revweave-v<VERSION>-macos-<ARCH>.dmg
 
 Defaults:
   --version from [workspace.package] in Cargo.toml, --release, build if needed,
@@ -131,7 +131,7 @@ if [[ "$arch" != "$host_arch" ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-bin_src="${repo_root}/target/${mode}/gitcomet"
+bin_src="${repo_root}/target/${mode}/revweave"
 
 if [[ $build -eq 1 && ! -x "$bin_src" ]]; then
   cargo_config_output=""
@@ -147,7 +147,7 @@ if [[ $build -eq 1 && ! -x "$bin_src" ]]; then
     if [[ "$mode" == "release" ]]; then
       set -- "$@" --release
     fi
-    set -- "$@" -p gitcomet --locked --features ui-gpui,gix --bin gitcomet
+    set -- "$@" -p gitcomet --locked --features ui-gpui,gix --bin revweave
     cargo build "$@"
   )
 fi
@@ -238,7 +238,7 @@ clean_target_intermediates_for_ci() {
 }
 
 stage_root="${out_abs}/stage"
-release_root="gitcomet-v${version}-macos-${arch}"
+release_root="revweave-v${version}-macos-${arch}"
 release_dir="${stage_root}/${release_root}"
 app_bundle="${release_dir}/RevWeave.app"
 contents_dir="${app_bundle}/Contents"
@@ -248,7 +248,7 @@ resources_dir="${contents_dir}/Resources"
 rm -rf "$release_dir"
 mkdir -p "$macos_dir" "$resources_dir"
 
-install -m755 "$bin_src" "${macos_dir}/gitcomet"
+install -m755 "$bin_src" "${macos_dir}/revweave"
 
 # Inside the bundle: the DMG ships only RevWeave.app, and it is now the only
 # macOS artifact, so this is what keeps the licence with the program.
@@ -279,7 +279,7 @@ cat > "${contents_dir}/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key>
   <string>RevWeave</string>
   <key>CFBundleExecutable</key>
-  <string>gitcomet</string>
+  <string>revweave</string>
   <key>CFBundleIdentifier</key>
   <string>io.github.rocker027.revweave</string>
   <key>CFBundleIconFile</key>
@@ -314,7 +314,7 @@ if [[ -n "$codesign_identity" ]]; then
   fi
 
   echo "Signing macOS artifacts with identity: $codesign_identity"
-  codesign "${sign_args[@]}" "${macos_dir}/gitcomet"
+  codesign "${sign_args[@]}" "${macos_dir}/revweave"
   codesign "${sign_args[@]}" "$app_bundle"
 
   codesign --verify --strict --verbose=2 "$app_bundle"

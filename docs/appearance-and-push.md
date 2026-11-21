@@ -90,7 +90,7 @@ toolbar's Push menu always run hooks.
 
 Git LFS uploads objects from its own `pre-push` hook. When a push after commit
 skips a `pre-push` hook Git would run, and the commits it publishes contain LFS
-pointers, GitComet first runs `git lfs push <remote> <commit>` itself, as that
+pointers, RevWeave first runs `git lfs push <remote> <commit>` itself, as that
 hook would. It checks the commits rather than the LFS settings or
 `.gitattributes`, so a global `git lfs install` alone never triggers it, and it
 reads pointers as git-lfs does, CRLF line endings included. Commits the

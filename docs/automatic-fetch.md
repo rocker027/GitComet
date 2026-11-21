@@ -1,6 +1,6 @@
 # Automatic Fetch
 
-Automatic fetch keeps remote-tracking information current for repositories open in GitComet.
+Automatic fetch keeps remote-tracking information current for repositories open in RevWeave.
 
 ## Settings
 
@@ -15,7 +15,7 @@ The setting applies to every open workspace window. Enabling it queues a fetch
 for repositories already open. Opening or restoring a repository also queues a
 fetch, including tabs that have not been selected, unless Git fetched it within
 the interval, including from the command line. Such a tab shows its last known
-incoming count instead. Repositories restored when GitComet starts wait a minute
+incoming count instead. Repositories restored when RevWeave starts wait a minute
 before their first automatic fetch. Fetches continue while the app is minimized.
 Saved workspaces whose windows are closed do not participate.
 
@@ -52,7 +52,7 @@ focusing the app does not request an extra fetch.
 
 Closing the last tab for a folder cancels its automatic fetch. Turning the
 setting off cancels queued and running automatic fetches. Fetching stops when
-GitComet exits.
+RevWeave exits.
 
 ## Status and authentication
 
@@ -101,4 +101,4 @@ When several remotes fail in one fetch, each is judged by its own error:
 
 A successful manual **Fetch all** clears these waits for its repository and its
 servers. So does turning automatic fetching off and on again, or restarting
-GitComet.
+RevWeave.

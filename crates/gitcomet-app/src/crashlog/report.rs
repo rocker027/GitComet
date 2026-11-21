@@ -50,6 +50,20 @@ pub(super) struct ParsedCrashLog {
     pub(super) backtrace: String,
 }
 
+/// The title of a crash log section header written by this product, or by
+/// GitComet before the rename (`=== GitComet runtime error ===`).
+fn crash_section_title(line: &str) -> Option<&str> {
+    crash_section_title_for(line, identity::current().display_name())
+}
+
+pub(super) fn crash_section_title_for<'a>(line: &'a str, product: &str) -> Option<&'a str> {
+    let inner = line.strip_prefix("=== ")?.strip_suffix(" ===")?;
+    inner
+        .strip_prefix(product)
+        .or_else(|| inner.strip_prefix("GitComet"))?
+        .strip_prefix(' ')
+}
+
 pub(super) fn parse_crash_log(crash_log: &str) -> ParsedCrashLog {
     let mut parsed = ParsedCrashLog::default();
     let mut in_backtrace = false;
@@ -57,12 +71,14 @@ pub(super) fn parse_crash_log(crash_log: &str) -> ParsedCrashLog {
     for raw_line in crash_log.lines() {
         let line = raw_line.trim_end_matches('\r');
 
-        if line == "=== GitComet operation context ===" || line == "=== GitComet environment ===" {
+        if let Some(title) = crash_section_title(line)
+            && matches!(title, "operation context" | "environment")
+        {
             in_backtrace = false;
             continue;
         }
 
-        if line.starts_with("=== GitComet ") && line.ends_with(" ===") {
+        if crash_section_title(line).is_some() {
             reset_parsed_failure(&mut parsed);
             parsed.failure_kind = if line.contains("panic") {
                 Some("panic".to_string())

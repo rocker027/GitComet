@@ -1,4 +1,4 @@
-# GitComet Shortcuts
+# RevWeave Shortcuts
 
 This file documents the keyboard shortcuts currently wired in the GPUI application.
 
@@ -19,7 +19,7 @@ Notes:
 
 ## App window shortcuts
 
-These shortcuts apply in the normal GitComet window.
+These shortcuts apply in the normal RevWeave window.
 
 | Action | macOS | Windows / Linux | Notes |
 | --- | --- | --- | --- |
@@ -108,7 +108,7 @@ File operation shortcuts are scoped to the Files explorer. See
 [File management and Documents](file-management.md#explorer) for selection,
 clipboard, rename, and filesystem Undo/Redo bindings.
 
-These shortcuts apply when a GitComet text input has focus.
+These shortcuts apply when a RevWeave text input has focus.
 
 ### Editing
 
@@ -144,8 +144,8 @@ These shortcuts apply when a GitComet text input has focus.
 | Delete word to the left / right | `Option-Backspace`, `Option-Delete` | `Ctrl-Backspace`, `Ctrl-Delete` | |
 
 Compatibility note:
-- GitComet also keeps the opposite modifier family wired in text inputs where practical, so `Alt`-based word movement and `Ctrl`-based editing aliases remain available as portability fallbacks.
-- Diff-navigation fallbacks stay active from focused GitComet text inputs for `F1`, `F4`, `F2`, `F3`, `F7`, and `Shift-F7` when the input does not handle those keys itself.
+- RevWeave also keeps the opposite modifier family wired in text inputs where practical, so `Alt`-based word movement and `Ctrl`-based editing aliases remain available as portability fallbacks.
+- Diff-navigation fallbacks stay active from focused RevWeave text inputs for `F1`, `F4`, `F2`, `F3`, `F7`, and `Shift-F7` when the input does not handle those keys itself.
 - An extension view with a search of its own answers `Cmd/Ctrl-F`, `F2` and `F3` while it holds focus, through `gitcomet_ui_kit::search_keys::on_search_keys`; the keys it does not take reach the host's searches.
 
 ### Commit composer
@@ -250,7 +250,7 @@ These shortcuts apply when the embedded terminal has focus.
 | Scroll terminal history | `Shift-PageUp`, `Shift-PageDown`, `Shift-Home`, `Shift-End` | `Shift-PageUp`, `Shift-PageDown`, `Shift-Home`, `Shift-End` | Only in the normal screen buffer. |
 
 Shell-input note:
-- Plain `Ctrl-C`, `Ctrl-V`, and `Ctrl-A` keep going to the shell instead of GitComet clipboard handling.
+- Plain `Ctrl-C`, `Ctrl-V`, and `Ctrl-A` keep going to the shell instead of RevWeave clipboard handling.
 
 Mouse and menu behavior:
 - Left-drag selects visible terminal text.

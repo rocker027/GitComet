@@ -1,18 +1,18 @@
-# GitComet 操作對標 GitKraken：差距分析與改善計畫
+# RevWeave 操作對標 GitKraken：差距分析與改善計畫
 
 ## 結論
 
-GitComet 的 Git 功能面已大致齊全，部分功能比 GitKraken 更強，例如內建三方衝突解決器（GitKraken 要付費）與 git-annex。手感差距集中在三個 GitKraken 招牌互動：
+RevWeave 的 Git 功能面已大致齊全，部分功能比 GitKraken 更強，例如內建三方衝突解決器（GitKraken 要付費）與 git-annex。手感差距集中在三個 GitKraken 招牌互動：
 
-1. **分支標籤拖放**：把分支拖到另一個分支上，就能合併、rebase 或推送。GitComet 的歷史圖與側欄都沒有拖放。
-2. **Git 操作的 Undo/Redo**：可以復原 checkout、commit、reset、刪除分支等操作。GitComet 只有檔案管理與文字輸入的復原，命令面板裡 `undo`／`redo` 還是 TODO。
-3. **「就地」的入口**：GitKraken 雙擊歷史圖上的分支就簽出、工具列有 Pop、左欄有 Tags 區段，GitComet 都沒有。這些操作的後端多半已存在，只缺入口。
+1. **分支標籤拖放**：把分支拖到另一個分支上，就能合併、rebase 或推送。RevWeave 的歷史圖與側欄都沒有拖放。
+2. **Git 操作的 Undo/Redo**：可以復原 checkout、commit、reset、刪除分支等操作。RevWeave 只有檔案管理與文字輸入的復原，命令面板裡 `undo`／`redo` 還是 TODO。
+3. **「就地」的入口**：GitKraken 雙擊歷史圖上的分支就簽出、工具列有 Pop、左欄有 Tags 區段，RevWeave 都沒有。這些操作的後端多半已存在，只缺入口。
 
-P1 有一部分是 GitComet 自己的便利性提案，GitKraken 文件沒有對應入口，例如 commit 右鍵「改訊息」與「Undo commit」。這類項目在表中標為「便利性提案」，不算對標缺口。
+P1 有一部分是 RevWeave 自己的便利性提案，GitKraken 文件沒有對應入口，例如 commit 右鍵「改訊息」與「Undo commit」。這類項目在表中標為「便利性提案」，不算對標缺口。
 
 建議先做「沿用既有後端、只補入口」的批次（P1），同時做側欄拖放（G1）。Git 操作 Undo/Redo（G3）是高風險邊界（L3），要先決定範圍再動工。
 
-本文件只有分析與計畫，沒有修改程式碼。實機操作比對為 **NOT RUN**，沒有啟動 GitComet 或 GitKraken。
+本文件只有分析與計畫，沒有修改程式碼。實機操作比對為 **NOT RUN**，沒有啟動 RevWeave 或 GitKraken。
 
 ## 目標與方案
 
@@ -21,13 +21,13 @@ P1 有一部分是 GitComet 自己的便利性提案，GitKraken 文件沒有對
   - 拖放選單的完整清單
   - commit 列右鍵選單的完整清單
   - 遠端分支雙擊的行為
-- **GitComet 現況來源**：原始碼盤點。路徑以 `crates/gitcomet-ui-gpui/src/view/` 為根，下文簡寫為 `view/`。每個「沒有」的判定都經過 grep 確認。主要缺項已由 owner 再抽查一次。
+- **RevWeave 現況來源**：原始碼盤點。路徑以 `crates/gitcomet-ui-gpui/src/view/` 為根，下文簡寫為 `view/`。每個「沒有」的判定都經過 grep 確認。主要缺項已由 owner 再抽查一次。
 
 ## 範圍與版本
 
 | 項目 | 值 |
 | --- | --- |
-| repo | `GitComet`（本機） |
+| repo | `RevWeave`（本機） |
 | 分支 | `refactor/gitkraken`，與 `dev` 無差異 |
 | base commit | `c90b586f` |
 | 工作區 | 乾淨，未提交差異只有本文件 |
@@ -35,7 +35,7 @@ P1 有一部分是 GitComet 自己的便利性提案，GitKraken 文件沒有對
 
 ## 現況對照
 
-| 領域 | GitKraken | GitComet 現況 | 差距 |
+| 領域 | GitKraken | RevWeave 現況 | 差距 |
 | --- | --- | --- | --- |
 | 分支拖放 | 拖到分支上出現 Merge／Rebase／Interactive Rebase／Start a PR。拖到遠端分支上就推送。也有拖放觸發 reset | 沒有。只有 repo 分頁、互動式 rebase 列、檔案總管有拖放。歷史圖與側欄的分支列沒有（grep `on_drag\|on_drop\|drag_over\|DragMove` 無命中） | **大** |
 | Undo/Redo | 工具列按鈕加上 `Cmd-Z`／`Cmd-Shift-Z`。可復原 checkout、commit、discard、刪除分支、移除 remote、reset、rebase 類操作 | 沒有 Git 層級的復原。`view/command_palette.rs:866-867` 是 TODO。只能從 reflog 手動 reset | **大** |
@@ -51,7 +51,7 @@ P1 有一部分是 GitComet 自己的便利性提案，GitKraken 文件沒有對
 | 多選 commit | squash、cherry-pick N、rebase N onto、建立 patch、N 個 commit 合併 diff | 有 Shift／Cmd 點選、squash、cherry-pick N。patch 只能單筆。比較要分兩步（Mark for comparison） | 小 |
 | 互動式 rebase | Pick／Reword／Squash／Drop，P／S／R／D 單鍵，有 Reset | 有 Pick／Reword／Squash／Fixup／Drop、拖放排序、▲▼。`interactive_rebase.rs` 內沒有按鍵處理，單鍵是否缺少**待確認** | 小 |
 | 命令面板 | `Cmd-P`，含 Checkout、Search Commits、Undo／Redo、Tag、Stash 等 | `Cmd-P`，89 個指令。10 個 TODO：search-commits、checkout-remote-branch、delete-remote-branch、merge、delete-tag、remove-remote、edit-remote-url、remove-submodule、remove-worktree、discard-all（`view/command_palette.rs:877-886`） | 小 |
-| 衝突處理 | 內建 Merge Tool（付費），Take current／incoming | 內建三方解決器加上 Ours／Theirs，也可用外部工具 | GitComet 較強 |
+| 衝突處理 | 內建 Merge Tool（付費），Take current／incoming | 內建三方解決器加上 Ours／Theirs，也可用外部工具 | RevWeave 較強 |
 | PR／Issue／CI | 左欄有 PR、Issues，拖放可 Start a PR | 沒有 | 列為範圍外，見下方 |
 
 ### 已對齊或較強，改動時不可退化
@@ -60,7 +60,7 @@ P1 有一部分是 GitComet 自己的便利性提案，GitKraken 文件沒有對
 - Pull 下拉模式：fast-forward if possible、fast-forward only、rebase、Fetch all，與 GitKraken 對等。
 - Hunk／行暫存（右鍵、`S`／`U` 鍵、gutter）、Split／Inline 檢視、Blame、檔案歷史。
 - Amend、Commit & Push、annotated tag、reflog 檢視、worktree、submodule、LFS、annex、workspace、repo 分頁拖放排序、作者篩選、歷史模式（first-parent 等）。
-- Focus 等同 GitKraken 的 Solo。Pin 的語意不同：GitComet 釘在側欄頂部，GitKraken 的 Pin to Left 是把分支線固定在圖的左側。
+- Focus 等同 GitKraken 的 Solo。Pin 的語意不同：RevWeave 釘在側欄頂部，GitKraken 的 Pin to Left 是把分支線固定在圖的左側。
 
 ## 改善項目
 
@@ -109,11 +109,11 @@ P1 有一部分是 GitComet 自己的便利性提案，GitKraken 文件沒有對
 
 ## 快捷鍵衝突（待決）
 
-GitComet 已有使用者與 `docs/shortcuts.md` 契約。建議不要直接改預設，下表每列由使用者決定「重新指定、加別名，或維持」。
+RevWeave 已有使用者與 `docs/shortcuts.md` 契約。建議不要直接改預設，下表每列由使用者決定「重新指定、加別名，或維持」。
 
 「未綁定」的判斷依據有二：`docs/shortcuts.md` 全文沒有列出該鍵，`app/bindings.rs` 與 `view/` 的字面鍵位也沒有。下表只核對 macOS。Windows／Linux 的對應鍵還沒逐一核對，例如內嵌終端機會把 `Ctrl-L` 交給 shell。
 
-| 按鍵（macOS） | GitKraken | GitComet 現況 | 建議 |
+| 按鍵（macOS） | GitKraken | RevWeave 現況 | 建議 |
 | --- | --- | --- | --- |
 | `Cmd-B` | 建立分支 | 切換側欄 | 放進鍵位預設組，不改預設 |
 | `Cmd-J` | 切換左欄 | 切換終端機 | 同上 |
@@ -133,7 +133,7 @@ GitComet 已有使用者與 `docs/shortcuts.md` 契約。建議不要直接改�
 
 1. **第一批做哪些？** 建議 G1 加上 P1 中的對標非破壞性項目：Q4、Q6、Q9a、Q10。便利性提案（Q1、Q2、Q8）是否納入，由使用者決定。G3 先做設計審查再動工。
 2. **快捷鍵策略**：直接改預設、新增「GitKraken 鍵位」預設組，或只加不衝突的別名。建議預設組加別名。
-3. **拖放的目標不是目前分支時怎麼辦？** GitComet 後端的合併與 rebase 都以目前分支為準。可選：只允許和目前分支有關的組合，其餘反灰說明；自動先 checkout；或用暫時 worktree。建議第一種。這部分 GitKraken 的實際行為 UNVERIFIED。
+3. **拖放的目標不是目前分支時怎麼辦？** RevWeave 後端的合併與 rebase 都以目前分支為準。可選：只允許和目前分支有關的組合，其餘反灰說明；自動先 checkout；或用暫時 worktree。建議第一種。這部分 GitKraken 的實際行為 UNVERIFIED。
 4. **Undo 的範圍與壽命**：只在本次執行期間有效，還是跨重啟保存？是否涵蓋 push？GitKraken 文件沒有列出 push，可視為不支援。建議只在 session 內有效，ref 類操作先行，push 不納入。
 5. **commit 訊息**：維持單欄，還是改成 Summary 與 Description 兩欄。
 

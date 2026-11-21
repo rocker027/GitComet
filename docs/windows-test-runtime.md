@@ -1,6 +1,6 @@
 # Test-runtime measurements
 
-The CI runner builds and inventories tests before executing nextest and the GPUI
+RevWeave has no hosted CI. The `scripts/ci/*` tools are run locally, and "CI" below names their profiles and schedule. The CI runner builds and inventories tests before executing nextest and the GPUI
 libtest harness. Keep compilation separate from timing and use the same profile,
 test inventory, concurrency and dependency versions for both revisions.
 
@@ -35,7 +35,7 @@ diagnostic or a captured output string cannot corrupt result accounting.
 six longest watcher tests first. All CI timeouts, leak checks, retries, ignored
 tests and prerequisite requirements remain inherited from `ci`. Normal CI keeps
 the serial schedule and `ci` profile until repeated platform measurements pass
-the promotion gates below. Manual workflow inputs expose all four profiles and
+the promotion gates below. `scripts/ci/runtime.py` exposes all four profiles and
 the batching and thread controls.
 
 ```sh
@@ -90,7 +90,7 @@ environment variables.
 LFS parameterized tests share an immutable remote within each test but clone
 separate worktrees and object stores per scenario. Tool-help fixtures use Git's
 `MERGE_TOOLS_DIR` override to exclude unrelated built-in tools while exercising
-the real configured GitComet entries. Correctness tests use generous parse
+the real configured RevWeave entries. Correctness tests use generous parse
 budgets; the separate deadline tests retain production timeout coverage.
 The optional watcher stress run also repeats real worktree tests to check
 cancellation cleanup under load. Windows `taskkill` helpers disable handle
@@ -112,8 +112,8 @@ after a counter reset. Panic tests retain their catch assertions without
 changing the process-wide panic hook. Deterministic pane tests pump to completed
 state; native watcher quiet windows and actual deadline coverage remain intact.
 
-The existing workflows expose these controls for manual experiments. Normal CI
-still runs one workspace sample. The Windows CMD smoke build targets only
+`scripts/ci/runtime.py` exposes these controls for manual experiments. The
+default run is one workspace sample. The Windows CMD smoke build targets only
 `standalone_tool_mode_integration`, which contains the smoke cases; rebuilding
 unrelated application tests there would add work without coverage.
 
@@ -124,7 +124,7 @@ overlap when tests run concurrently and cannot be read as elapsed workflow time.
 
 Application and native UI profiling tools are documented in
 [scripts/profiling](../scripts/profiling/README.md). They are independent of CI
-test acceptance and are not run by the test workflows.
+test acceptance and are not part of the test acceptance run.
 
 Local validation on 2026-10-08 used native Linux, Rust 1.98.1, and the existing
 `test` Cargo profile. Serial and balanced execution each passed all 8,841 active

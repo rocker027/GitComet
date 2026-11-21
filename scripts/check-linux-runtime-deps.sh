@@ -18,9 +18,8 @@ than proving that a package dependency should be removed.
 
 Linked libraries reach the .deb and .rpm through dpkg-shlibdeps and rpm
 AutoReq. Runtime-loaded ones are invisible to both, so they are declared by
-hand in packaging/linux/debian-control.in and packaging/linux/gitcomet.spec.
-AUR dependencies are declared explicitly in packaging/linux/PKGBUILD.in.
-Update all three templates together with the lists below.
+hand in packaging/linux/debian-control.in and packaging/linux/revweave.spec.
+Update both templates together with the lists below.
 EOF
 }
 
@@ -77,7 +76,7 @@ mapfile -t needed < <(readelf -d "$binary" | sed -n 's/.*(NEEDED).*\[\(.*\)\]$/\
 echo "Linked: ${needed[*]}"
 for lib in "${needed[@]}"; do
   if ! in_list "$lib" "${linked_allowed[@]}"; then
-    echo "error: new linked library ${lib}. dpkg-shlibdeps and rpm AutoReq declare it, but add it to packaging/linux/PKGBUILD.in, linked_allowed here and the README runtime-library note." >&2
+    echo "error: new linked library ${lib}. dpkg-shlibdeps and rpm AutoReq declare it, but add it to linked_allowed here and the README runtime-library note." >&2
     failed=1
   fi
 done
@@ -94,7 +93,7 @@ mapfile -t runtime_strings < <(
 echo "Runtime library strings: ${runtime_strings[*]}"
 for lib in "${runtime_strings[@]}"; do
   if ! in_list "$lib" "${dlopen_expected[@]}"; then
-    echo "error: new runtime library string ${lib}. Verify its runtime use, declare it in packaging/linux/debian-control.in, packaging/linux/gitcomet.spec and packaging/linux/PKGBUILD.in, then add it to dlopen_expected." >&2
+    echo "error: new runtime library string ${lib}. Verify its runtime use, declare it in packaging/linux/debian-control.in and packaging/linux/revweave.spec, then add it to dlopen_expected." >&2
     failed=1
   fi
 done

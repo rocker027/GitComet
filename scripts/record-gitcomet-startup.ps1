@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-Record a detailed Windows samply profile of GitComet startup.
+Record a detailed Windows samply profile of RevWeave startup.
 .DESCRIPTION
-Finish building release-with-debug and close GitComet first. When samply prints
+Finish building release-with-debug and close RevWeave first. When samply prints
 "Profiling all processes...", run capture-gitcomet-startup.ps1 in a second
 PowerShell window. After repository status and history are usable, press Ctrl+C
 once in the recording window. The app stays open.
@@ -24,8 +24,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $binaryDirectory = Join-Path $repoRoot 'target/release-with-debug'
-$binary = Join-Path $binaryDirectory 'gitcomet.exe'
-$symbols = Join-Path $binaryDirectory 'gitcomet.pdb'
+$binary = Join-Path $binaryDirectory 'revweave.exe'
+$symbols = Join-Path $binaryDirectory 'revweave.pdb'
 $samply = Get-Command samply -CommandType Application -ErrorAction SilentlyContinue |
     Select-Object -First 1
 if ($null -eq $samply) {
@@ -38,11 +38,11 @@ if ($null -eq $xperf -and -not (Test-Path -LiteralPath $xperfDefault -PathType L
 }
 foreach ($file in @($binary, $symbols)) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
-        throw "Missing $file. Finish: cargo build -p gitcomet --bin gitcomet --profile release-with-debug"
+        throw "Missing $file. Finish: cargo build -p gitcomet --bin revweave --profile release-with-debug"
     }
 }
-if (Get-Process -Name gitcomet -ErrorAction SilentlyContinue) {
-    throw 'Close existing GitComet windows before recording a new startup.'
+if (Get-Process -Name revweave -ErrorAction SilentlyContinue) {
+    throw 'Close existing RevWeave windows before recording a new startup.'
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot ("target/samply-startup-" + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
@@ -62,7 +62,7 @@ Write-Host 'Allow the administrator prompt. Wait for "Profiling all processes...
 Write-Host 'Then run this in a second PowerShell window:'
 $launchScript = Join-Path $PSScriptRoot 'capture-gitcomet-startup.ps1'
 $stageDirectory = Join-Path $captureRoot 'stages'
-Write-Host ("& '{0}' -Binary '{1}' -OutputDirectory '{2}'" -f $launchScript.Replace("'", "''"), (Join-Path $symbolDirectory 'gitcomet.exe').Replace("'", "''"), $stageDirectory.Replace("'", "''"))
+Write-Host ("& '{0}' -Binary '{1}' -OutputDirectory '{2}'" -f $launchScript.Replace("'", "''"), (Join-Path $symbolDirectory 'revweave.exe').Replace("'", "''"), $stageDirectory.Replace("'", "''"))
 Write-Host 'Wait for repository status and history to be usable, then press Ctrl+C ONCE here.'
 Write-Host "Avoid builds during capture. This $Rate Hz diagnostic capture changes measured startup timing."
 
@@ -75,7 +75,7 @@ $recordArguments = @(
     '--unknown-event-markers',
     '--keep-etl',
     '--save-only',
-    '--profile-name', 'GitComet startup',
+    '--profile-name', 'RevWeave startup',
     '-o', $profilePath
 )
 & $samply.Source @recordArguments

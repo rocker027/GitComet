@@ -443,7 +443,7 @@ pub(super) fn schedule(
                     let _write = gate.write().unwrap_or_else(|e| e.into_inner());
                     let _lease = origin_repo.acquire_operation_lease()?;
 
-                    // F9: re-check live GitComet terminal occupancy right inside the mutation gate.
+                    // F9: re-check live built-in terminal occupancy right inside the mutation gate.
                     let canonical_path = canonicalize_or_original(path.clone());
                     let terminal_in_use = live_terminals
                         .read()
@@ -452,7 +452,7 @@ pub(super) fn schedule(
                         .any(|p| canonicalize_or_original(p.clone()) == canonical_path);
                     if terminal_in_use {
                         return Err(Error::new(ErrorKind::Backend(
-                            "GitComet terminal is still running in this worktree.".to_string(),
+                            "A built-in terminal is still running in this worktree.".to_string(),
                         )));
                     }
 
@@ -1339,7 +1339,7 @@ fn resolve_target_host(
     }
 
     // 3. D1: target branch is not checked out anywhere -> plan a dedicated temporary worktree
-    // under GitComet's per-user state dir (never inside `.git`), created only after Confirm.
+    // under the product's per-user state dir (never inside `.git`), created only after Confirm.
     let temp_path = temporary_worktree_path(run_id, target_branch);
     (
         TargetHost::Temporary {
@@ -1351,8 +1351,9 @@ fn resolve_target_host(
 }
 
 fn temporary_worktree_path(run_id: WorktreeFinishRunId, branch: &str) -> PathBuf {
-    let base = gitcomet_base::platform::dirs::state_dir()
-        .unwrap_or_else(|| std::env::temp_dir().join("gitcomet"));
+    let base = gitcomet_base::platform::dirs::state_dir().unwrap_or_else(|| {
+        std::env::temp_dir().join(gitcomet_core::identity::current().directory_name())
+    });
     let sanitized: String = branch
         .chars()
         .map(|c| {

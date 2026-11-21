@@ -103,8 +103,8 @@ default-members = [
 version = "1.1.0"
 edition = "2024"
 license = "AGPL-3.0-only"
-authors = ["AutoExplore Oy <info@autoexplore.ai>"]
-repository = "https://github.com/Auto-Explore/GitComet"
+authors = ["AutoExplore Oy <info@autoexplore.ai>", "rocker027"]
+repository = "https://github.com/rocker027/RevWeave"
 rust-version = "1.99.1"
 
 [patch.crates-io]
@@ -525,13 +525,12 @@ codegen-units = 1
 # in the `.pdb` rather than the image and dbghelp needs that file either way —
 # Windows crash logs are resolved from the symbol store instead.
 #
-# The Linux release job overrides this at build time (`strip = "none"`) so the
-# DWARF survives long enough to be extracted, then strips back down to this
-# level before packaging. macOS needs no override because
+# To keep Linux symbols, build with `CARGO_PROFILE_RELEASE_STRIP=none`, extract
+# the DWARF, then strip the binary before packaging. macOS needs no override because
 # `split-debuginfo = "packed"` puts the DWARF in a `.dSYM` bundle, and Windows
 # needs none because MSVC keeps debug info in the `.pdb` regardless — what
 # produces that file is `CARGO_PROFILE_RELEASE_DEBUG`, not `strip`.
-# See `.github/workflows/build-release-artifacts.yml`.
+# See `docs/crash-symbolication.md`.
 strip = "debuginfo"
 
 [profile.release-with-debug]

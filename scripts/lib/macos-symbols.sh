@@ -16,13 +16,13 @@ extract_macos_symbols() {
   # Read the .dSYM rather than the binary: with split-debuginfo = "packed" the
   # DWARF lives in the bundle, and the binary alone would yield symbols with no
   # line numbers.
-  symbol_input="${repo_root}/target/${mode}/gitcomet.dSYM"
+  symbol_input="${repo_root}/target/${mode}/revweave.dSYM"
   if [[ ! -d "$symbol_input" ]]; then
     # Only reached when Cargo left no uplifted symlink; the bundle then sits
     # beside the hashed artifact. `|| true` so a missing deps/ does not abort
     # before the diagnostic below.
     candidates="$(find "${repo_root}/target/${mode}/deps" -maxdepth 1 -type d \
-      -name 'gitcomet-*.dSYM' 2>/dev/null | sort || true)"
+      -name 'revweave-*.dSYM' 2>/dev/null | sort || true)"
 
     if [[ -n "$candidates" ]]; then
       candidate_count="$(printf '%s\n' "$candidates" | wc -l | tr -d '[:space:]')"
@@ -32,7 +32,7 @@ extract_macos_symbols() {
         # UUID, and every later check would still pass.
         echo "Multiple dSYM bundles under ${repo_root}/target/${mode}/deps:" >&2
         printf '%s\n' "$candidates" >&2
-        echo "Cannot tell which belongs to the gitcomet binary; clean the target directory." >&2
+        echo "Cannot tell which belongs to the revweave binary; clean the target directory." >&2
         exit 1
       fi
       symbol_input="$candidates"
@@ -41,14 +41,14 @@ extract_macos_symbols() {
 
   if [[ ! -d "$symbol_input" ]]; then
     echo "No dSYM bundle found under ${repo_root}/target/${mode}." >&2
-    if [[ -d "${repo_root}/target/${mode}/gitcomet.dSYM.staged" ]]; then
+    if [[ -d "${repo_root}/target/${mode}/revweave.dSYM.staged" ]]; then
       echo "A previous run was interrupted mid-move; the bundle is at" >&2
-      echo "  ${repo_root}/target/${mode}/gitcomet.dSYM.staged" >&2
-      echo "Rename it to gitcomet.dSYM to recover it, or delete it and rebuild." >&2
+      echo "  ${repo_root}/target/${mode}/revweave.dSYM.staged" >&2
+      echo "Rename it to revweave.dSYM to recover it, or delete it and rebuild." >&2
       exit 1
     fi
-    echo "Build with split-debuginfo = \"packed\" (the release workflow sets" >&2
-    echo "CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO) to produce one." >&2
+    echo "Build with split-debuginfo = \"packed\" (set" >&2
+    echo "CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=packed) to produce one." >&2
     exit 1
   fi
 
@@ -77,7 +77,7 @@ extract_macos_symbols() {
   # clean_target_intermediates_for_ci deletes. Every check above follows the
   # link, so the -L test is what stops it being left dangling -- which `tar`
   # archives as a broken link, exiting 0 on a few hundred bytes.
-  canonical_dsym="${repo_root}/target/${mode}/gitcomet.dSYM"
+  canonical_dsym="${repo_root}/target/${mode}/revweave.dSYM"
   if [[ "$symbol_input" != "$canonical_dsym" || -L "$canonical_dsym" ]]; then
     real_dsym="$(cd "$symbol_input" && pwd -P)"
     target_prefix="$(cd "${repo_root}/target/${mode}" && pwd -P)/"
@@ -115,12 +115,12 @@ extract_macos_symbols() {
   # release; the warning keeps the gap visible instead.
   #
   # --module-name must match the executable a crash report names, which is
-  # Contents/MacOS/gitcomet in the bundle.
+  # Contents/MacOS/revweave in the bundle.
   "${repo_root}/scripts/emit-breakpad-symbols.sh" \
     --input "$symbol_input" \
     --store "$symbols_abs" \
     --arch "$arch" \
-    --module-name gitcomet \
+    --module-name revweave \
     --allow-missing-cfi
 
   SYMBOL_INPUT="$symbol_input"

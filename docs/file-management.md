@@ -73,7 +73,7 @@ persisted in the session file. Removing history never deletes files. Missing
 entries remain removable and report an error when opened.
 
 Opening a file discovers its owning repository, including nested repositories
-and linked worktrees. GitComet prefers an existing tab in the current window,
+and linked worktrees. RevWeave prefers an existing tab in the current window,
 then another window, and opens the repository when needed. The working-tree
 explorer reveals the file. Files outside repositories open in the document
 viewer. With a repository open, the viewer takes the main content area and the
@@ -167,8 +167,8 @@ Conflicting later changes are preserved and the operation remains retryable.
 
 Native Trash uses an exact restore receipt. A Trash error never triggers
 permanent deletion. Permanent deletion requires confirmation and has no Undo.
-Operations completed by another application are outside GitComet's journal.
-For incoming local Linux file URLs, GitComet performs the move and acknowledges
+Operations completed by another application are outside RevWeave's journal.
+For incoming local Linux file URLs, RevWeave performs the move and acknowledges
 the native transfer after completion; native completion alone does not remove
 the source file.
 

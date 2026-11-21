@@ -9,8 +9,8 @@ Submits an already-packaged macOS DMG to Apple's notary service and staples the
 resulting ticket to the staged .app bundle and DMG.
 
 Expected inputs:
-  - <out-dir>/gitcomet-v<VERSION>-macos-<ARCH>.dmg
-  - <out-dir>/stage/gitcomet-v<VERSION>-macos-<ARCH>/RevWeave.app
+  - <out-dir>/revweave-v<VERSION>-macos-<ARCH>.dmg
+  - <out-dir>/stage/revweave-v<VERSION>-macos-<ARCH>/RevWeave.app
 
 Authentication:
   --keychain-profile PROFILE
@@ -136,11 +136,11 @@ else
   out_abs="$(cd "${repo_root}/${out_dir}" && pwd)"
 fi
 
-release_root="gitcomet-v${version}-macos-${arch}"
+release_root="revweave-v${version}-macos-${arch}"
 stage_root="${out_abs}/stage"
 release_dir="${stage_root}/${release_root}"
 app_path="${release_dir}/RevWeave.app"
-app_binary="${app_path}/Contents/MacOS/gitcomet"
+app_binary="${app_path}/Contents/MacOS/revweave"
 dmg_path="${out_abs}/${release_root}.dmg"
 
 for tool in xcrun codesign spctl; do
@@ -186,7 +186,7 @@ else
 fi
 
 echo "Submitting $dmg_path for notarization"
-submit_log="$(mktemp -t gitcomet-notary-submit.XXXXXX)"
+submit_log="$(mktemp -t revweave-notary-submit.XXXXXX)"
 set +e
 xcrun notarytool submit "$dmg_path" "${notary_args[@]}" --wait --timeout "$wait_timeout" 2>&1 | tee "$submit_log"
 submit_status=${PIPESTATUS[0]}

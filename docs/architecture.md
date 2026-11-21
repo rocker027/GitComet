@@ -1,6 +1,6 @@
 # Architecture
 
-GitComet separates Git contracts, application state, and GPUI presentation, with explicit owners for repository work and editable documents.
+RevWeave separates Git contracts, application state, and GPUI presentation, with explicit owners for repository work and editable documents.
 
 ## Crate boundaries
 

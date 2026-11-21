@@ -150,14 +150,13 @@ presentation latency.
 On the dedicated runner, archive five accepted **release** Criterion roots and
 run `scripts/profiling/calibrate-indexed-history.py --runs ROOT1 ROOT2 ROOT3 ROOT4 ROOT5
 --runner NAME --output baseline.json`. Set `GITCOMET_INDEXED_HISTORY_BASELINE`
-(or the workflow's `PERF_HISTORY_BASELINE`) to that file. The existing budget
+to that file. The existing budget
 report then limits each calibrated case to 125% of its five-run median. Invalid
 or non-release calibration is rejected. No dedicated-runner calibration is
 invented from these workstation test-profile results. The warm scrolling draw
 p95 target remains 16.7 ms, to be validated on that runner.
 
-The workflow runs deterministic regressions in a separate job that fails on a
-regression. Shared runner timings remain alerts; dedicated runner timing reports
+Deterministic regressions run separately and fail on a regression. Shared runner timings remain alerts; dedicated runner timing reports
 use strict mode.
 Work counters require tests/the benchmark feature and an opt-in capture. They
 compile away in shipping builds and never read environment variables per row.

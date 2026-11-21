@@ -1,10 +1,10 @@
 # Git LFS
 
-GitComet works with repositories that store large files in [Git LFS](https://git-lfs.com). GitComet does not move LFS content itself. Checkout, staging, commit and push go through Git, and Git runs the `git-lfs` filters and hooks. Downloads, uploads, locks and tracking run `git lfs` directly. A push after commit that [skips Git hooks](appearance-and-push.md#skip-git-hooks) runs `git lfs push` before pushing when it skips a `pre-push` hook and publishes LFS pointers, because skipping hooks also skips the upload LFS does in that hook.
+RevWeave works with repositories that store large files in [Git LFS](https://git-lfs.com). RevWeave does not move LFS content itself. Checkout, staging, commit and push go through Git, and Git runs the `git-lfs` filters and hooks. Downloads, uploads, locks and tracking run `git lfs` directly. A push after commit that [skips Git hooks](appearance-and-push.md#skip-git-hooks) runs `git lfs push` before pushing when it skips a `pre-push` hook and publishes LFS pointers, because skipping hooks also skips the upload LFS does in that hook.
 
-**Settings → Executables** shows whether Git can run `git lfs`. When it is **Not found**, GitComet still shows which files are LFS files, but every LFS command is listed disabled with "(install git-lfs)".
+**Settings → Executables** shows whether Git can run `git lfs`. When it is **Not found**, RevWeave still shows which files are LFS files, but every LFS command is listed disabled with "(install git-lfs)".
 
-## What GitComet shows
+## What RevWeave shows
 
 | Where | What |
 | --- | --- |
@@ -30,21 +30,21 @@ LFS text diffs show changes in the actual content in both Full and Collapsed vie
 | Push all LFS objects, Refresh LFS locks, Enable Git LFS in this repository | **Push** menu |
 | All of the above, plus Prune and Check | Command palette, under **Git LFS** |
 
-GitComet never polls the LFS server for locks. It loads them when the repository has `lockable` patterns, after lock and unlock, and when you choose **Refresh LFS locks**. It never asks for credentials to do so; a credential helper still applies. Many LFS servers have no lock API; the lock entries then stay unavailable without an error banner.
+RevWeave never polls the LFS server for locks. It loads them when the repository has `lockable` patterns, after lock and unlock, and when you choose **Refresh LFS locks**. It never asks for credentials to do so; a credential helper still applies. Many LFS servers have no lock API; the lock entries then stay unavailable without an error banner.
 
 **Download content** in the diff card fetches both displayed revisions without changing your working files. The changed-file row action downloads and checks out that file. These explicit downloads override configured LFS fetch exclusions for the selected path without changing your configuration.
 
-**Track this file in Git LFS** treats the filename literally, including spaces and brackets. When an already tracked file is converted, GitComet stages `.gitattributes` along with its new pointer.
+**Track this file in Git LFS** treats the filename literally, including spaces and brackets. When an already tracked file is converted, RevWeave stages `.gitattributes` along with its new pointer.
 
 ## Long transfers
 
-Git commands time out after five minutes without output (`GITCOMET_GIT_COMMAND_TIMEOUT_SECS` changes this). git-lfs prints no progress when it is not attached to a terminal, so GitComet reads its progress file instead. A transfer that keeps reporting progress is never cut off, however long it takes.
+Git commands time out after five minutes without output (`GITCOMET_GIT_COMMAND_TIMEOUT_SECS` changes this). git-lfs prints no progress when it is not attached to a terminal, so RevWeave reads its progress file instead. A transfer that keeps reporting progress is never cut off, however long it takes.
 
 ## Troubleshooting
 
-When an LFS step fails, GitComet recognises the common causes and adds a hint to the error:
+When an LFS step fails, RevWeave recognises the common causes and adds a hint to the error:
 
-- **Git LFS is not installed where Git can find it.** Install git-lfs and run `git lfs install`. On macOS, GitComet opened from Finder or the Dock finds a git-lfs installed by Homebrew, MacPorts or the git-lfs installer, but not one in a directory that only your shell profile adds to `PATH`. Run `gitcomet` from a terminal to give it your shell's `PATH`, or link git-lfs into `/usr/local/bin`.
+- **Git LFS is not installed where Git can find it.** Install git-lfs and run `git lfs install`. On macOS, RevWeave opened from Finder or the Dock finds a git-lfs installed by Homebrew, MacPorts or the git-lfs installer, but not one in a directory that only your shell profile adds to `PATH`. Run `revweave` from a terminal to give it your shell's `PATH`, or link git-lfs into `/usr/local/bin`.
 - **An LFS object could not be downloaded.** The remote does not have it, or you cannot authenticate to its LFS server. Run `git lfs fetch --all` in a terminal to see the server's answer.
 - **Another user holds an LFS lock.** Ask them to unlock the file, or use **Force unlock** if the server allows it.
 - **LFS objects could not be uploaded.** Run `git lfs push --all <remote>`, or check the LFS server's credentials.

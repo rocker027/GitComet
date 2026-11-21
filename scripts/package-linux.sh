@@ -17,8 +17,7 @@ Usage:
 
 `stage` lays out the shared payload: the binary, desktop entry, hicolor icons,
 licence files and README. The .deb, .rpm and AppImage include the full payload.
-The tarball keeps its historical layout with only the binary, README,
-LICENSE-AGPL-3.0 and NOTICE. Each packaging command writes one file in --out.
+The tarball holds only the binary, README, LICENSE-AGPL-3.0 and NOTICE. Each packaging command writes one file in --out.
 
 --source is the release source checkout that holds assets/, README.md,
 LICENSE-AGPL-3.0 and NOTICE. VERSION is the release version (1.2.3 or
@@ -44,7 +43,7 @@ WORK=""
 trap '[[ -z "$WORK" ]] || rm -rf "$WORK"' EXIT
 
 make_workdir() {
-  WORK="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitcomet-package.XXXXXX")"
+  WORK="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/revweave-package.XXXXXX")"
 }
 
 validate_version() {
@@ -65,7 +64,7 @@ asset_version() {
 }
 
 require_payload() {
-  [[ -x "$1/usr/bin/gitcomet" ]] || fail "Not a staged payload (missing usr/bin/gitcomet): $1"
+  [[ -x "$1/usr/bin/revweave" ]] || fail "Not a staged payload (missing usr/bin/revweave): $1"
 }
 
 cmd_stage() {
@@ -77,30 +76,30 @@ cmd_stage() {
   fi
   require_tool desktop-file-validate
 
-  install -Dm755 "$binary" "$out/usr/bin/gitcomet"
+  install -Dm755 "$binary" "$out/usr/bin/revweave"
   install -Dm644 "$source/assets/linux/revweave.desktop" "$out/usr/share/applications/revweave.desktop"
   desktop-file-validate "$out/usr/share/applications/revweave.desktop"
   for size in "${ICON_SIZES[@]}"; do
     install -Dm644 "$source/assets/linux/hicolor/${size}x${size}/apps/revweave.png" \
       "$out/usr/share/icons/hicolor/${size}x${size}/apps/revweave.png"
   done
-  install -Dm644 "$source/LICENSE-AGPL-3.0" "$out/usr/share/licenses/gitcomet/LICENSE-AGPL-3.0"
-  install -Dm644 "$source/NOTICE" "$out/usr/share/licenses/gitcomet/NOTICE"
-  install -Dm644 "$source/README.md" "$out/usr/share/doc/gitcomet/README.md"
+  install -Dm644 "$source/LICENSE-AGPL-3.0" "$out/usr/share/licenses/revweave/LICENSE-AGPL-3.0"
+  install -Dm644 "$source/NOTICE" "$out/usr/share/licenses/revweave/NOTICE"
+  install -Dm644 "$source/README.md" "$out/usr/share/doc/revweave/README.md"
   echo "Staged payload in $out"
 }
 
 cmd_tarball() {
   local payload="$1" out="$2" version="$3" arch="$4"
-  local root="gitcomet-v${version}-linux-${arch}" work
+  local root="revweave-v${version}-linux-${arch}" work
   make_workdir
   work="$WORK"
 
-  # The historical layout, which third-party packages (e.g. AUR gitcomet-bin) unpack.
-  install -Dm755 "$payload/usr/bin/gitcomet" "$work/$root/gitcomet"
-  install -m644 "$payload/usr/share/doc/gitcomet/README.md" "$work/$root/README.md"
-  install -m644 "$payload/usr/share/licenses/gitcomet/LICENSE-AGPL-3.0" "$work/$root/LICENSE-AGPL-3.0"
-  install -m644 "$payload/usr/share/licenses/gitcomet/NOTICE" "$work/$root/NOTICE"
+  # The plain tarball layout, which downstream packages unpack.
+  install -Dm755 "$payload/usr/bin/revweave" "$work/$root/revweave"
+  install -m644 "$payload/usr/share/doc/revweave/README.md" "$work/$root/README.md"
+  install -m644 "$payload/usr/share/licenses/revweave/LICENSE-AGPL-3.0" "$work/$root/LICENSE-AGPL-3.0"
+  install -m644 "$payload/usr/share/licenses/revweave/NOTICE" "$work/$root/NOTICE"
   tar -C "$work" -czf "$out/${root}.tar.gz" "$root"
   echo "Wrote $out/${root}.tar.gz"
 }
@@ -109,27 +108,27 @@ cmd_deb() {
   local payload="$1" out="$2" version="$3" revision="$4" arch="$5"
   local deb_version work pkg_root pkg_file
   deb_version="$(package_version "$version")-${revision}"
-  pkg_file="$out/gitcomet_$(asset_version "$deb_version")_${arch}.deb"
+  pkg_file="$out/revweave_$(asset_version "$deb_version")_${arch}.deb"
   require_tool dpkg-shlibdeps
   require_tool dpkg-gencontrol
   require_tool dpkg-deb
   make_workdir
   work="$WORK"
 
-  pkg_root="$work/debian/gitcomet"
+  pkg_root="$work/debian/revweave"
   mkdir -p "$pkg_root/DEBIAN"
   cp -a "$payload/." "$pkg_root/"
   # Debian keeps licence text in /usr/share/doc/<package>/copyright.
   {
-    cat "$pkg_root/usr/share/licenses/gitcomet/NOTICE"
+    cat "$pkg_root/usr/share/licenses/revweave/NOTICE"
     echo
-    cat "$pkg_root/usr/share/licenses/gitcomet/LICENSE-AGPL-3.0"
-  } > "$pkg_root/usr/share/doc/gitcomet/copyright"
+    cat "$pkg_root/usr/share/licenses/revweave/LICENSE-AGPL-3.0"
+  } > "$pkg_root/usr/share/doc/revweave/copyright"
   rm -rf "$pkg_root/usr/share/licenses"
 
   sed "s/@DEB_ARCH@/${arch}/" "$TEMPLATE_DIR/debian-control.in" > "$work/debian/control"
   {
-    echo "gitcomet (${deb_version}) unstable; urgency=medium"
+    echo "revweave (${deb_version}) unstable; urgency=medium"
     echo
     echo "  * Release ${version}."
     echo
@@ -138,8 +137,8 @@ cmd_deb() {
 
   (
     cd "$work"
-    dpkg-shlibdeps -Tdebian/substvars debian/gitcomet/usr/bin/gitcomet
-    dpkg-gencontrol -pgitcomet -Pdebian/gitcomet -Tdebian/substvars
+    dpkg-shlibdeps -Tdebian/substvars debian/revweave/usr/bin/revweave
+    dpkg-gencontrol -prevweave -Pdebian/revweave -Tdebian/substvars
   )
   dpkg-deb --root-owner-group --build "$pkg_root" "$pkg_file"
 
@@ -149,7 +148,7 @@ cmd_deb() {
   got_arch="$(dpkg-deb -f "$pkg_file" Architecture)"
   depends="$(dpkg-deb -f "$pkg_file" Depends)"
   echo "Depends: $depends"
-  [[ "$name" == gitcomet ]] || fail "Unexpected .deb package name: $name"
+  [[ "$name" == revweave ]] || fail "Unexpected .deb package name: $name"
   [[ "$got_version" == "$deb_version" ]] || fail "Unexpected .deb version: $got_version, expected $deb_version"
   [[ "$got_arch" == "$arch" ]] || fail "Unexpected .deb architecture: $got_arch, expected $arch"
   grep -Eq '(^|, )git($|, )' <<<"$depends" || fail "Missing git dependency in .deb: $depends"
@@ -162,7 +161,7 @@ cmd_rpm() {
   local payload="$1" out="$2" version="$3" release="$4" arch="$5"
   local rpm_version work built pkg_file
   rpm_version="$(package_version "$version")"
-  pkg_file="$out/gitcomet-$(asset_version "$rpm_version")-${release}.${arch}.rpm"
+  pkg_file="$out/revweave-$(asset_version "$rpm_version")-${release}.${arch}.rpm"
   require_tool rpmbuild
   require_tool rpm
   make_workdir
@@ -174,9 +173,9 @@ cmd_rpm() {
     --define "gc_release $release" \
     --define "gc_payload $(cd "$payload" && pwd)" \
     --target "$arch" \
-    "$TEMPLATE_DIR/gitcomet.spec"
+    "$TEMPLATE_DIR/revweave.spec"
 
-  built="$work/RPMS/${arch}/gitcomet-${rpm_version}-${release}.${arch}.rpm"
+  built="$work/RPMS/${arch}/revweave-${rpm_version}-${release}.${arch}.rpm"
   [[ -f "$built" ]] || fail "rpmbuild did not produce $built"
   cp "$built" "$pkg_file"
 
@@ -185,8 +184,8 @@ cmd_rpm() {
   requires="$(rpm -qp --requires "$pkg_file")"
   echo "Requires:"
   echo "$requires"
-  [[ "$fields" == "gitcomet|${rpm_version}|${release}|${arch}" ]] ||
-    fail "Unexpected RPM metadata: $fields, expected gitcomet|${rpm_version}|${release}|${arch}"
+  [[ "$fields" == "revweave|${rpm_version}|${release}|${arch}" ]] ||
+    fail "Unexpected RPM metadata: $fields, expected revweave|${rpm_version}|${release}|${arch}"
   grep -qx 'git' <<<"$requires" || fail "Missing git dependency in RPM."
   grep -q '^libc\.so\.6' <<<"$requires" || fail "Missing shared library dependencies in RPM (AutoReq did not run)."
   grep -Fqx '(vulkan-loader or libglvnd-egl)' <<<"$requires" || fail "Missing renderer dependency in RPM."
@@ -209,13 +208,13 @@ cmd_appimage() {
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "${HERE}/usr/bin/gitcomet" "$@"
+exec "${HERE}/usr/bin/revweave" "$@"
 APPRUN
   chmod +x "$appdir/AppRun"
 
   ARCH="$appimage_arch" "$tool" --appimage-extract-and-run \
-    "$appdir" "$out/gitcomet-v${version}-linux-${arch}.AppImage"
-  echo "Wrote $out/gitcomet-v${version}-linux-${arch}.AppImage"
+    "$appdir" "$out/revweave-v${version}-linux-${arch}.AppImage"
+  echo "Wrote $out/revweave-v${version}-linux-${arch}.AppImage"
 }
 
 [[ $# -ge 1 ]] || { usage >&2; exit 2; }

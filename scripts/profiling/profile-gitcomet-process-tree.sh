@@ -6,14 +6,14 @@ usage() {
   cat <<'EOF'
 Usage: scripts/profiling/profile-gitcomet-process-tree.sh [options] REPO_PATH [-- extra_gitcomet_args...]
 
-Launch GitComet under a process-tree profiling wrapper that captures:
+Launch RevWeave under a process-tree profiling wrapper that captures:
   - callgrind outputs for the parent process and traced child processes
   - strace -ff per-process syscall logs
   - Git Trace2 event/perf logs for git subprocesses
 
 Options:
-  --binary PATH             GitComet binary to launch.
-                            Default: ./target/release-with-debug/gitcomet
+  --binary PATH             RevWeave binary to launch.
+                            Default: ./target/release-with-debug/revweave
   --out-dir PATH            Output directory for captured artifacts.
                             Default: tmp/gitcomet-profiles/<utc-timestamp>
   --timeout SEC             Terminate the profiled process group after SEC seconds.
@@ -303,7 +303,7 @@ finalize_metadata() {
 
 write_summary() {
   {
-    printf 'GitComet process-tree profile bundle\n'
+    printf 'RevWeave process-tree profile bundle\n'
     printf 'Repository: %s\n' "$repo_path"
     printf 'Binary: %s\n' "$binary_path"
     printf 'Output: %s\n' "$out_dir"
@@ -404,7 +404,7 @@ if [[ -n "$timeout_secs" ]] && [[ ! "$timeout_secs" =~ ^[0-9]+$ ]]; then
 fi
 
 repo_path="$(resolve_existing_dir "$repo_arg")"
-binary_path="${repo_root}/target/release-with-debug/gitcomet"
+binary_path="${repo_root}/target/release-with-debug/revweave"
 if [[ -n "$binary_raw" ]]; then
   binary_path="$(resolve_path "$binary_raw")"
 fi
@@ -475,7 +475,7 @@ if ((manual_instrumentation == 1)); then
 fi
 
 if [[ ! -x "$binary_path" ]]; then
-  die "GitComet binary not found or not executable at ${binary_path}. Build it with: bash scripts/profiling/build_release_debug.sh"
+  die "RevWeave binary not found or not executable at ${binary_path}. Build it with: bash scripts/profiling/build_release_debug.sh"
 fi
 verify_strace_usable
 

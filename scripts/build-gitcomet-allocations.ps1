@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Build GitComet with startup allocation counters and debug symbols.
+Build RevWeave with startup allocation counters and debug symbols.
 .DESCRIPTION
 Uses the release-with-debug profile and perf-alloc feature. The separate
 target/alloc-profile directory preserves the ordinary CPU-profiling build.
@@ -24,13 +24,13 @@ $targetPath = [System.IO.Path]::GetFullPath($TargetDirectory)
 
 Push-Location -LiteralPath $repoRoot
 try {
-    & cargo build -p gitcomet --bin gitcomet --profile release-with-debug `
+    & cargo build -p gitcomet --bin revweave --profile release-with-debug `
         --features perf-alloc --target-dir $targetPath
     if ($LASTEXITCODE -ne 0) {
-        throw "GitComet allocation build failed with exit code $LASTEXITCODE."
+        throw "RevWeave allocation build failed with exit code $LASTEXITCODE."
     }
 } finally {
     Pop-Location
 }
 
-Write-Output ("Allocation build: " + (Join-Path $targetPath 'release-with-debug/gitcomet.exe'))
+Write-Output ("Allocation build: " + (Join-Path $targetPath 'release-with-debug/revweave.exe'))

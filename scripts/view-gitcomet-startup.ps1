@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Open a recorded GitComet startup profile in samply.
+Open a recorded RevWeave startup profile in samply.
 .DESCRIPTION
 With no arguments, opens the newest completed target/samply-startup-* capture.
 Uses its saved executable/PDB when available and Microsoft's symbol server for
@@ -52,7 +52,7 @@ if ([string]::IsNullOrWhiteSpace($SymbolDirectory)) {
 }
 $symbolPath = (Resolve-Path -LiteralPath $SymbolDirectory).Path
 Write-Host "Opening $profilePath"
-Write-Host 'Select GitComet and the startup interval, then inspect Call Tree, Flame Graph, and Stack Chart.'
+Write-Host 'Select RevWeave and the startup interval, then inspect Call Tree, Flame Graph, and Stack Chart.'
 & $samply.Source load --verbose --symbol-dir $symbolPath `
     --windows-symbol-server https://msdl.microsoft.com/download/symbols $profilePath
 if ($LASTEXITCODE -ne 0) {
