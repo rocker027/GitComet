@@ -314,6 +314,251 @@ fn branch_menu_opens_the_add_dialog_ready_to_check_the_branch_out(cx: &mut gpui:
 }
 
 #[gpui::test]
+fn remote_branch_menu_creates_a_renamed_worktree_from_the_exact_remote_ref(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gitcomet_core::domain::{Branch, Remote, RemoteBranch, RepositoryMode};
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path().join("main");
+    let destination = sandbox.path().join("review");
+    std::fs::create_dir(&root).unwrap();
+    let git = |path: &Path, args: &[&str]| {
+        String::from_utf8(crate::test_support::git(path, args))
+            .unwrap()
+            .trim()
+            .to_owned()
+    };
+    git(&root, &["init", "-q", "-b", "main"]);
+    git(&root, &["config", "user.name", "Test User"]);
+    git(&root, &["config", "user.email", "test@example.invalid"]);
+    git(&root, &["config", "commit.gpgsign", "false"]);
+    git(&root, &["config", "branch.autoSetupMerge", "always"]);
+    git(&root, &["remote", "add", "origin", root.to_str().unwrap()]);
+    std::fs::write(root.join("tracked.txt"), "original\n").unwrap();
+    git(&root, &["add", "tracked.txt"]);
+    git(&root, &["commit", "-q", "-m", "local tip"]);
+    let local_tip = git(&root, &["rev-parse", "HEAD"]);
+    git(&root, &["branch", "origin/topic"]);
+    git(
+        &root,
+        &["commit", "-q", "--allow-empty", "-m", "remote tip"],
+    );
+    let remote_tip = git(&root, &["rev-parse", "HEAD"]);
+    assert_ne!(local_tip, remote_tip);
+    git(
+        &root,
+        &["update-ref", "refs/remotes/origin/topic", &remote_tip],
+    );
+    git(&root, &["commit", "-q", "--allow-empty", "-m", "main tip"]);
+    std::fs::write(root.join("tracked.txt"), "staged\n").unwrap();
+    git(&root, &["add", "tracked.txt"]);
+    std::fs::write(root.join("tracked.txt"), "unstaged\n").unwrap();
+    let original_head = git(&root, &["rev-parse", "HEAD"]);
+    assert_ne!(original_head, remote_tip);
+    let original_branch = git(&root, &["symbolic-ref", "HEAD"]);
+    let original_status = git(&root, &["--no-optional-locks", "status", "--porcelain=v1"]);
+    assert!(original_status.starts_with("MM "));
+
+    let backend: Arc<dyn GitBackend> = Arc::new(gitcomet_git_gix::GixBackend);
+    let actual = backend.open(&root).unwrap();
+    // Reserve a distinct fixture ID from the store's first open-after ID.
+    let repo_id = RepoId(61);
+    let mut repo = opening_repo_state(repo_id, &actual.spec().workdir);
+    repo.open = Loadable::Ready(());
+    repo.repository_mode = Some(RepositoryMode::WorkingTree);
+    repo.head_branch = Loadable::Ready("main".into());
+    repo.branches = Loadable::Ready(Arc::new(vec![
+        Branch {
+            name: "main".into(),
+            target: CommitId(original_head.clone().into()),
+            upstream: None,
+            divergence: None,
+        },
+        Branch {
+            name: "origin/topic".into(),
+            target: CommitId(local_tip.clone().into()),
+            upstream: None,
+            divergence: None,
+        },
+    ]));
+    repo.remote_branches = Loadable::Ready(Arc::new(vec![RemoteBranch {
+        remote: "origin".into(),
+        name: "topic".into(),
+        target: CommitId(remote_tip.clone().into()),
+    }]));
+    repo.remotes = Loadable::Ready(Arc::new(vec![Remote {
+        name: "origin".into(),
+        url: None,
+        default_branch: None,
+    }]));
+    repo.worktrees = Loadable::Ready(Arc::new(vec![Worktree {
+        path: actual.spec().workdir.clone(),
+        bare: false,
+        detached: false,
+        head: Some(CommitId(original_head.clone().into())),
+        branch: Some("main".into()),
+    }]));
+    let state = app_state_with_repo(repo, repo_id);
+    let (store, events) = AppStore::new_test(backend);
+    store.disable_repo_monitors_for_test();
+    store.replace_snapshot_for_test(state.clone());
+    store.insert_repo_for_test(repo_id, actual);
+    let store_for_view = store.clone();
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        window.activate();
+        GitCometView::new(store_for_view, events, None, window, cx)
+    });
+    cx.update(|window, app| {
+        crate::app::bind_text_input_keys_for_test(app);
+        view.update(app, |this, cx| push_test_state(this, state, cx));
+        let _ = window.draw(app);
+    });
+    open_popover(
+        &view,
+        cx,
+        PopoverKind::BranchMenu {
+            repo_id,
+            target: BranchMenuTarget::remote("origin", "topic"),
+        },
+    );
+    click(cx, "context_menu_open_in_new_worktree");
+    assert_eq!(
+        popover_kind(&view, cx),
+        Some(PopoverKind::worktree(
+            repo_id,
+            WorktreePopoverKind::AddPrompt
+        ))
+    );
+    assert!(host_read(&view, cx, |host, _| host.worktree_add_create_branch));
+    cx.update(|window, app| {
+        let host = view.read(app).popover_host.read(app);
+        let source = host.branch_picker_search_input.as_ref().unwrap();
+        let focus = source.read(app).focus_handle();
+        window.focus(&focus, app);
+    });
+    simulate_key_press(cx, "enter");
+    assert_eq!(
+        host_read(&view, cx, |host, _| {
+            host.worktree_ref_source_upstream_for_tests().cloned()
+        }),
+        Some(gitcomet_core::domain::Upstream {
+            remote: "origin".into(),
+            branch: "topic".into(),
+        }),
+        "accepting the unchanged prefill must keep the selected remote"
+    );
+    assert!(host_read(&view, cx, |host, _| {
+        host.suppress_worktree_submit_after_ref_enter
+    }));
+    // The test window does not advance display frames on its own. Let the
+    // Enter guard expire before sending the separate mouse click on Add.
+    cx.update(|window, app| {
+        window.simulate_next_frame(app);
+    });
+    cx.run_until_parked();
+    assert!(!host_read(&view, cx, |host, _| {
+        host.suppress_worktree_submit_after_ref_enter
+    }));
+    let new_branch = "review-origin-topic";
+    cx.update(|_, app| {
+        view.read(app).popover_host.clone().update(app, |host, cx| {
+            host.worktree_path_input.update(cx, |input, cx| {
+                input.set_text(destination.display().to_string(), cx)
+            });
+            host.worktree_new_branch_input
+                .update(cx, |input, cx| input.set_text(new_branch, cx));
+        });
+    });
+    cx.update(|_, app| {
+        view.read(app).popover_host.clone().update(app, |host, cx| {
+            assert_eq!(
+                host.worktree_add_request(repo_id, cx).unwrap(),
+                (
+                    destination.clone(),
+                    gitcomet_core::services::WorktreeCheckout::NewBranchFromRemote {
+                        name: new_branch.into(),
+                        upstream: gitcomet_core::domain::Upstream {
+                            remote: "origin".into(),
+                            branch: "topic".into(),
+                        },
+                    },
+                )
+            );
+        });
+    });
+    click(cx, "worktree_add_go");
+    assert!(popover_kind(&view, cx).is_none());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let state = store.snapshot();
+        let repo = state.repos.iter().find(|repo| repo.id == repo_id).unwrap();
+        if destination.join(".git").is_file() && repo.worktrees_in_flight == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "worktree creation did not complete: {:?}",
+            state.notifications
+        );
+        cx.run_until_parked();
+        redraw(cx);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(git(&destination, &["rev-parse", "HEAD"]), remote_tip);
+    assert_eq!(
+        git(&destination, &["symbolic-ref", "HEAD"]),
+        format!("refs/heads/{new_branch}")
+    );
+    assert_eq!(
+        git(
+            &destination,
+            &[
+                "for-each-ref",
+                "--format=%(upstream)",
+                &format!("refs/heads/{new_branch}")
+            ]
+        ),
+        "",
+        "a renamed branch must not acquire an implicit upstream"
+    );
+    for suffix in ["remote", "merge"] {
+        let config = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&destination)
+            .args(["config", "--get", &format!("branch.{new_branch}.{suffix}")])
+            .output()
+            .unwrap();
+        assert_eq!(
+            config.status.code(),
+            Some(1),
+            "the renamed branch must have no upstream configuration"
+        );
+    }
+    assert_eq!(
+        git(
+            &destination,
+            &["--no-optional-locks", "status", "--porcelain=v1"]
+        ),
+        ""
+    );
+    assert_eq!(
+        git(&root, &["rev-parse", "refs/heads/origin/topic"]),
+        local_tip
+    );
+    assert_eq!(
+        git(&root, &["rev-parse", "refs/remotes/origin/topic"]),
+        remote_tip
+    );
+    assert_eq!(git(&root, &["rev-parse", "HEAD"]), original_head);
+    assert_eq!(git(&root, &["symbolic-ref", "HEAD"]), original_branch);
+    assert_eq!(
+        git(&root, &["--no-optional-locks", "status", "--porcelain=v1"]),
+        original_status
+    );
+}
+
+#[gpui::test]
 fn a_branch_checked_out_elsewhere_gets_a_new_branch_or_opens_its_worktree(
     cx: &mut gpui::TestAppContext,
 ) {

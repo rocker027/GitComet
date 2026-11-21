@@ -2,6 +2,7 @@
 //! worktree badges.
 
 use super::*;
+use crate::view::rows::branch_drag::{BranchDrag, BranchDragPreview};
 
 impl SidebarPaneView {
     /// One local or remote branch, in the tree or among the pins.
@@ -29,6 +30,10 @@ impl SidebarPaneView {
         } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
+        let lifetime = this
+            .active_repo()
+            .filter(|repo| repo.id == repo_id)
+            .map(RepoState::lifetime);
         let full_name_for_checkout: SharedString = name.clone();
         let surface = if ix < ctx.pin_count {
             SidebarRowSurface::Pins
@@ -44,8 +49,9 @@ impl SidebarPaneView {
         let target_for_menu = target.clone();
         let target_for_drop = target.clone();
         let target_for_can_drop = target.clone();
-        let drag_payload = super::branch_drag::SidebarBranchDrag {
+        let drag_payload = BranchDrag {
             repo_id,
+            lifetime: lifetime.unwrap_or(0),
             target: target.clone(),
         };
         let section_key = match section {
@@ -444,37 +450,43 @@ impl SidebarPaneView {
         // branch-menu counterpart runs (merge and push at once, rebase after
         // its confirmation).
         let drop_highlight = theme.colors.accent.subtle_background;
+        let drop_store = Arc::clone(&this.store);
         let row = row
             .on_drag(drag_payload, move |drag, offset, _window, cx| {
-                cx.new(|_| super::branch_drag::SidebarBranchDragPreview::new(drag, theme, offset))
+                cx.new(|_| BranchDragPreview::new(drag, theme, offset))
             })
             .can_drop(move |dragged, _window, _cx| {
-                dragged
-                    .downcast_ref::<super::branch_drag::SidebarBranchDrag>()
-                    .is_some_and(|drag| drag.can_drop_on(repo_id, &target_for_can_drop))
-            })
-            .on_drop(cx.listener(
-                move |this, drag: &super::branch_drag::SidebarBranchDrag, window, cx| {
-                    if !drag.can_drop_on(repo_id, &target_for_drop) {
-                        return;
-                    }
-                    cx.stop_propagation();
-                    this.open_popover_at(
-                        PopoverKind::BranchDropMenu {
+                dragged.downcast_ref::<BranchDrag>().is_some_and(|drag| {
+                    lifetime.is_some_and(|lifetime| {
+                        drag.can_drop_live(
+                            &drop_store.snapshot(),
                             repo_id,
-                            source: drag.target.clone(),
-                            target: target_for_drop.clone(),
-                        },
-                        window.mouse_position(),
-                        window,
-                        cx,
-                    );
-                    cx.notify();
-                },
-            ))
-            .on_drag_over::<super::branch_drag::SidebarBranchDrag>(
-                move |style, _drag, _window, _cx| style.bg(drop_highlight),
-            );
+                            lifetime,
+                            &target_for_can_drop,
+                        )
+                    })
+                })
+            })
+            .on_drop(cx.listener(move |this, drag: &BranchDrag, window, cx| {
+                if !lifetime.is_some_and(|lifetime| {
+                    drag.can_drop_live(&this.store.snapshot(), repo_id, lifetime, &target_for_drop)
+                }) {
+                    return;
+                }
+                cx.stop_propagation();
+                this.open_popover_at(
+                    PopoverKind::BranchDropMenu {
+                        repo_id,
+                        source: drag.target.clone(),
+                        target: target_for_drop.clone(),
+                    },
+                    window.mouse_position(),
+                    window,
+                    cx,
+                );
+                cx.notify();
+            }))
+            .on_drag_over::<BranchDrag>(move |style, _drag, _window, _cx| style.bg(drop_highlight));
 
         row.into_any_element()
     }

@@ -12,7 +12,7 @@ use crate::msg::{CommitSelectMode, Effect, WorktreeListRead};
 use crate::msg::{ReferenceEffect, RepoCommandEffect, StatusEffect};
 use crate::store::reducer::prepared::ReducerInputs;
 use gitcomet_core::domain::{
-    Branch, Commit, CommitDetails, CommitId, CommitSignature, FileEntry, FileSource,
+    Branch, Commit, CommitDetails, CommitId, CommitSignature, DiffTarget, FileEntry, FileSource,
     FileStatusKind, RecentCommitMessage, RefMetadata, ReflogEntry, Remote, RemoteBranch, RemoteTag,
     RepoStatus, StashEntry, Submodule, Tag, UpstreamDivergence, Worktree, WorktreeDirtySummary,
     empty_tree_id_like, is_empty_tree_id,
@@ -403,6 +403,15 @@ pub(super) fn select_commit_multi(
         return Vec::new();
     };
 
+    let previous = &repo_state.history_state.multi_selection;
+    let keep_adjacent_pair = sel.commits.len() == 2
+        && previous.commits.len() == 2
+        && repo_state
+            .history_state
+            .range_selection
+            .as_ref()
+            .is_some_and(|range| range.source == ComparisonSource::AdjacentPair)
+        && sel.commits.iter().all(|id| previous.contains(id));
     repo_state.set_commit_multi_selection(sel);
 
     // Two or more commits enter "compare" mode (see `selection_comparison`);
@@ -410,7 +419,7 @@ pub(super) fn select_commit_multi(
     let comparison = {
         let selected = &repo_state.history_state.multi_selection.commits;
         (selected.len() >= 2)
-            .then(|| selection_comparison(repo_state, None, selected))
+            .then(|| selection_comparison(repo_state, None, selected, keep_adjacent_pair))
             .flatten()
     };
 
@@ -487,6 +496,39 @@ fn enter_selection_comparison(
     )
 }
 
+pub(super) fn toggle_adjacent_comparison(
+    state: &mut AppState,
+    repo_id: RepoId,
+    from: &CommitId,
+    to: &CommitId,
+) -> Vec<Effect> {
+    if state.active_repo != Some(repo_id) {
+        return Vec::new();
+    }
+    let Some(repo) = state.repos.iter().find(|repo| repo.id == repo_id) else {
+        return Vec::new();
+    };
+    let Some(range) = repo.history_state.range_selection.as_ref() else {
+        return Vec::new();
+    };
+    let selected = &repo.history_state.multi_selection.commits;
+    if selected.len() != 2 || &range.from != from || range.to.as_ref() != Some(to) {
+        return Vec::new();
+    }
+    let expected = match range.source {
+        ComparisonSource::MergedSelection => ComparisonSource::AdjacentPair,
+        ComparisonSource::AdjacentPair => ComparisonSource::MergedSelection,
+        ComparisonSource::SelectedPair | ComparisonSource::Explicit => return Vec::new(),
+    };
+    let show_endpoints = expected == ComparisonSource::AdjacentPair;
+    let Some(comparison) = selection_comparison(repo, None, selected, show_endpoints)
+        .filter(|comparison| comparison.source == expected)
+    else {
+        return Vec::new();
+    };
+    enter_selection_comparison(state, repo_id, comparison)
+}
+
 /// The multi-selection without the commits a reloaded log no longer lists.
 pub(super) struct PrunedSelection {
     selection: CommitMultiSelection,
@@ -561,13 +603,18 @@ pub(super) fn apply_pruned_selection(
         .as_ref()
         .map(|r| r.source)
     {
-        Some(ComparisonSource::MergedSelection | ComparisonSource::SelectedPair) | None => true,
+        Some(
+            ComparisonSource::MergedSelection
+            | ComparisonSource::SelectedPair
+            | ComparisonSource::AdjacentPair,
+        )
+        | None => true,
         Some(ComparisonSource::Explicit) => false,
     };
     let mut left_comparison = false;
     if dropped && from_selection {
         if let Some(comparison) = (selected.len() >= 2)
-            .then(|| selection_comparison(repo, index, &selected))
+            .then(|| selection_comparison(repo, index, &selected, false))
             .flatten()
         {
             if let Some(commit_id) = refocus {
@@ -619,17 +666,18 @@ struct SelectionComparison {
     source: ComparisonSource,
 }
 
-/// A first-parent chain gets its merged diff: the oldest's parent (or the empty
-/// tree for a root) to the newest; with a gap `from..to` would add the commits
-/// in between. Any other two commits compare directly, older to newer, like
-/// `git diff a b`. `None` otherwise, or when a commit is not in the loaded log.
+/// A first-parent chain defaults to its cumulative diff, from the oldest's
+/// parent (or the empty tree for a root) to the newest. An explicitly switched
+/// pair or two nonconsecutive commits compare directly, like `git diff a b`.
+/// More than two commits with a gap have no combined comparison.
 fn selection_comparison(
     repo_state: &RepoState,
     index: Option<&gitcomet_core::history_index::HistoryIndexHandle>,
     selected: &[CommitId],
+    show_endpoints: bool,
 ) -> Option<SelectionComparison> {
     let shape = selection_shape(repo_state, index, selected)?;
-    if shape.chain {
+    if shape.chain && !(show_endpoints && shape.count == 2) {
         return Some(SelectionComparison {
             from: shape
                 .oldest_parent
@@ -641,7 +689,11 @@ fn selection_comparison(
     (shape.count == 2).then_some(SelectionComparison {
         from: shape.oldest,
         to: shape.newest,
-        source: ComparisonSource::SelectedPair,
+        source: if shape.chain {
+            ComparisonSource::AdjacentPair
+        } else {
+            ComparisonSource::SelectedPair
+        },
     })
 }
 
@@ -787,13 +839,16 @@ pub(super) fn compare_range_with_options(
             ComparisonSource::Explicit => {
                 repo_state.set_commit_multi_selection(CommitMultiSelection::default());
             }
-            ComparisonSource::MergedSelection | ComparisonSource::SelectedPair => {}
+            ComparisonSource::MergedSelection
+            | ComparisonSource::SelectedPair
+            | ComparisonSource::AdjacentPair => {}
         }
         repo_state.set_range_selection(Some(RangeSelection {
             options,
             source,
             ..RangeSelection::new(from.clone(), to.clone(), from_label, to_label)
         }));
+        repo_state.history_state.range_diff_refresh = None;
         repo_state.set_range_files(Loadable::Loading);
         repo_state.begin_range_files_load()
     };
@@ -807,6 +862,40 @@ pub(super) fn compare_range_with_options(
         load,
     });
     effects
+}
+
+/// Reload the current working-tree comparison with the opposite untracked
+/// option. Reusing the range loader cancels old reads and clears the old diff.
+pub(super) fn toggle_working_tree_comparison_untracked(
+    state: &mut AppState,
+    repo_id: RepoId,
+    expected: RangeSelection,
+) -> Vec<Effect> {
+    if state.active_repo != Some(repo_id) {
+        return Vec::new();
+    }
+    let Some(current) = state
+        .repos
+        .iter()
+        .find(|repo| repo.id == repo_id)
+        .and_then(|repo| repo.history_state.range_selection.as_ref())
+        .filter(|range| range.to.is_none() && expected.same_comparison(range))
+        .cloned()
+    else {
+        return Vec::new();
+    };
+    let mut options = current.options;
+    options.include_untracked = !options.include_untracked;
+    compare_range_with_options(
+        state,
+        repo_id,
+        current.from,
+        current.to,
+        current.from_label,
+        current.to_label,
+        options,
+        current.source,
+    )
 }
 
 /// Dismiss an active range comparison: clear the selection, the file list, and
@@ -876,6 +965,87 @@ pub(super) fn compare_with_marked(
     )
 }
 
+fn reconcile_live_comparison_diff(
+    inputs: &ReducerInputs,
+    repo: &mut RepoState,
+    previous: DiffTarget,
+    reload: bool,
+) -> Vec<Effect> {
+    let history = &repo.history_state;
+    let range = history
+        .range_selection
+        .as_ref()
+        .expect("current comparison");
+    let files = history
+        .range_files
+        .ready()
+        .expect("successful comparison list");
+    let Some(file) = files
+        .iter()
+        .find(|file| previous.file_path() == Some(file.path.as_path()))
+    else {
+        repo.close_diff();
+        return super::util::replan_one_sided_change(inputs, repo);
+    };
+
+    // A live merge base or rename can move while the same path stays selected.
+    let target = DiffTarget::commit_range(range.diff_from().clone(), None, None).for_change(file);
+    let retarget = target != previous || target.old_file_path() != previous.old_file_path();
+    if retarget {
+        repo.set_diff_target(Some(target.clone()));
+    }
+    let plan = selected_diff_load_plan(inputs, repo, &target);
+    let change_side = plan.one_sided_side != repo.diff_state.one_sided_side;
+    if retarget || change_side {
+        apply_selected_diff_load_plan_state(repo, plan);
+        repo.bump_diff_state_rev();
+    }
+    let mut effects = super::diff_session::record_one_sided_sides(repo);
+    if reload || retarget || change_side {
+        repo.diff_state.diff_target_rev = repo.diff_state.diff_target_rev.wrapping_add(1);
+        super::util::mark_text_attributes_loading(repo);
+        effects.push(Effect::LoadSelectedDiff {
+            repo_id: repo.id,
+            load_patch_diff: plan.load_patch_diff,
+            load_file_text: plan.load_file_text,
+            preview_text_side: plan.preview_text_side,
+            load_submodule_summary: plan.load_submodule_summary,
+            load_file_image: plan.load_file_image,
+        });
+        // A file first selected while waiting would normally get this probe
+        // with its initial diff read. Its name alone may not identify an image.
+        if !plan.load_file_image
+            && !plan.load_submodule_summary
+            && matches!(repo.diff_state.diff_file, Loadable::Loading)
+            && super::util::probes_image_content(&target)
+        {
+            effects.push(Effect::LoadDiffFileImage {
+                repo_id: repo.id,
+                target,
+            });
+        }
+    }
+    effects
+}
+
+fn fail_waiting_comparison_diff(repo: &mut RepoState, message: &str) {
+    fn finish_loading<T>(slot: &mut Loadable<T>, message: &str) {
+        if matches!(slot, Loadable::Loading) {
+            *slot = Loadable::Error(message.into());
+        }
+    }
+    // Preserve any contents already being read, but do not leave a file first
+    // opened during the refresh waiting for a load we never got to issue.
+    let diff = &mut repo.diff_state;
+    finish_loading(&mut diff.diff, message);
+    finish_loading(&mut diff.diff_file, message);
+    finish_loading(&mut diff.diff_file_image, message);
+    finish_loading(&mut diff.diff_preview_text_file, message);
+    finish_loading(&mut diff.submodule_summary, message);
+    diff.diff_reload_in_flight = false;
+    repo.bump_diff_state_rev();
+}
+
 pub(super) fn range_files_loaded(
     inputs: &ReducerInputs,
     state: &mut AppState,
@@ -908,47 +1078,57 @@ pub(super) fn range_files_loaded(
         .is_some_and(|range| range.from == from && range.to == to);
     if !still_current {
         repo_state.history_state.range_files_refresh_queued = false;
+        repo_state.history_state.range_diff_refresh = None;
         return Vec::new();
     }
 
-    let next = match result {
-        Ok(comparison) => {
-            if let Some(range) = repo_state.history_state.range_selection.as_ref()
-                && range.base.as_ref() != Some(&comparison.base)
-            {
-                let range = RangeSelection {
-                    base: Some(comparison.base),
-                    ..range.clone()
-                };
-                repo_state.set_range_selection(Some(range));
-            }
-            Loadable::Ready(Arc::new(comparison.files))
-        }
-        Err(e) => error_loadable(inputs, repo_state, &e),
-    };
-    repo_state.set_range_files(next);
-    let mut effects = super::util::replan_one_sided_change(inputs, repo_state);
-
-    // The worktree moved again while this load was running; run one more so the
-    // list ends up describing the final state rather than the state mid-flight.
-    if !std::mem::take(&mut repo_state.history_state.range_files_refresh_queued) {
-        return effects;
+    // A newer worktree change arrived during this request. Keep the last
+    // displayed list and selection until the follow-up can speak for both.
+    if repo_state.history_state.range_files_refresh_queued {
+        let options = repo_state
+            .history_state
+            .range_selection
+            .as_ref()
+            .map(|range| range.options)
+            .unwrap_or_default();
+        let load = repo_state.begin_range_files_load();
+        return vec![Effect::LoadRangeFiles {
+            repo_id,
+            from,
+            to,
+            options,
+            load,
+        }];
     }
-    let options = repo_state
-        .history_state
-        .range_selection
-        .as_ref()
-        .map(|range| range.options)
-        .unwrap_or_default();
-    let load = repo_state.begin_range_files_load();
-    effects.push(Effect::LoadRangeFiles {
-        repo_id,
-        from,
-        to,
-        options,
-        load,
-    });
-    effects
+
+    let reload_diff = super::util::waiting_for_live_comparison_diff(repo_state);
+    repo_state.history_state.range_diff_refresh = None;
+    let comparison = match result {
+        Ok(comparison) => comparison,
+        Err(e) => {
+            let failed = error_loadable(inputs, repo_state, &e);
+            if reload_diff && let Loadable::Error(message) = &failed {
+                fail_waiting_comparison_diff(repo_state, message);
+            }
+            repo_state.set_range_files(failed);
+            return super::util::replan_one_sided_change(inputs, repo_state);
+        }
+    };
+    let open_file = repo_state.selected_live_comparison_diff().cloned();
+    if let Some(range) = repo_state.history_state.range_selection.as_ref()
+        && range.base.as_ref() != Some(&comparison.base)
+    {
+        let range = RangeSelection {
+            base: Some(comparison.base),
+            ..range.clone()
+        };
+        repo_state.set_range_selection(Some(range));
+    }
+    repo_state.set_range_files(Loadable::Ready(Arc::new(comparison.files)));
+    match open_file {
+        Some(target) => reconcile_live_comparison_diff(inputs, repo_state, target, reload_diff),
+        None => super::util::replan_one_sided_change(inputs, repo_state),
+    }
 }
 
 pub(super) fn select_commit_and_load_details(

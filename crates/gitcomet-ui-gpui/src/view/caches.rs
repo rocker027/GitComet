@@ -615,7 +615,7 @@ pub(super) struct HistoryDecorationRowVm {
     pub(super) tag_names: Arc<[HistoryTextVm]>,
     /// Compact branch decorations painted in the history table. Unlike
     /// `ref_items`, these group same-named local and remote refs that share a
-    /// target while retaining every exact identity for context-menu routing.
+    /// target. Remote-only collisions get separate qualified labels.
     pub(super) branch_chips: Arc<[HistoryBranchChipVm]>,
     pub(super) ref_items: Arc<[HistoryRefListItem]>,
     /// Branch this commit belongs to, as an index into
@@ -629,6 +629,8 @@ pub(super) struct HistoryDecorationRowVm {
 pub(in crate::view) struct HistoryBranchChipVm {
     pub(in crate::view) text: HistoryTextVm,
     pub(in crate::view) kind: HistoryBranchChipKind,
+    /// Fold into the ref picker if truncation would hide an exact remote identity.
+    pub(in crate::view) requires_full_label: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1127,12 +1129,30 @@ fn history_branch_chips_from_groups(
         chips.push(HistoryBranchChipVm {
             text: HistoryTextVm::new("HEAD".into()),
             kind: HistoryBranchChipKind::DetachedHead,
+            requires_full_label: false,
         });
     }
 
     for (name, mut group) in groups {
         group.remote_targets.sort_unstable();
         group.remote_targets.dedup();
+
+        if !group.has_local && group.remote_targets.len() > 1 {
+            chips.extend(
+                group
+                    .remote_targets
+                    .into_iter()
+                    .map(|target| HistoryBranchChipVm {
+                        text: HistoryTextVm::new(target.display_name().into()),
+                        kind: HistoryBranchChipKind::Branch {
+                            is_head: false,
+                            targets: [target].into(),
+                        },
+                        requires_full_label: true,
+                    }),
+            );
+            continue;
+        }
 
         let mut targets = Vec::with_capacity(
             usize::from(group.has_local).saturating_add(group.remote_targets.len()),
@@ -1148,6 +1168,7 @@ fn history_branch_chips_from_groups(
                 is_head: head_branch == Some(name.as_str()),
                 targets: targets.into(),
             },
+            requires_full_label: false,
         });
     }
 

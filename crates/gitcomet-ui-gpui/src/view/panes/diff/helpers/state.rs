@@ -225,6 +225,7 @@ pub(in crate::view) struct NextFileAdvance {
 /// command and its status refresh finish. Keyboard review keeps advancing.
 pub(in crate::view) struct StageFileTransfer {
     pub(in crate::view) repo_id: RepoId,
+    pub(in crate::view) repo_lifetime: u64,
     pub(in crate::view) path: std::path::PathBuf,
     pub(in crate::view) from: DiffArea,
     pub(in crate::view) ops_rev: u64,

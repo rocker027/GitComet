@@ -194,6 +194,30 @@ fn history_branch_chips_merge_same_named_local_and_remote_refs_on_one_commit() {
 }
 
 #[test]
+fn history_branch_chips_qualify_remote_only_collisions_on_one_commit() {
+    let tip = commit_id("tip");
+    let remote = |name: &str| RemoteBranch {
+        remote: name.into(),
+        name: "feature/topic".into(),
+        target: tip.clone(),
+    };
+    let remote_branches = [remote("peer"), remote("origin"), remote("origin")];
+    let (chips, _) = build_history_branch_chips_by_target(&[], &remote_branches, None, None);
+    let chips = &chips[tip.as_ref()];
+
+    assert_eq!(chips.len(), 2);
+    for (chip, remote) in chips.iter().zip(["origin", "peer"]) {
+        assert_eq!(chip.text.as_ref(), format!("{remote}/feature/topic"));
+        assert!(chip.requires_full_label);
+        assert!(matches!(
+            &chip.kind,
+            HistoryBranchChipKind::Branch { is_head: false, targets }
+                if targets.as_ref() == [BranchMenuTarget::remote(remote, "feature/topic")]
+        ));
+    }
+}
+
+#[test]
 fn history_branch_chips_do_not_merge_same_name_across_commits() {
     let local_commit = commit_id("local");
     let remote_commit = commit_id("remote");
@@ -215,6 +239,7 @@ fn history_branch_chips_do_not_merge_same_name_across_commits() {
     let remote_chip = &chips_by_target[remote_commit.as_ref()][0];
     assert_eq!(local_chip.text.as_ref(), "topic");
     assert_eq!(remote_chip.text.as_ref(), "topic");
+    assert!(!remote_chip.requires_full_label);
     assert!(matches!(
         &local_chip.kind,
         HistoryBranchChipKind::Branch { targets, .. }

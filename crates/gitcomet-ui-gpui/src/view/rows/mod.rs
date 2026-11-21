@@ -1131,6 +1131,7 @@ fn line_number_string(n: Option<u32>) -> SharedString {
 }
 
 mod blame;
+pub(in crate::view) mod branch_drag;
 mod canvas;
 #[cfg(test)]
 mod canvas_tests;

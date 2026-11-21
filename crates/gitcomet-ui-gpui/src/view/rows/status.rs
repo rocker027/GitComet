@@ -890,7 +890,23 @@ fn status_row(
                 this.clear_status_multi_selection(repo_id);
             }
 
-            crate::view::status_actions::stage_or_unstage_paths(&this.store, repo_id, area, paths);
+            let follows_open_diff = paths.len() == 1
+                && this
+                    .root_view
+                    .update(cx, |root, cx| {
+                        root.diff_renderer.update(cx, |pane, _| {
+                            pane.stage_open_file_from_status(repo_id, &paths[0], area)
+                        })
+                    })
+                    .unwrap_or(false);
+            if !follows_open_diff {
+                crate::view::status_actions::stage_or_unstage_paths(
+                    &this.store,
+                    repo_id,
+                    area,
+                    paths,
+                );
+            }
 
             cx.notify();
         })

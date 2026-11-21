@@ -323,6 +323,30 @@ pub(super) fn repo_externally_changed(
         effects.push(Effect::References(ReferenceEffect::LoadTags { repo_id }));
     }
 
+    let changes_comparison_files = change.git_state || change.index || change.worktree;
+    let was_waiting = super::util::waiting_for_live_comparison_diff(repo_state);
+    if (changes_comparison_files || change.text_attributes)
+        && (repo_state.history_state.range_diff_refresh.is_some()
+            || (changes_comparison_files
+                && repo_state
+                    .history_state
+                    .range_selection
+                    .as_ref()
+                    .is_some_and(|range| range.to.is_none())))
+    {
+        let pending = &mut repo_state.history_state.range_diff_refresh;
+        *pending = Some(match pending.take() {
+            Some(previous) => previous.union(change.clone()),
+            None => change.clone(),
+        });
+    }
+    let waiting = super::util::waiting_for_live_comparison_diff(repo_state);
+    if waiting && !was_waiting {
+        // Retire the previous selected-load batch. Keep the displayed content
+        // until the list says whether this path should still have a diff.
+        repo_state.diff_state.diff_target_rev =
+            repo_state.diff_state.diff_target_rev.wrapping_add(1);
+    }
     if let Some(target) = repo_state
         .diff_state
         .diff_target
@@ -341,17 +365,19 @@ pub(super) fn repo_externally_changed(
         if change.git_state {
             invalidate_loaded_blame(repo_state);
         }
-        if let Some(conflict_target) = selected_conflict_target(repo_state, &target) {
-            match conflict_target {
-                SelectedConflictTarget::Current => {
-                    effects.extend(start_current_conflict_target_reload(repo_state));
+        if !waiting {
+            if let Some(conflict_target) = selected_conflict_target(repo_state, &target) {
+                match conflict_target {
+                    SelectedConflictTarget::Current => {
+                        effects.extend(start_current_conflict_target_reload(repo_state));
+                    }
+                    SelectedConflictTarget::Path(path) => {
+                        effects.extend(start_conflict_target_reload(repo_state, path));
+                    }
                 }
-                SelectedConflictTarget::Path(path) => {
-                    effects.extend(start_conflict_target_reload(repo_state, path));
-                }
+            } else {
+                effects.extend(diff_reload_effects(inputs, repo_state, repo_id, target));
             }
-        } else {
-            effects.extend(diff_reload_effects(inputs, repo_state, repo_id, target));
         }
     }
 
@@ -360,7 +386,7 @@ pub(super) fn repo_externally_changed(
     // commit↔commit comparison is immutable and needs no refresh. `LoadRangeFiles`
     // results are dropped if the selection no longer matches (see
     // `range_files_loaded`), so a late reply after the user re-selects is safe.
-    if (change.git_state || change.index || change.worktree)
+    if changes_comparison_files
         && let Some((from, options)) = repo_state
             .history_state
             .range_selection

@@ -610,8 +610,23 @@ fn f10_active_finish_run_disables_conflicting_branch_and_commit_menu_entries(
                     cx,
                 )
                 .expect("branch context menu model");
+            // Opening the other worktree is navigation, so it remains
+            // available while Git mutations are blocked on this checkout.
+            assert!(matches!(
+                &branch_menu.items[branch_menu.first_selectable().unwrap()],
+                ContextMenuItem::Entry { label, action, .. }
+                    if label == "Open worktree" && matches!(
+                        action.as_ref(),
+                        ContextMenuAction::OpenRepo { path } if path == Path::new(FEAT_A_WT)
+                    )
+            ));
+            assert!(!branch_menu.items.iter().any(|item| matches!(
+                item,
+                ContextMenuItem::Entry { action, .. } if matches!(
+                    action.as_ref(), ContextMenuAction::CheckoutBranch { .. }
+                )
+            )));
             for required_disabled in [
-                "Checkout",
                 "Merge feat/a into main",
                 "Squash feat/a into main",
                 "Rename branch",

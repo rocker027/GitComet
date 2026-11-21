@@ -507,6 +507,34 @@ impl GitCometView {
     }
 
     pub(in crate::view) fn dismiss_history_refs_menus(&mut self, cx: &mut gpui::Context<Self>) {
+        self.dismiss_history_refs_hover_menu(cx);
+        let Some(invoker) = self
+            .active_context_menu_invoker
+            .as_ref()
+            .filter(|invoker| {
+                invoker.starts_with(
+                    crate::view::history_refs_hover::HISTORY_REFS_PICKER_MENU_INVOKER_PREFIX,
+                )
+            })
+            .cloned()
+        else {
+            return;
+        };
+        let host = self.popover_host.downgrade();
+        let window_handle = self.window_handle;
+        cx.defer(move |cx| {
+            let _ = window_handle.update(cx, |_, window, cx| {
+                let _ = host.update(cx, |host, cx| {
+                    host.dismiss_history_refs_picker(&invoker, window, cx);
+                });
+            });
+        });
+    }
+
+    pub(in crate::view) fn dismiss_history_refs_hover_menu(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.close_history_refs_hover(cx);
 
         let history_refs_menu_open =

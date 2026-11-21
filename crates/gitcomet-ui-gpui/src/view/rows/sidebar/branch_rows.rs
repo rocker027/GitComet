@@ -6,7 +6,6 @@ use crate::localization::{Language, text};
 
 mod annex;
 mod branch;
-mod branch_drag;
 mod empty_card;
 mod headers;
 mod items;

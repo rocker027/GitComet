@@ -14,6 +14,7 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 pub(in crate::view) mod annotations;
+mod branch_navigation;
 mod cache_build;
 mod columns;
 pub(in crate::view) mod find;
@@ -28,6 +29,22 @@ mod viewport;
 pub(in crate::view) use cache_build::build_history_page_graph;
 use cache_build::*;
 pub(in crate::view) use columns::*;
+
+#[derive(PartialEq, Eq)]
+pub(in crate::view) struct HistoryPointerClick {
+    pub repo_id: RepoId,
+    pub lifetime: u64,
+    pub target: HistoryClickTarget,
+}
+
+#[derive(PartialEq, Eq)]
+pub(in crate::view) enum HistoryClickTarget {
+    Branch {
+        commit_id: CommitId,
+        target: BranchMenuTarget,
+    },
+    Worktree(PathBuf),
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HistorySelectedListIndexCache {
@@ -174,6 +191,13 @@ struct PendingHistorySelection {
     request_id: u64,
     selection: HistoryPrimarySelection,
     multi_selection: PendingHistoryMembers,
+}
+
+/// The visible first-parent route just taken with the branch shortcuts.
+struct BranchNavigation {
+    repo_id: RepoId,
+    current: CommitId,
+    newer: Vec<CommitId>,
 }
 
 /// Keep a pending indexed range compact: shift-clicking across a large
@@ -386,6 +410,44 @@ fn worktree_row_list_ix(
     plan.list_ix_for_worktree(worktree_ix)
 }
 
+pub(in crate::view) const HISTORY_WORKTREE_ROW_MENU_PREFIX: &str = "history_worktree_row_menu_";
+
+pub(in crate::view) fn history_worktree_menu_invoker(
+    repo_id: RepoId,
+    lifetime: u64,
+    path: &std::path::Path,
+) -> SharedString {
+    let path_key = gitcomet_core::hex::encode(path.as_os_str().as_encoded_bytes());
+    format!(
+        "{HISTORY_WORKTREE_ROW_MENU_PREFIX}{}_{lifetime}_{path_key}",
+        repo_id.0
+    )
+    .into()
+}
+
+/// Resolve the row against the active repository's current linked worktrees.
+pub(in crate::view) fn history_worktree_menu_target<'a>(
+    state: &'a AppState,
+    repo_id: RepoId,
+    path: &std::path::Path,
+) -> Option<(u64, Option<&'a str>)> {
+    let repo = state.repos.iter().find(|repo| {
+        state.active_repo == Some(repo_id)
+            && repo.id == repo_id
+            && !repo.is_bare()
+            && repo.spec.workdir != path
+    })?;
+    let worktree = repo
+        .worktrees
+        .ready()?
+        .iter()
+        .find(|worktree| !worktree.bare && worktree.path == path)?;
+    let branch = (!worktree.detached)
+        .then(|| worktree.branch.as_deref())
+        .flatten();
+    Some((repo.lifetime(), branch))
+}
+
 fn resolve_history_selected_list_index(
     cache: &mut Option<HistorySelectedListIndexCache>,
     repo_id: RepoId,
@@ -543,6 +605,8 @@ pub(in super::super) struct HistoryView {
     /// Which row sub-area the pointer is over, so the shared tooltip is only
     /// rewritten when the hover actually moves rather than on every pixel.
     row_hover: Option<(usize, HistoryRowHoverArea)>,
+    pub(in crate::view) history_branch_drag_click_suppressed: bool,
+    pub(in crate::view) history_first_pointer_click: Option<HistoryPointerClick>,
     row_hover_scroll_position: f64,
     /// Exactly what we last handed the shared host, so we only ever retract
     /// our own tooltip and never one another surface has since set.
@@ -604,6 +668,7 @@ pub(in super::super) struct HistoryView {
     // Inputs can arrive before the store publishes their selections. Keep the
     // outstanding destinations so navigation starts from the latest intent.
     pending_history_selections: std::collections::VecDeque<PendingHistorySelection>,
+    branch_navigation: Option<BranchNavigation>,
 }
 
 /// Canvas sub-areas drive the shared [`TooltipHost`] without retained tooltips.
@@ -659,6 +724,15 @@ impl HistoryView {
     pub(in crate::view) fn reset_history_row_hover(&mut self) {
         self.row_hover = None;
         self.row_hover_tooltip = None;
+    }
+
+    pub(in crate::view) fn begin_history_branch_drag(&mut self, cx: &mut gpui::Context<Self>) {
+        self.history_branch_drag_click_suppressed = true;
+        self.reset_history_row_hover();
+        let root = self.root_view.clone();
+        cx.defer(move |cx| {
+            let _ = root.update(cx, |root, cx| root.dismiss_hover_popovers(cx));
+        });
     }
 
     pub(in crate::view) fn row_hover(&self, cx: &App) -> Option<(usize, HistoryRowHoverArea)> {
@@ -856,9 +930,15 @@ impl HistoryView {
             let selection_ack = next_repo.and_then(|repo| repo.history_state.selection_ack);
             let selection_ack_changed =
                 previous_repo.and_then(|repo| repo.history_state.selection_ack) != selection_ack;
+            if previous_repo.map(RepoState::lifetime) != next_repo.map(RepoState::lifetime)
+                || switched_repo
+            {
+                this.history_first_pointer_click = None;
+            }
             if switched_repo {
                 this.history_find_repo_changed();
                 this.pending_history_selections.clear();
+                this.branch_navigation = None;
             } else if selection_ack_changed
                 && let Some(ix) = this
                     .pending_history_selections
@@ -951,6 +1031,8 @@ impl HistoryView {
             root_view,
             tooltip_host,
             row_hover: None,
+            history_branch_drag_click_suppressed: false,
+            history_first_pointer_click: None,
             row_hover_scroll_position: 0.0,
             row_hover_tooltip: None,
             notify_fingerprint: initial_fingerprint,
@@ -1001,6 +1083,7 @@ impl HistoryView {
             signature_debounce: None,
             find: None,
             pending_history_selections: Default::default(),
+            branch_navigation: None,
         }
     }
 
@@ -1371,6 +1454,26 @@ impl HistoryView {
                 self.ui_scale_percent,
             );
         (self.history_show_graph, show_author, show_date, show_sha)
+    }
+
+    pub(in super::super) fn history_message_content_width(
+        &self,
+        (show_graph, show_author, show_date, show_sha): (bool, bool, bool, bool),
+    ) -> Pixels {
+        let fixed_width: Pixels = [
+            (show_graph, self.history_col_graph),
+            (show_author, self.history_col_author),
+            (show_date, self.history_col_date),
+            (show_sha, self.history_col_sha),
+        ]
+        .into_iter()
+        .filter_map(|(visible, width)| visible.then_some(width))
+        .sum();
+        (self.history_content_width
+            - self.history_ref_column_width()
+            - fixed_width
+            - self.ui_scale().px(16.0 + HISTORY_COL_HANDLE_PX))
+        .max(px(0.0))
     }
 
     pub(in super::super) fn reset_history_column_widths(&mut self) {

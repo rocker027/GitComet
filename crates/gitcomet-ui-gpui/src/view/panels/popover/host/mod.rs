@@ -1022,6 +1022,7 @@ impl PopoverHost {
             create_branch_checkout_enabled: true,
             create_branch_source_target: String::new(),
             worktree_ref_source_target: String::new(),
+            worktree_ref_source_upstream: None,
             suppress_worktree_submit_after_ref_enter: false,
             suppress_popover_close_after_action: false,
             create_branch_from_ref_checkout_focus_handle,
@@ -1316,6 +1317,11 @@ impl PopoverHost {
         &self.worktree_ref_source_target
     }
 
+    #[cfg(test)]
+    pub(in crate::view) fn worktree_ref_source_upstream_for_tests(&self) -> Option<&Upstream> {
+        self.worktree_ref_source_upstream.as_ref()
+    }
+
     /// Whether the unsaved-edits confirmation is the popover on screen.
     ///
     /// Asked by the close/quit path instead of a mirrored bool: that dialog
@@ -1396,6 +1402,8 @@ impl PopoverHost {
     }
 
     fn close_popover_with_resolution(&mut self, resolved: bool, cx: &mut gpui::Context<Self>) {
+        self.worktree_ref_source_upstream = None;
+        self.pending_worktree_add_prefill = None;
         if !resolved {
             self.dismiss_open_force_prompt();
         }
@@ -1491,6 +1499,25 @@ impl PopoverHost {
             })
         {
             self.close_popover(cx);
+        }
+    }
+
+    pub(in crate::view) fn dismiss_history_refs_picker(
+        &mut self,
+        invoker: &SharedString,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.active_invoker.as_ref() == Some(invoker)
+            && matches!(
+                self.popover,
+                Some(PopoverKind::CommitMenu {
+                    refs: CommitMenuRefs::Chooser,
+                    ..
+                })
+            )
+        {
+            self.close_popover_and_restore_focus(window, cx);
         }
     }
 
@@ -1844,6 +1871,7 @@ impl PopoverHost {
                 .find(|repo| repo.id == repo_id)
                 .is_some_and(RepoState::is_bare)
         {
+            self.pending_worktree_add_prefill = None;
             self.explain_working_tree_required(cx);
             return;
         }
@@ -1985,6 +2013,16 @@ impl PopoverHost {
         }
         self.publish_active_context_menu_invoker(cx);
 
+        self.worktree_ref_source_upstream = None;
+        if !matches!(
+            &kind,
+            PopoverKind::Repo {
+                kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
+                ..
+            }
+        ) {
+            self.pending_worktree_add_prefill = None;
+        }
         self.popover_anchor = Some(anchor);
         self.cancel_tag_push_previews();
         self.push_upstream_tag_mode = None;
@@ -2317,16 +2355,22 @@ impl PopoverHost {
                     let folder = repo
                         .map(|repo| repo.spec.workdir.display().to_string())
                         .unwrap_or_default();
-                    let prefill = self.pending_worktree_add_prefill.take().unwrap_or_else(|| {
-                        WorktreeAddPrefill {
-                            source: repo
+                    let prefill = self
+                        .pending_worktree_add_prefill
+                        .take()
+                        .and_then(|(owner, prefill)| (owner == *repo_id).then_some(prefill))
+                        .unwrap_or_else(|| {
+                            let (source, source_upstream) = repo
                                 .map(worktree_add_prompt::default_worktree_source)
-                                .unwrap_or_default(),
-                            create_branch: true,
-                            new_branch: String::new(),
-                            open_after: false,
-                        }
-                    });
+                                .unwrap_or_default();
+                            WorktreeAddPrefill {
+                                source,
+                                source_upstream,
+                                create_branch: true,
+                                new_branch: String::new(),
+                                open_after: false,
+                            }
+                        });
                     self.worktree_path_input.update(cx, |input, cx| {
                         input.set_text(folder, cx);
                         cx.notify();
@@ -2338,6 +2382,7 @@ impl PopoverHost {
                     self.worktree_add_create_branch = prefill.create_branch;
                     self.worktree_add_open_after = prefill.open_after;
                     self.worktree_ref_source_target = prefill.source.clone();
+                    self.worktree_ref_source_upstream = prefill.source_upstream;
                     self.suppress_worktree_submit_after_ref_enter = false;
                     let ref_input = self.ensure_branch_picker_search_input(window, cx);
                     // `ensure_*` blanks the input, so the prefilled ref has to be

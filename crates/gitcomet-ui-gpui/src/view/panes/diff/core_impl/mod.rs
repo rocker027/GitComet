@@ -1901,6 +1901,7 @@ impl DiffRenderer {
             DiffCommand::RevealStatus {
                 section,
                 path: path.to_path_buf(),
+                after_transfer: None,
             },
             cx,
         );

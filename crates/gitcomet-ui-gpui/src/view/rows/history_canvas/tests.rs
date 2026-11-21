@@ -2,11 +2,37 @@ use super::*;
 use std::rc::Rc;
 
 #[test]
+fn overflow_click_requires_both_endpoints_inside_the_visible_badge() {
+    let clipped = Bounds::new(point(px(10.0), px(10.0)), size(px(8.0), px(20.0)));
+    let targets = HistoryRefHitTargets {
+        refs: Vec::new(),
+        overflow: Some(clipped),
+        ..Default::default()
+    };
+    let inside = clipped.center();
+    let outside = point(px(30.0), inside.y);
+    assert!(targets.overflow_clicked(inside, inside));
+    assert!(
+        !targets.overflow_clicked(outside, inside),
+        "dragging into the badge"
+    );
+    assert!(
+        !targets.overflow_clicked(inside, outside),
+        "dragging out of the badge"
+    );
+    assert!(
+        !targets.overflow_clicked(outside, outside),
+        "clipped-away pixels"
+    );
+    assert!(!HistoryRefHitTargets::default().overflow_clicked(inside, inside));
+}
+
+#[test]
 fn ref_clicks_match_the_exact_chip_and_require_both_endpoints_inside_it() {
     let local = HistoryMenuRef::Branch(BranchMenuTarget::local("feature"));
     let remote = HistoryMenuRef::Branch(BranchMenuTarget::remote("origin", "feature"));
     let tag = HistoryMenuRef::Tag("feature".into());
-    let targets: Vec<_> = [local.clone(), remote.clone(), tag.clone()]
+    let refs = [local.clone(), remote.clone(), tag.clone()]
         .into_iter()
         .enumerate()
         .map(|(index, target)| {
@@ -19,20 +45,31 @@ fn ref_clicks_match_the_exact_chip_and_require_both_endpoints_inside_it() {
             )
         })
         .collect();
-    for (bounds, target) in &targets {
-        assert_eq!(
-            history_ref_click_target(&targets, bounds.center(), bounds.center()),
-            Some(target.clone())
-        );
+    let targets = HistoryRefHitTargets {
+        refs,
+        ..Default::default()
+    };
+    let press_at = |position| HistoryRefMenuPress {
+        position,
+        target: targets.ref_at(position).cloned(),
+    };
+    for (bounds, target) in &targets.refs {
+        let press = press_at(bounds.center());
+        assert_eq!(press.target.as_ref(), Some(target));
+        assert!(press.matches(&targets, bounds.center(), bounds.center()));
     }
-    assert_eq!(
-        history_ref_click_target(&targets, targets[0].0.center(), targets[1].0.center()),
-        None
-    );
+    let first = targets.refs[0].0.center();
+    let second = targets.refs[1].0.center();
+    assert!(!press_at(first).matches(&targets, first, second));
+    assert!(!press_at(first).matches(&targets, second, first));
     let node = point(px(300.0), px(20.0));
-    assert_eq!(history_ref_click_target(&targets, node, node), None);
     let gap = point(px(75.0), px(20.0));
-    assert_eq!(history_ref_click_target(&targets, gap, gap), None);
+    for position in [node, gap] {
+        let press = press_at(position);
+        assert_eq!(press.target, None);
+        assert!(press.matches(&targets, position, position));
+        assert!(!press.matches(&targets, position, first));
+    }
 }
 
 #[test]
@@ -238,6 +275,19 @@ fn assert_inline_ref_paint_budget(percent: u32, window: &mut Window, cx: &mut Ap
             window,
         );
         paint_history_ref_chips(&refs, window, cx);
+        if let Some(overflow) = refs.overflow_bounds {
+            assert_eq!(overflow.intersect(&budget), overflow);
+            let targets = HistoryRefHitTargets {
+                refs: Vec::new(),
+                overflow: Some(overflow),
+                ..Default::default()
+            };
+            assert!(targets.overflow_clicked(overflow.center(), overflow.center()));
+            let clipped_away = point(budget.right() + px(1.0), overflow.center().y);
+            assert!(!targets.overflow_clicked(clipped_away, clipped_away));
+        } else {
+            assert_eq!(budget.size.width, px(0.0));
+        }
         assert_eq!(
             refs.shown + refs.hidden,
             13,
@@ -670,6 +720,7 @@ fn branch_chip(
     HistoryBranchChipVm {
         text: HistoryTextVm::new(SharedString::from(text.to_string())),
         kind: HistoryBranchChipKind::Branch { is_head, targets },
+        requires_full_label: false,
     }
 }
 
@@ -730,6 +781,7 @@ fn grouped_head_chip_stays_in_the_head_style() {
     let detached = HistoryBranchChipVm {
         text: HistoryTextVm::new("HEAD".into()),
         kind: HistoryBranchChipKind::DetachedHead,
+        requires_full_label: false,
     };
     assert!(matches!(
         history_branch_chip_style_kind(&detached, None),
@@ -800,6 +852,7 @@ fn grouped_branch_chip_icons_keep_exact_refs() {
     let detached = HistoryBranchChipVm {
         text: HistoryTextVm::new("HEAD".into()),
         kind: HistoryBranchChipKind::DetachedHead,
+        requires_full_label: false,
     };
     assert_eq!(
         history_branch_chip_icons(&detached, false).as_slice(),
@@ -912,6 +965,82 @@ fn a_checked_out_branch_stays_visible_before_other_refs_in_a_narrow_column(
         );
         assert!(refs.hidden > 0);
         assert!(refs.bounds.right() <= bounds.right());
+    })
+    .expect("history canvas test window should stay open");
+}
+
+#[gpui::test]
+fn qualified_remote_labels_keep_their_full_name_and_exact_menu_feedback(
+    cx: &mut gpui::TestAppContext,
+) {
+    let handle = cx.add_window(|_, _| gpui::Empty);
+    cx.update_window(handle.into(), |_, window, _| {
+        let repo_id = RepoId(1);
+        let commit = CommitId("tip".into());
+        let origin = BranchMenuTarget::remote("origin", "topic");
+        let invoker = history_branch_chip_menu_invoker(repo_id, &commit, &origin);
+        let style = window.text_style();
+        let qualified_remote = |name| HistoryBranchChipVm {
+            requires_full_label: true,
+            ..branch_chip(name, false, &[(BranchSection::Remote, name)])
+        };
+        let chips = [
+            branch_chip(
+                "origin/topic",
+                false,
+                &[(BranchSection::Local, "origin/topic")],
+            ),
+            qualified_remote("origin/topic"),
+            qualified_remote("peer/topic"),
+        ];
+        for theme in [AppTheme::gitcomet_dark(), AppTheme::gitcomet_light()] {
+            let mut layout = |width, chips: &[HistoryBranchChipVm], menu: Option<&SharedString>| {
+                layout_history_ref_chips(
+                    theme,
+                    test_row_visual(theme),
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(28.0))),
+                    repo_id,
+                    &commit,
+                    &[],
+                    chips,
+                    &[],
+                    None,
+                    menu,
+                    &style,
+                    px(11.0),
+                    px(16.0),
+                    window,
+                )
+            };
+            let closed = layout(480.0, &chips, None);
+            let open = layout(480.0, &chips, Some(&invoker));
+            assert_eq!(open.shown, 3);
+            assert_eq!(open.hidden, 0);
+            for ((closed, open), label) in closed.chips.iter().zip(&open.chips).zip([
+                "origin/topic",
+                "origin/topic",
+                "peer/topic",
+            ]) {
+                assert_eq!(open.shaped.text, label);
+                assert_eq!(
+                    closed.visual.border != open.visual.border,
+                    open.target == Some(HistoryMenuRef::Branch(origin.clone())),
+                );
+            }
+            let remote = "origin/feature/topic-with-a-name-too-wide-for-the-column";
+            let narrow = layout(
+                90.0,
+                &[
+                    qualified_remote(remote),
+                    branch_chip("fix", false, &[(BranchSection::Local, "fix")]),
+                ],
+                None,
+            );
+            assert_eq!(narrow.shown, 1);
+            assert_eq!(narrow.hidden, 1);
+            assert_eq!(narrow.chips[0].shaped.text, "fix");
+            assert!(narrow.overflow_bounds.is_some());
+        }
     })
     .expect("history canvas test window should stay open");
 }
@@ -1118,7 +1247,10 @@ fn sidebar_selected_branch_ring_stands_out_on_a_selected_shared_tip() {
                     history_branch_chip_style_kind(&chip, selected.as_ref()),
                     false,
                 );
-                assert!(picked.selected, "{key}: the picked ring is drawn thicker");
+                assert!(
+                    picked.emphasized_border,
+                    "{key}: the picked ring is drawn thicker"
+                );
                 assert!(
                     contrast_ratio(picked.border, picked.bg) >= 3.0,
                     "{key} lane {color}: the sidebar-selected {name} ring blends into its fill"
@@ -1128,7 +1260,7 @@ fn sidebar_selected_branch_ring_stands_out_on_a_selected_shared_tip() {
                     history_branch_chip_style_kind(&chip, None),
                 ] {
                     let other = history_chip_visual(theme, row, other, false);
-                    assert!(!other.selected);
+                    assert!(!other.emphasized_border);
                     assert_ne!(picked.border, other.border);
                 }
             }
@@ -1205,25 +1337,33 @@ fn chips_with_open_context_menus_keep_a_distinct_outline() {
 fn chip_menu_invokers_identify_the_exact_chip() {
     let repo_id = RepoId(7);
     let commit_id = CommitId("deadbeef".into());
-    let local = branch_chip(
-        "feature/local",
-        false,
-        &[(BranchSection::Local, "feature/local")],
-    );
-    let remote = branch_chip(
-        "feature/remote",
-        false,
-        &[(BranchSection::Remote, "origin/feature/remote")],
-    );
-
+    let local = BranchMenuTarget::local("origin/topic");
+    let remote = BranchMenuTarget::remote("origin", "topic");
+    assert_eq!(local.display_name(), remote.display_name());
     let local_invoker = history_branch_chip_menu_invoker(repo_id, &commit_id, &local);
+    let remote_invoker = history_branch_chip_menu_invoker(repo_id, &commit_id, &remote);
+    assert_ne!(local_invoker, remote_invoker);
+    assert!(history_row_menu_is_open(
+        &remote_invoker,
+        repo_id,
+        "deadbeef"
+    ));
+    assert!(!history_row_menu_is_open(
+        &remote_invoker,
+        RepoId(1),
+        "deadbeef"
+    ));
+    assert!(!history_row_menu_is_open(&remote_invoker, repo_id, "dead"));
+    let slash_remote = BranchMenuTarget::remote("team/origin", "topic");
+    let slash_branch = BranchMenuTarget::remote("team", "origin/topic");
+    assert_eq!(slash_remote.display_name(), slash_branch.display_name());
     assert_ne!(
-        local_invoker,
-        history_branch_chip_menu_invoker(repo_id, &commit_id, &remote)
+        history_branch_chip_menu_invoker(repo_id, &commit_id, &slash_remote),
+        history_branch_chip_menu_invoker(repo_id, &commit_id, &slash_branch)
     );
     assert_ne!(
         local_invoker,
-        history_tag_chip_menu_invoker(repo_id, &commit_id, "feature/local")
+        history_tag_chip_menu_invoker(repo_id, &commit_id, "origin/topic")
     );
     assert_eq!(
         local_invoker,

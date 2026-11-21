@@ -168,7 +168,8 @@ These shortcuts apply while the commit history list is showing.
 
 | Action | macOS | Windows / Linux | Notes |
 | --- | --- | --- | --- |
-| Previous / next row | `Up`, `Down` | `Up`, `Down` | While the history list has focus. |
+| Previous / next row | `Up`, `Down`, `K`, `J` | `Up`, `Down`, `K`, `J` | While the history list has focus. Without modifiers, K moves up one row and J moves down one row. Plain Up/Down keep their existing row behavior. |
+| Newer / older commit on the first-parent path | `Shift-Up`, `Shift-Down`, `Shift-K`, `Shift-J` | `Shift-Up`, `Shift-Down`, `Shift-K`, `Shift-J` | While the graph has focus and the current selection is a visible commit. Shift-Up/Shift-K moves to a newer commit; Shift-Down/Shift-J moves to an older commit along the first-parent path. Reversing at a fork prefers the path just followed. Skips worktree rows and stops at the current graph boundary. Shift-click keeps its existing range-selection behavior. |
 | Previous / next page | `PageUp`, `PageDown` | `PageUp`, `PageDown` | While the history list has focus. Moves selection by one visible page, updates the selected row's details, and stops at the first / last available row. With nothing selected, selects the first row. |
 | First / last row | `Home`, `End` | `Home`, `End` | While the history list has focus. Also with nothing selected. |
 | Find a commit | `Cmd-F` | `Ctrl-F` | Opens the find bar over the history. Matches the commit summary or the author (each on its own), or the start of the SHA (4+ hex characters), across the whole history, not only the loaded rows. Typing selects the first match. With the bar already open, refocuses it with the query selected. |
@@ -201,7 +202,7 @@ the main canvas. An open diff preview stays open.
 | File list: focus the diff | `Enter` | `Enter` | The selected file stays open. |
 | File list: return to graph | `Escape` | `Escape` | Closes file search first. Restores the same commit and graph position. |
 | Filter the focused file list | `Cmd-F` | `Ctrl-F` | Case-insensitive path substring. Enter or Down focuses the results; Escape clears the filter. Diff navigation follows the filtered list. |
-| Open the selected commit/file menu | `Shift-F10` | `Shift-F10` | Uses the existing context menu and its confirmations. |
+| Open the selected commit, worktree, or file menu | `Shift-F10` | `Shift-F10` | Uses the existing context menu and its confirmations. |
 
 Review a commit with `Enter` → `Up`/`Down` → `Enter`, then use `Up`/`Down`
 through its changes and files. `Escape` returns one level at a time:

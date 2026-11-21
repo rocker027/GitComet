@@ -11,14 +11,16 @@ use super::log::diff_range_files;
 use super::patch::write_pathspec_file;
 use crate::util::{
     git_workdir_cmd_for, path_buf_from_git_bytes, push_literal_pathspec_file,
-    push_read_only_diff_flags, run_git_capture_bytes_cancellable, run_git_simple,
+    push_read_only_diff_flags, run_git_capture_bytes_cancellable,
 };
 use gitcomet_core::domain::{CommitFileChange, CommitId, FileMode, FileStatusKind, ObjectHash};
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{
     CancellationToken, Comparison, ComparisonBase, ComparisonOptions, Result,
 };
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub(super) type NumstatLineCounts = (Option<u32>, Option<u32>);
 /// Lookup only (never iterated in order), so the unseeded hash map suffices.
@@ -68,18 +70,18 @@ where
 }
 
 /// `git diff <from> [<to>]` in one of git's machine formats; omitting `to`
-/// compares against the working tree. `index` replaces the repository's index
-/// for that comparison.
+/// compares against the working tree. A comparison index also isolates any
+/// objects Git writes while preparing or reading the comparison.
 fn range_diff_command(
     workdir: &Path,
     format: &[&str],
     from: &CommitId,
     to: Option<&CommitId>,
-    index: Option<&Path>,
-) -> std::process::Command {
+    index: Option<&ComparisonIndex>,
+) -> Command {
     let mut command = git_workdir_cmd_for(workdir);
     if let Some(index) = index {
-        command.env("GIT_INDEX_FILE", index);
+        index.configure(&mut command);
     }
     push_read_only_diff_flags(&mut command);
     command
@@ -102,7 +104,7 @@ pub(super) fn git_range_status_changes(
     workdir: &Path,
     from: &CommitId,
     to: Option<&CommitId>,
-    index: Option<&Path>,
+    index: Option<&ComparisonIndex>,
     cancellation: &CancellationToken,
 ) -> Result<Vec<RangeStatusChange>> {
     let command = range_diff_command(workdir, &["--raw", "--no-abbrev"], from, to, index);
@@ -181,7 +183,7 @@ pub(super) fn git_range_numstat_counts(
     workdir: &Path,
     from: &CommitId,
     to: Option<&CommitId>,
-    index: Option<&Path>,
+    index: Option<&ComparisonIndex>,
     cancellation: &CancellationToken,
 ) -> Result<NumstatCounts> {
     // Gitlink counts are dropped per row, so skip the `git status` git would
@@ -243,36 +245,92 @@ fn untracked_paths(workdir: &Path, cancellation: &CancellationToken) -> Result<V
         .collect()
 }
 
-/// A copy of `index` with `paths` added as intent-to-add entries, so that a
-/// `git diff` reading it sees those untracked files. The copy lives outside
-/// the repository, where neither git's own index nor the watcher sees it.
-/// `None` when there is nothing to add or the copy fails; the caller then
-/// diffs with the repository's index, which leaves the files out.
+/// A temporary index and its private object store. Git can read the
+/// repository's existing objects through alternates, but intent-to-add can
+/// write its empty blob only to the private store.
+pub(super) struct ComparisonIndex {
+    directory: tempfile::TempDir,
+    alternates: OsString,
+}
+
+impl ComparisonIndex {
+    pub(super) fn configure(&self, command: &mut Command) {
+        command
+            .env("GIT_INDEX_FILE", self.directory.path().join("index"))
+            .env(
+                "GIT_OBJECT_DIRECTORY",
+                self.directory.path().join("objects"),
+            )
+            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &self.alternates);
+    }
+}
+
+fn comparison_alternates(objects: &Path) -> Result<OsString> {
+    let bytes = gix::path::into_bstr(objects).map_err(|err| {
+        Error::new(ErrorKind::Backend(format!(
+            "encode Git object directory: {err}"
+        )))
+    })?;
+    let bytes = gix::path::to_unix_separators_on_windows(bytes);
+    let quoted = gix::quote::ansi_c::quote(&bytes);
+    let quoted = std::str::from_utf8(quoted.as_ref()).expect("Git C-style quotes are ASCII");
+    // The quote helper can leave ASCII paths unchanged, but an alternate entry
+    // may contain Git's platform-specific path-list delimiter.
+    let mut alternates = if quoted.starts_with('"') {
+        OsString::from(quoted)
+    } else {
+        OsString::from(format!("\"{quoted}\""))
+    };
+    if let Some(existing) =
+        std::env::var_os("GIT_ALTERNATE_OBJECT_DIRECTORIES").filter(|value| !value.is_empty())
+    {
+        alternates.push(if cfg!(windows) { ";" } else { ":" });
+        alternates.push(existing);
+    }
+    Ok(alternates)
+}
+
+/// Add untracked paths as intent-to-add entries without changing the source
+/// index or writing objects into the repository. Keep the result alive until
+/// the last diff command has finished.
 pub(super) fn intent_to_add_index(
     workdir: &Path,
-    index: &Path,
+    repo: &gix::Repository,
     paths: &[PathBuf],
-) -> Option<tempfile::TempPath> {
-    if paths.is_empty() {
-        return None;
-    }
+    cancellation: &CancellationToken,
+) -> Result<ComparisonIndex> {
+    cancellation.check_cancelled()?;
     let path_bytes = paths
         .iter()
         .map(|path| {
-            let bytes = gix::path::into_bstr(path.as_path()).ok()?;
-            Some(gix::path::to_unix_separators_on_windows(bytes).to_vec())
+            let bytes = gix::path::into_bstr(path.as_path()).map_err(|err| {
+                Error::new(ErrorKind::Backend(format!("encode untracked path: {err}")))
+            })?;
+            Ok(gix::path::to_unix_separators_on_windows(bytes).to_vec())
         })
-        .collect::<Option<Vec<_>>>()?;
-    let pathspec = write_pathspec_file(path_bytes.iter().map(Vec::as_slice)).ok()?;
-    let copy = tempfile::NamedTempFile::new().ok()?.into_temp_path();
-    std::fs::copy(index, &copy).ok()?;
+        .collect::<Result<Vec<_>>>()?;
+    let pathspec = write_pathspec_file(path_bytes.iter().map(Vec::as_slice))?;
+    let objects = std::env::var_os("GIT_OBJECT_DIRECTORY")
+        .filter(|directory| !directory.is_empty())
+        .map(|directory| workdir.join(directory))
+        .unwrap_or_else(|| repo.objects.store_ref().path().to_path_buf());
+    let index = ComparisonIndex {
+        directory: tempfile::tempdir()?,
+        alternates: comparison_alternates(&objects)?,
+    };
+    std::fs::create_dir(index.directory.path().join("objects"))?;
+    match std::fs::copy(repo.index_path(), index.directory.path().join("index")) {
+        Ok(_) => {}
+        // A repository can have a tree to compare against but no index yet.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
     let mut command = git_workdir_cmd_for(workdir);
-    command
-        .env("GIT_INDEX_FILE", &copy)
-        .args(["add", "--intent-to-add"]);
+    index.configure(&mut command);
+    command.args(["-c", "core.splitIndex=false", "add", "--intent-to-add"]);
     push_literal_pathspec_file(&mut command, pathspec.path());
-    run_git_simple(command, "git add --intent-to-add").ok()?;
-    Some(copy)
+    run_git_capture_bytes_cancellable(command, "git add --intent-to-add", cancellation)?;
+    Ok(index)
 }
 
 /// What `git diff <from>` lists against the live working tree, with
@@ -283,7 +341,7 @@ pub(super) fn intent_to_add_index(
 /// untracked files as intent-to-add entries git pairs the two into a rename.
 fn git_worktree_changes(
     workdir: &Path,
-    index: &Path,
+    repo: &gix::Repository,
     from: &CommitId,
     include_untracked: bool,
     cancellation: &CancellationToken,
@@ -293,19 +351,23 @@ fn git_worktree_changes(
     } else {
         Vec::new()
     };
-    let intent_to_add = intent_to_add_index(workdir, index, &untracked);
-    let index = intent_to_add.as_deref();
-    let status_changes = git_range_status_changes(workdir, from, None, index, cancellation)?;
-    let counts = git_range_numstat_counts(workdir, from, None, index, cancellation)?;
+    let index = if untracked.is_empty() {
+        None
+    } else {
+        Some(intent_to_add_index(
+            workdir,
+            repo,
+            &untracked,
+            cancellation,
+        )?)
+    };
+    let status_changes =
+        git_range_status_changes(workdir, from, None, index.as_ref(), cancellation)?;
+    let counts = git_range_numstat_counts(workdir, from, None, index.as_ref(), cancellation)?;
     let untracked_set: rustc_hash::FxHashSet<&Path> =
         untracked.iter().map(PathBuf::as_path).collect();
-    let mut files: Vec<CommitFileChange> = status_changes
+    let files = status_changes
         .into_iter()
-        // An untracked file git did not pair lists as added; it is listed
-        // below as untracked, as without the intent-to-add index.
-        .filter(|change| {
-            change.kind != FileStatusKind::Added || !untracked_set.contains(change.path.as_path())
-        })
         // Without the index refresh `--raw` also lists a file whose stat
         // moved but not its content; numstat reads the content and leaves
         // it out, while every real change (mode-only, binary) is in it.
@@ -315,6 +377,14 @@ fn git_worktree_changes(
                 || counts.contains_key(&change.path)
         })
         .map(|change| {
+            // Raw/numstat from the temporary index decide whether a retained
+            // path differs from `from`. Only genuine additions are untracked.
+            if change.kind == FileStatusKind::Added && untracked_set.contains(change.path.as_path())
+            {
+                // Let the worktree stats pass preserve caps, symlinks and
+                // clean-filter handling, as in the untracked status lane.
+                return CommitFileChange::new(change.path, FileStatusKind::Untracked);
+            }
             let line_stats = change.line_counts(&counts).into();
             CommitFileChange::new(change.path, change.kind)
                 .with_submodule(change.is_submodule)
@@ -324,17 +394,6 @@ fn git_worktree_changes(
                 .with_modes(change.old_mode, change.new_mode)
         })
         .collect();
-    let renamed: rustc_hash::FxHashSet<PathBuf> = files
-        .iter()
-        .filter(|file| file.kind == FileStatusKind::Renamed)
-        .map(|file| file.path.clone())
-        .collect();
-    files.extend(
-        untracked
-            .into_iter()
-            .filter(|path| !renamed.contains(path))
-            .map(|path| CommitFileChange::new(path, FileStatusKind::Untracked)),
-    );
     Ok(files)
 }
 
@@ -350,7 +409,7 @@ impl GixRepo {
     ) -> Result<Vec<CommitFileChange>> {
         let mut files = git_worktree_changes(
             &self.spec.workdir,
-            &self.repo().index_path(),
+            &self.repo(),
             from,
             include_untracked,
             cancellation,
@@ -498,6 +557,101 @@ mod tests {
             std::fs::read(&index).unwrap(),
             before,
             "the comparison refreshed index stat metadata"
+        );
+    }
+
+    #[test]
+    fn intent_to_add_comparison_does_not_reappend_index_removed_paths() {
+        use crate::test_support::{git_success, init_test_repo, open_repo, write_file};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_test_repo(dir);
+        write_file(dir, "old.txt", "original\n");
+        git_success(dir, &["add", "."]);
+        git_success(dir, &["commit", "-m", "seed"]);
+        git_success(dir, &["rm", "--cached", "old.txt"]);
+        let index = dir.join(".git/index");
+        let before = std::fs::read(&index).unwrap();
+        let repo = open_repo(dir);
+        let from = CommitId("HEAD".into());
+        let cancellation = CancellationToken::new();
+        assert!(
+            repo.commit_to_worktree_files(&from, true, &cancellation)
+                .unwrap()
+                .is_empty(),
+            "a retained file identical to HEAD is not a comparison change"
+        );
+
+        write_file(dir, "old.txt", "changed\n");
+        let files = repo
+            .commit_to_worktree_files(&from, true, &cancellation)
+            .unwrap();
+        assert_eq!(
+            files.len(),
+            1,
+            "one path must not be both modified and untracked"
+        );
+        assert_eq!(files[0].path, Path::new("old.txt"));
+        assert_eq!(files[0].kind, FileStatusKind::Modified);
+        assert_eq!(files[0].line_stats.additions, Some(1));
+        assert_eq!(files[0].line_stats.deletions, Some(1));
+
+        write_file(dir, "new.txt", "genuinely new\n");
+        write_file(dir, "empty.txt", "");
+        let files = repo
+            .commit_to_worktree_files(&from, true, &cancellation)
+            .unwrap();
+        assert_eq!(files.len(), 3);
+        for name in ["new.txt", "empty.txt"] {
+            let file = files
+                .iter()
+                .find(|file| file.path == Path::new(name))
+                .unwrap();
+            assert_eq!(file.kind, FileStatusKind::Untracked, "{name}");
+            assert_eq!(file.line_stats.deletions, Some(0));
+            assert_eq!(
+                file.line_stats.additions,
+                Some(u32::from(name == "new.txt"))
+            );
+        }
+        let tracked = repo
+            .commit_to_worktree_files(&from, false, &cancellation)
+            .unwrap();
+        assert_eq!(tracked.len(), 1);
+        assert_eq!(tracked[0].path, Path::new("old.txt"));
+        assert_eq!(tracked[0].kind, FileStatusKind::Deleted);
+        assert_eq!(
+            std::fs::read(&index).unwrap(),
+            before,
+            "comparison must not modify the index"
+        );
+
+        let saved_index = dir.join(".git/index.saved");
+        std::fs::rename(&index, &saved_index).unwrap();
+        let files = repo
+            .commit_to_worktree_files(&from, true, &cancellation)
+            .unwrap();
+        assert_eq!(files.len(), 3);
+        let retained: Vec<_> = files
+            .iter()
+            .filter(|file| file.path == Path::new("old.txt"))
+            .collect();
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].kind, FileStatusKind::Modified);
+        assert!(
+            !index.exists(),
+            "comparison recreated the missing source index"
+        );
+        std::fs::rename(saved_index, &index).unwrap();
+
+        assert!(
+            intent_to_add_index(dir, &repo.repo(), &["absent.txt".into()], &cancellation).is_err(),
+            "if preparing the comparison fails, return the Git error"
+        );
+        assert_eq!(
+            std::fs::read(&index).unwrap(),
+            before,
+            "failed temporary index keeps the original index"
         );
     }
 

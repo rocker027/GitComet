@@ -9,6 +9,63 @@ fn raw(row: usize) -> [u8; 20] {
 }
 
 #[test]
+fn branch_navigation_rebuilds_when_same_length_projection_hides_a_different_row() {
+    let cancel = CancellationToken::new();
+    let mut builder = HistoryIndexBuilder::new(
+        HistorySnapshot("branch-navigation-visibility".into()),
+        LogScope::AllBranches,
+        20,
+    )
+    .unwrap();
+    let parents: &[&[usize]] = &[&[2, 3], &[2, 4], &[3], &[4], &[]];
+    for (row, parents) in parents.iter().enumerate() {
+        let parents: Vec<_> = parents.iter().copied().map(raw).collect();
+        builder
+            .push(&raw(row), parents.iter().map(|id| id.as_slice()), false)
+            .unwrap();
+    }
+    let index = builder.finish(&cancel).unwrap();
+    let stash = |row| StashEntry {
+        index: 0,
+        id: index.commit_id(row).unwrap(),
+        message: "saved".into(),
+        created_at: None,
+    };
+    let old =
+        IndexedGraph::build(index.clone(), &[], &[], &[stash(0)], None, None, &cancel).unwrap();
+    let next = IndexedGraph::build_reusing(
+        index.clone(),
+        &[],
+        &[],
+        &[stash(1)],
+        None,
+        None,
+        &cancel,
+        Some(&old),
+    )
+    .unwrap();
+    assert_eq!(old.projection.len(), next.projection.len());
+    assert_ne!(old.projection, next.projection);
+    assert!(
+        !old.branch_children
+            .shares_storage_with(&next.branch_children)
+    );
+
+    let child = |graph: &IndexedGraph, row| {
+        super::super::branch_navigation::indexed_branch_neighbor(
+            &graph.projection,
+            &graph.branch_children,
+            &index.commit_id(row).unwrap(),
+            -1,
+            None,
+        )
+    };
+    assert_eq!(child(&old, 4), Some(2));
+    assert_eq!(child(&next, 3), Some(2));
+    assert_eq!(child(&next, 4), None);
+}
+
+#[test]
 fn indexed_stash_style_survives_checkpoint_replay_and_stash_list_refresh() {
     let base = CHECKPOINT_STRIDE + 2;
     let mut builder = HistoryIndexBuilder::new(

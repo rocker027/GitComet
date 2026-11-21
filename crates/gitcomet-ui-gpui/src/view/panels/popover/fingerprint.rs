@@ -221,6 +221,8 @@ pub(super) fn notify_fingerprint(
                     ..
                 } = popover
                 {
+                    state.active_repo.hash(&mut hasher);
+                    repo.lifetime().hash(&mut hasher);
                     state
                         .worktree_finish_protects_worktree(repo.id, path)
                         .hash(&mut hasher);

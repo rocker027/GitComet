@@ -19,13 +19,14 @@ pub(super) enum WorktreeAddBlocked {
 pub(super) struct WorktreeAddFields<'a> {
     pub(super) folder: &'a str,
     pub(super) source: &'a str,
+    pub(super) source_upstream: Option<&'a Upstream>,
     pub(super) create_branch: bool,
     pub(super) new_branch: &'a str,
 }
 
 /// The ref the dialog starts from: the remote's default branch, preferring the
 /// local branch that tracks it, then a local `main` or `master`, then HEAD's branch.
-pub(super) fn default_worktree_source(repo: &RepoState) -> String {
+pub(super) fn default_worktree_source(repo: &RepoState) -> (String, Option<Upstream>) {
     let branches = repo.branches.ready().map_or(&[][..], |b| b.as_slice());
     let remotes = repo.remotes.ready().map_or(&[][..], |r| r.as_slice());
     let remote_branches = repo.remote_branches.ready().map(|b| b.as_slice());
@@ -46,19 +47,26 @@ pub(super) fn default_worktree_source(repo: &RepoState) -> String {
                 .is_some_and(|upstream| upstream.remote == remote && upstream.branch == default)
         });
         if let Some(tracking) = tracking {
-            return tracking.name.clone();
+            return (tracking.name.clone(), None);
         }
         if branches.iter().any(|branch| branch.name == default) {
-            return default.to_string();
+            return (default.to_string(), None);
         }
-        return format!("{remote}/{default}");
+        return (
+            format!("{remote}/{default}"),
+            Some(Upstream {
+                remote: remote.to_string(),
+                branch: default.to_string(),
+            }),
+        );
     }
-    ["main", "master"]
+    let local = ["main", "master"]
         .into_iter()
         .find(|name| branches.iter().any(|branch| branch.name == *name))
         .or(head)
         .unwrap_or_default()
-        .to_string()
+        .to_string();
+    (local, None)
 }
 
 /// The first remote with a known default branch, as `(remote, branch)`: the one
@@ -106,8 +114,14 @@ pub(super) fn worktree_add_request(
     // The folder starts as the current worktree's path; it needs a new one.
     let new_folder = (!folder.is_empty() && !is_listed_worktree(repo, &path)).then_some(&path);
     let source = fields.source.trim();
+    let upstream = fields
+        .source_upstream
+        .cloned()
+        .or_else(|| unambiguous_remote_source(repo, source));
     let checkout = if fields.create_branch {
-        new_branch_checkout(repo, new_folder, source, fields.new_branch.trim())?
+        new_branch_checkout(repo, new_folder, source, upstream, fields.new_branch.trim())?
+    } else if let Some(upstream) = upstream {
+        WorktreeCheckout::ExistingRemote { upstream }
     } else {
         existing_checkout(repo, source)?
     };
@@ -115,6 +129,37 @@ pub(super) fn worktree_add_request(
         Some(path) => Ok((path.clone(), checkout)),
         None => Err(WorktreeAddBlocked::Incomplete),
     }
+}
+
+/// A typed label may refer to a local branch or tag as well as a remote.
+/// A preselected remote carries its identity separately from this inference.
+fn unambiguous_remote_source(repo: &RepoState, source: &str) -> Option<Upstream> {
+    if !source.contains('/') {
+        return None;
+    }
+    if repo
+        .branches
+        .ready()?
+        .iter()
+        .any(|branch| branch.name == source)
+        || repo
+            .tags
+            .ready()
+            .is_some_and(|tags| tags.iter().any(|tag| tag.name == source))
+    {
+        return None;
+    }
+    let mut matches = repo.remote_branches.ready()?.iter().filter(|branch| {
+        source
+            .strip_prefix(branch.remote.as_str())
+            .and_then(|rest| rest.strip_prefix('/'))
+            == Some(branch.name.as_str())
+    });
+    let branch = matches.next()?;
+    matches.next().is_none().then(|| Upstream {
+        remote: branch.remote.clone(),
+        branch: branch.name.clone(),
+    })
 }
 
 /// Compared lexically: a filesystem check here would run on every render.
@@ -174,6 +219,7 @@ fn new_branch_checkout(
     repo: &RepoState,
     new_folder: Option<&PathBuf>,
     source: &str,
+    upstream: Option<Upstream>,
     typed_name: &str,
 ) -> Result<WorktreeCheckout, WorktreeAddBlocked> {
     let name = match typed_name {
@@ -196,23 +242,11 @@ fn new_branch_checkout(
     {
         return Err(WorktreeAddBlocked::BranchAlreadyExists(name));
     }
-    let tracked = repo.remote_branches.ready().and_then(|branches| {
-        branches.iter().find(|branch| {
-            branch.name == name
-                && source
-                    .strip_prefix(branch.remote.as_str())
-                    .and_then(|rest| rest.strip_prefix('/'))
-                    == Some(branch.name.as_str())
-        })
-    });
-    Ok(match tracked {
-        Some(branch) => WorktreeCheckout::TrackRemote {
-            name,
-            upstream: Upstream {
-                remote: branch.remote.clone(),
-                branch: branch.name.clone(),
-            },
-        },
+    Ok(match upstream {
+        Some(upstream) if name == upstream.branch => {
+            WorktreeCheckout::TrackRemote { name, upstream }
+        }
+        Some(upstream) => WorktreeCheckout::NewBranchFromRemote { name, upstream },
         None => WorktreeCheckout::NewBranch {
             name,
             start: (!source.is_empty()).then(|| source.to_string()),
@@ -268,14 +302,16 @@ pub(super) fn panel(
             .separated_end_slot(super::hotkey_hint(theme, "worktree_add_go_hint", "Enter")),
     };
     let create_branch = this.worktree_add_create_branch;
-    let detached = this
-        .state
-        .repos
-        .iter()
-        .find(|repo| repo.id == repo_id)
-        .is_some_and(|repo| {
-            checks_out_detached(repo, create_branch, &this.worktree_ref_source_target)
-        });
+    let detached = !create_branch
+        && (this.worktree_ref_source_upstream.is_some()
+            || this
+                .state
+                .repos
+                .iter()
+                .find(|repo| repo.id == repo_id)
+                .is_some_and(|repo| {
+                    checks_out_detached(repo, create_branch, &this.worktree_ref_source_target)
+                }));
     let ui_scale_percent = super::popover_ui_scale_percent(cx);
     let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
 
@@ -559,6 +595,13 @@ mod tests {
         }
     }
 
+    fn upstream(remote: &str, branch: &str) -> Upstream {
+        Upstream {
+            remote: remote.into(),
+            branch: branch.into(),
+        }
+    }
+
     fn repo(head: &str, branches: Vec<Branch>, remotes: Vec<Remote>) -> RepoState {
         let mut repo = RepoState::new_opening(
             RepoId(1),
@@ -582,7 +625,7 @@ mod tests {
             ],
             vec![remote("origin", Some("main"))],
         );
-        assert_eq!(default_worktree_source(&repo), "trunk");
+        assert_eq!(default_worktree_source(&repo), ("trunk".into(), None));
     }
 
     #[test]
@@ -592,7 +635,10 @@ mod tests {
             vec![branch("feature", None)],
             vec![remote("origin", Some("main"))],
         );
-        assert_eq!(default_worktree_source(&repo), "origin/main");
+        assert_eq!(
+            default_worktree_source(&repo),
+            ("origin/main".into(), Some(upstream("origin", "main")))
+        );
     }
 
     #[test]
@@ -605,7 +651,13 @@ mod tests {
                 remote("upstream", Some("develop")),
             ],
         );
-        assert_eq!(default_worktree_source(&repo), "upstream/develop");
+        assert_eq!(
+            default_worktree_source(&repo),
+            (
+                "upstream/develop".into(),
+                Some(upstream("upstream", "develop"))
+            )
+        );
     }
 
     #[test]
@@ -615,9 +667,12 @@ mod tests {
             vec![branch("feature", None), branch("master", None)],
             vec![remote("origin", None)],
         );
-        assert_eq!(default_worktree_source(&with_master), "master");
+        assert_eq!(
+            default_worktree_source(&with_master),
+            ("master".into(), None)
+        );
         let bare = repo("feature", vec![branch("feature", None)], Vec::new());
-        assert_eq!(default_worktree_source(&bare), "feature");
+        assert_eq!(default_worktree_source(&bare), ("feature".into(), None));
     }
 
     /// A repo on `main` with `origin/x` fetched and `main` also listed as a worktree.
@@ -656,6 +711,7 @@ mod tests {
             &WorktreeAddFields {
                 folder,
                 source,
+                source_upstream: None,
                 create_branch,
                 new_branch,
             },
@@ -722,11 +778,59 @@ mod tests {
             request("/tmp/ws/y", "origin/x", true, "y"),
             Ok((
                 PathBuf::from("/tmp/ws/y"),
-                WorktreeCheckout::NewBranch {
+                WorktreeCheckout::NewBranchFromRemote {
                     name: "y".to_string(),
-                    start: Some("origin/x".to_string()),
+                    upstream: upstream("origin", "x"),
                 }
             ))
+        );
+    }
+
+    #[test]
+    fn a_selected_remote_survives_a_same_named_local_branch() {
+        let mut repo = request_repo();
+        repo.branches = Loadable::Ready(Arc::new(vec![branch("origin/x", None)]));
+        let selected = upstream("origin", "x");
+        let checkout = |create_branch, new_branch, source_upstream| {
+            worktree_add_request(
+                &repo,
+                &WorktreeAddFields {
+                    folder: "/tmp/ws/y",
+                    source: "origin/x",
+                    source_upstream,
+                    create_branch,
+                    new_branch,
+                },
+            )
+            .unwrap()
+            .1
+        };
+        assert_eq!(
+            checkout(true, "y", Some(&selected)),
+            WorktreeCheckout::NewBranchFromRemote {
+                name: "y".into(),
+                upstream: selected.clone(),
+            }
+        );
+        assert_eq!(
+            checkout(true, "x", Some(&selected)),
+            WorktreeCheckout::TrackRemote {
+                name: "x".into(),
+                upstream: selected.clone(),
+            }
+        );
+        assert_eq!(
+            checkout(false, "", Some(&selected)),
+            WorktreeCheckout::ExistingRemote {
+                upstream: selected.clone()
+            }
+        );
+        assert_eq!(
+            checkout(true, "x", None),
+            WorktreeCheckout::NewBranch {
+                name: "x".into(),
+                start: Some("origin/x".into()),
+            }
         );
     }
 
@@ -773,6 +877,7 @@ mod tests {
                 &WorktreeAddFields {
                     folder: "/tmp/ws/again",
                     source: "free",
+                    source_upstream: None,
                     create_branch: false,
                     new_branch: "",
                 },
@@ -815,6 +920,7 @@ mod tests {
                 &WorktreeAddFields {
                     folder: "/tmp/ws/detached",
                     source: "HEAD",
+                    source_upstream: None,
                     create_branch: false,
                     new_branch: "",
                 },
@@ -848,7 +954,7 @@ mod tests {
             vec![remote("origin", Some("gone"))],
         );
         repo.remote_branches = Loadable::Ready(Arc::new(Vec::new()));
-        assert_eq!(default_worktree_source(&repo), "master");
+        assert_eq!(default_worktree_source(&repo), ("master".into(), None));
     }
 
     #[test]

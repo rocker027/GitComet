@@ -6,6 +6,7 @@ use super::conflict_load::{
 use super::util::{
     SelectedConflictTarget, SelectedDiffLoadPlan, apply_selected_diff_load_plan_state,
     diff_target_preview_flags, error_loadable, selected_conflict_target, selected_diff_load_plan,
+    waiting_for_live_comparison_diff,
 };
 use crate::model::{
     AppState, ComparisonSource, ConflictFileLoadMode, DiagnosticKind, FileEditReturnView,
@@ -595,6 +596,12 @@ pub(super) fn fill_select_diff_inline(
     };
 
     let content_preview = mode.is_content_view();
+    if !content_preview
+        && repo_state.diff_state.diff_target.as_ref() == Some(&target)
+        && waiting_for_live_comparison_diff(repo_state)
+    {
+        return;
+    }
     clear_inline_submodule_diff_state(repo_state);
     repo_state.diff_state.content_preview = content_preview;
     repo_state.diff_state.edit_mode = mode == ContentViewMode::Edit;
@@ -627,8 +634,11 @@ pub(super) fn fill_select_diff_inline(
         selected_diff_load_plan(inputs, repo_state, target)
     };
     apply_selected_diff_load_plan_state(repo_state, load_plan);
-    super::util::mark_text_attributes_loading(repo_state);
     repo_state.bump_diff_state_rev();
+    if waiting_for_live_comparison_diff(repo_state) {
+        return;
+    }
+    super::util::mark_text_attributes_loading(repo_state);
 
     effects.push(Effect::LoadSelectedDiff {
         repo_id,
@@ -993,6 +1003,7 @@ pub(super) fn diff_loaded(
 ) -> Vec<Effect> {
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
         && repo_state.diff_state.diff_target.as_ref() == Some(&target)
+        && !waiting_for_live_comparison_diff(repo_state)
     {
         // The reload this was waiting for has arrived, whatever it carries and
         // whichever branch below claims it: the rows on screen are about to stop
@@ -1120,6 +1131,7 @@ pub(super) fn diff_file_loaded(
 ) -> Vec<Effect> {
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
         && repo_state.diff_state.diff_target.as_ref() == Some(&target)
+        && !waiting_for_live_comparison_diff(repo_state)
     {
         if selected_conflict_target(repo_state, &target).is_some() {
             return Vec::new();
@@ -1164,6 +1176,7 @@ pub(super) fn diff_file_image_loaded(
 ) -> Vec<Effect> {
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
         && repo_state.diff_state.diff_target.as_ref() == Some(&target)
+        && !waiting_for_live_comparison_diff(repo_state)
     {
         if selected_conflict_target(repo_state, &target).is_some() {
             return Vec::new();
@@ -1212,6 +1225,7 @@ pub(super) fn diff_preview_text_file_loaded(
 ) -> Vec<Effect> {
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
         && repo_state.diff_state.diff_target.as_ref() == Some(&target)
+        && !waiting_for_live_comparison_diff(repo_state)
     {
         let current_plan = selected_diff_load_plan(inputs, repo_state, &target);
         if current_plan.preview_text_side != Some(side) {
@@ -1240,7 +1254,9 @@ pub(super) fn submodule_summary_loaded(
 ) -> Vec<Effect> {
     let mut effects = SelectDiffEffects::new();
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
-        if repo_state.diff_state.diff_target.as_ref() != Some(&target) {
+        if repo_state.diff_state.diff_target.as_ref() != Some(&target)
+            || waiting_for_live_comparison_diff(repo_state)
+        {
             return Vec::new();
         }
 

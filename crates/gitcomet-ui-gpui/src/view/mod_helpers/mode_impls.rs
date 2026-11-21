@@ -716,6 +716,7 @@ pub(crate) enum WorktreePopoverKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorktreeAddPrefill {
     pub(crate) source: String,
+    pub(crate) source_upstream: Option<gitcomet_core::domain::Upstream>,
     pub(crate) create_branch: bool,
     pub(crate) new_branch: String,
     /// Open the worktree in a tab once git has created it.

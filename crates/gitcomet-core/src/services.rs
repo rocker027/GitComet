@@ -363,6 +363,10 @@ pub enum WorktreeCheckout {
     NewBranch { name: String, start: Option<String> },
     /// `--track -b <name>` from the remote-tracking ref of `upstream`.
     TrackRemote { name: String, upstream: Upstream },
+    /// `--no-track -b <name>` from the live remote-tracking ref of `upstream`.
+    NewBranchFromRemote { name: String, upstream: Upstream },
+    /// `--detach` at the live remote-tracking ref of `upstream`.
+    ExistingRemote { upstream: Upstream },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

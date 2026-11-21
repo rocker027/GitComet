@@ -144,6 +144,36 @@ pub(super) fn commit_model(
 }
 
 impl PopoverHost {
+    pub(super) fn history_worktree_menu_is_stale(&self) -> bool {
+        use crate::view::panes::history::{
+            HISTORY_WORKTREE_ROW_MENU_PREFIX, history_worktree_menu_invoker,
+            history_worktree_menu_target,
+        };
+
+        let Some(invoker) = self
+            .active_invoker
+            .as_ref()
+            .filter(|invoker| invoker.starts_with(HISTORY_WORKTREE_ROW_MENU_PREFIX))
+        else {
+            return false;
+        };
+        let Some(PopoverKind::Repo {
+            repo_id,
+            kind: RepoPopoverKind::Worktree(WorktreePopoverKind::Menu { path, branch }),
+        }) = self.popover.as_ref()
+        else {
+            return false;
+        };
+        self.store.snapshot().is_none_or(|state| {
+            history_worktree_menu_target(&state, *repo_id, path).is_none_or(
+                |(lifetime, current)| {
+                    current != branch.as_deref()
+                        || *invoker != history_worktree_menu_invoker(*repo_id, lifetime, path)
+                },
+            )
+        })
+    }
+
     /// Snapshot availability once per menu opening, away from the UI thread.
     /// A stat on an offline network share may never return; the menu remains
     /// usable with the location action disabled while the check is pending.

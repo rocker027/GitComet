@@ -433,6 +433,10 @@ pub(super) fn reload_selected_file_text(
     repo_state: &mut RepoState,
     target: &DiffTarget,
 ) -> Vec<Effect> {
+    if waiting_for_live_comparison_diff(repo_state) {
+        // The confirmed comparison reload will read with the new encoding.
+        return Vec::new();
+    }
     if let Some(conflict_target) = selected_conflict_target(repo_state, target) {
         return match conflict_target {
             SelectedConflictTarget::Current => start_current_conflict_target_reload(repo_state),
@@ -455,6 +459,14 @@ pub(super) fn reload_selected_file_text(
         load_submodule_summary: load_plan.load_submodule_summary,
         load_file_image: load_plan.load_file_image,
     }]
+}
+
+pub(super) fn waiting_for_live_comparison_diff(repo: &RepoState) -> bool {
+    repo.selected_live_comparison_diff()
+        .zip(repo.history_state.range_diff_refresh.as_ref())
+        .is_some_and(|(target, refresh)| {
+            super::external_and_history::external_change_reloads_diff(target, refresh)
+        })
 }
 
 pub(super) fn apply_selected_diff_load_plan_state(
@@ -625,6 +637,8 @@ pub(super) fn replan_one_sided_change(
     };
     if repo_state.diff_state.inline_submodule_diff.is_some()
         || selected_conflict_target(repo_state, &target).is_some()
+        || (repo_state.selected_live_comparison_diff().is_some()
+            && !matches!(repo_state.history_state.range_files, Loadable::Ready(_)))
     {
         return effects;
     }

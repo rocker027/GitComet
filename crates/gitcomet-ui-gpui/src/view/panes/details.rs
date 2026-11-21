@@ -2646,7 +2646,11 @@ impl DetailsPaneView {
         }
     }
 
-    fn apply_state_snapshot(&mut self, next: Arc<AppState>, cx: &mut gpui::Context<Self>) {
+    pub(in crate::view) fn apply_state_snapshot(
+        &mut self,
+        next: Arc<AppState>,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.file_controllers
             .borrow_mut()
             .retain(|(id, _), _| next.repos.iter().any(|repo| repo.id == *id));

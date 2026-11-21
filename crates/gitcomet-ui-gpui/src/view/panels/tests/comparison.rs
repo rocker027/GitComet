@@ -152,6 +152,108 @@ fn draw_details<'a>(
     (view, cx)
 }
 
+#[gpui::test]
+fn adjacent_comparison_mode_button_switches_both_directions(cx: &mut gpui::TestAppContext) {
+    assert_adjacent_mode_button(cx, 460.0);
+}
+
+#[gpui::test]
+fn adjacent_comparison_mode_button_fits_a_narrow_details_pane(cx: &mut gpui::TestAppContext) {
+    assert_adjacent_mode_button(cx, 260.0);
+}
+
+fn assert_adjacent_mode_button(cx: &mut gpui::TestAppContext, width: f32) {
+    let repo_id = RepoId(112);
+    let (view, cx) = draw_comparison_view(cx, repo_id, 3, 2, Files::Loaded(1));
+    cx.update(|_, app| {
+        view.update(app, |this, cx| {
+            this.details_width = px(width);
+            this.details_render_width = px(width);
+            let mut state = (*this.store.snapshot()).clone();
+            let repo = &mut state.repos[0];
+            let Loadable::Ready(page) = &mut repo.log else {
+                panic!("fixture log is loaded");
+            };
+            let page = Arc::make_mut(page);
+            page.commits[0].parent_ids.push(CommitId(sha(1).into()));
+            page.commits[1].parent_ids.push(CommitId(sha(2).into()));
+            repo.log_rev += 1;
+            repo.history_state.log = repo.log.clone();
+            repo.history_state.log_rev += 1;
+            let range = repo.history_state.range_selection.as_mut().unwrap();
+            range.from = CommitId(sha(2).into());
+            range.to = Some(CommitId(sha(0).into()));
+            let state = Arc::new(state);
+            this.store.replace_snapshot_for_test(state.clone());
+            push_test_state(this, state, cx);
+        });
+    });
+    for expected_source in [
+        ComparisonSource::AdjacentPair,
+        ComparisonSource::MergedSelection,
+    ] {
+        crate::test_support::refresh_and_draw(cx);
+        let button = cx
+            .debug_bounds("range_comparison_toggle_mode")
+            .expect("mode button");
+        let body = cx.debug_bounds("range_comparison_body").unwrap();
+        assert!(button.left() >= body.left() && button.right() <= body.right());
+        assert!(button.size.width > px(0.0) && button.size.height > px(0.0));
+        cx.simulate_click(button.center(), gpui::Modifiers::default());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let done = cx.update(|_, app| {
+                view.update(app, |this, cx| {
+                    let state = this.store.snapshot();
+                    let range = state.repos[0]
+                        .history_state
+                        .range_selection
+                        .as_ref()
+                        .unwrap();
+                    if range.source != expected_source {
+                        return false;
+                    }
+                    let expected_from = if expected_source == ComparisonSource::AdjacentPair {
+                        1
+                    } else {
+                        2
+                    };
+                    assert_eq!(range.from, CommitId(sha(expected_from).into()));
+                    assert_eq!(range.to, Some(CommitId(sha(0).into())));
+                    push_test_state(this, state, cx);
+                    true
+                })
+            });
+            if done {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "mode click did not dispatch its displayed endpoints"
+            );
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+    // A normal explicit comparison retains its existing presentation without a toggle.
+    cx.update(|_, app| {
+        view.update(app, |this, cx| {
+            let mut state = (*this.store.snapshot()).clone();
+            state.repos[0]
+                .history_state
+                .range_selection
+                .as_mut()
+                .unwrap()
+                .source = ComparisonSource::Explicit;
+            let state = Arc::new(state);
+            this.store.replace_snapshot_for_test(state.clone());
+            push_test_state(this, state, cx);
+        });
+    });
+    crate::test_support::refresh_and_draw(cx);
+    assert!(cx.debug_bounds("range_comparison_toggle_mode").is_none());
+}
+
 /// Three or more commits with a gap have no merged diff, so the reducer opens
 /// no comparison for them. The pane lists them and says why there is no diff,
 /// rather than leaving a list that reads as if the diff were still to come.
@@ -190,6 +292,67 @@ fn range_comparison_renders_endpoint_commit_cards(cx: &mut gpui::TestAppContext)
     assert!(
         cx.debug_bounds("commit_multi_row_1").is_some(),
         "expected the base commit's preview card to render for a range comparison"
+    );
+}
+
+#[gpui::test]
+fn working_tree_comparison_shows_scope_and_revisions_in_a_narrow_pane(
+    cx: &mut gpui::TestAppContext,
+) {
+    let repo_id = RepoId(109);
+    let mut range = RangeSelection::new(
+        CommitId(sha(1).into()),
+        None,
+        "feature/a-long-branch-name-for-review".into(),
+        "Working tree".into(),
+    );
+    let (view, cx) = draw_details(cx, repo_id, 2, &[], Some(range.clone()), Files::Loaded(1));
+    cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.details_width = px(300.0);
+            view.details_render_width = px(300.0);
+            cx.notify();
+        });
+    });
+    crate::test_support::refresh_and_draw(cx);
+    let body = cx.debug_bounds("range_comparison_body").unwrap();
+    for selector in [
+        "range_comparison_revisions",
+        "range_comparison_untracked_notice",
+        "range_comparison_toggle_untracked",
+    ] {
+        let bounds = cx.debug_bounds(selector).expect(selector);
+        assert!(bounds.left() >= body.left() && bounds.right() <= body.right());
+        assert!(bounds.size.height > px(0.0));
+    }
+    assert!(cx.debug_bounds("range_file_109_0").is_some());
+
+    range.to = Some(CommitId(sha(0).into()));
+    range.to_label = "main".into();
+    cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            let mut state = (*view.store.snapshot()).clone();
+            state
+                .repos
+                .iter_mut()
+                .find(|repo| repo.id == repo_id)
+                .unwrap()
+                .history_state
+                .range_selection = Some(range.clone());
+            let state = Arc::new(state);
+            view.store.replace_snapshot_for_test(state.clone());
+            push_test_state(view, state, cx);
+        });
+    });
+    crate::test_support::refresh_and_draw(cx);
+    assert!(cx.debug_bounds("range_comparison_revisions").is_some());
+    assert!(
+        cx.debug_bounds("range_comparison_untracked_notice")
+            .is_none()
+    );
+    assert!(
+        cx.debug_bounds("range_comparison_toggle_untracked")
+            .is_none()
     );
 }
 
@@ -360,6 +523,186 @@ fn an_empty_comparison_reads_as_empty(cx: &mut gpui::TestAppContext) {
     assert!(cx.debug_bounds("range_files_empty").is_some());
     assert!(cx.debug_bounds("range_files_error").is_none());
     assert!(cx.debug_bounds("range_files_label_count").is_some());
+}
+
+/// No repository handle is installed: the normal Store entry points schedule
+/// their loads, but this test controls when each completion enters the reducer.
+/// After the initial fixture every state transition is a dispatched message.
+#[gpui::test]
+fn live_comparison_keeps_rendered_patch_until_the_latest_file_list_reconciles_it(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gitcomet_core::domain::{Diff, DiffTarget, FileDiffText};
+    use gitcomet_state::msg::{InternalMsg, RepoExternalChange};
+
+    let repo_id = RepoId(114);
+    let from = CommitId(sha(1).into());
+    let range = RangeSelection::new(from.clone(), None, "source".into(), "Working tree".into());
+    let (view, cx) = draw_details(cx, repo_id, 2, &[], Some(range), Files::Loaded(1));
+    let store = cx.update(|_, app| view.read(app).store.clone());
+    store.disable_repo_monitors_for_test();
+    set_diff_content_mode_for_test(cx, &view, DiffContentMode::Collapsed);
+    let publish = |cx: &mut gpui::VisualTestContext| {
+        store
+            .barrier_for_test()
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .expect("queued Store reductions completed");
+        cx.update(|_, app| {
+            view.update(app, |this, cx| {
+                push_test_state(this, store.snapshot(), cx);
+            })
+        });
+        crate::test_support::refresh_and_draw(cx);
+    };
+    let row = cx.debug_bounds("range_file_114_0").unwrap();
+    cx.simulate_click(row.center(), gpui::Modifiers::default());
+    publish(cx);
+    let path = std::path::PathBuf::from("src/file_0.rs");
+    let target = DiffTarget::commit_range(from.clone(), None, Some(path.clone()));
+    assert_eq!(
+        store.snapshot().repos[0].diff_state.diff_target.as_ref(),
+        Some(&target)
+    );
+    let sentinel = "kept_modified_patch_sentinel";
+    let patch = Diff::from_unified(
+        target.clone(),
+        &format!(
+            "diff --git a/src/file_0.rs b/src/file_0.rs\n--- a/src/file_0.rs\n+++ b/src/file_0.rs\n@@ -1 +1 @@\n-old\n+{sentinel}\n"
+        ),
+    );
+    store.dispatch(Msg::Internal(InternalMsg::DiffLoaded {
+        repo_id,
+        target: target.clone(),
+        result: Ok(patch),
+    }));
+    store.dispatch(Msg::Internal(InternalMsg::DiffFileLoaded {
+        repo_id,
+        target: target.clone(),
+        result: Ok(Some(FileDiffText::new(
+            path.clone(),
+            Some("old\n".into()),
+            Some(format!("{sentinel}\n")),
+        ))),
+    }));
+    publish(cx);
+    let rendered_content = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|_, app| {
+            let pane = view.read(app).diff_renderer.read(app);
+            pane.rendered_diff_target() == Some(&target)
+                && pane
+                    .rendered_patch_diff_loadable()
+                    .and_then(Loadable::ready)
+                    .is_some_and(|patch| {
+                        patch.lines.iter().any(|line| line.text.contains(sentinel))
+                    })
+                && (0..pane.file_diff_split_row_len())
+                    .filter_map(|ix| pane.file_diff_split_row(ix))
+                    .any(|row| {
+                        row.new
+                            .as_deref()
+                            .is_some_and(|line| line.contains(sentinel))
+                    })
+        })
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !rendered_content(cx) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the selected Modified patch must actually reach the renderer"
+        );
+        cx.run_until_parked();
+        crate::test_support::refresh_and_draw(cx);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(cx.debug_bounds("diff_body_container").is_some());
+    let before = store.snapshot().repos[0]
+        .history_state
+        .range_selection
+        .clone()
+        .unwrap();
+    let previous_request = store.snapshot().repos[0].history_state.range_files_request;
+    store.dispatch(Msg::RepoExternallyChanged {
+        repo_id,
+        change: RepoExternalChange::worktree(),
+    });
+    publish(cx);
+    let pending = store.snapshot();
+    let history = &pending.repos[0].history_state;
+    assert!(history.range_files_in_flight);
+    let latest_request = history.range_files_request;
+    assert!(latest_request > previous_request);
+    assert_eq!(history.range_selection.as_ref(), Some(&before));
+    assert!(
+        rendered_content(cx),
+        "starting a refresh must preserve the current patch"
+    );
+
+    // The file list remains held. An earlier independent diff read now reports
+    // an empty file; it must not blank the selected patch ahead of that list.
+    store.dispatch(Msg::Internal(InternalMsg::DiffLoaded {
+        repo_id,
+        target: target.clone(),
+        result: Ok(Diff {
+            target: target.clone(),
+            lines: Vec::new(),
+        }),
+    }));
+    store.dispatch(Msg::Internal(InternalMsg::DiffFileLoaded {
+        repo_id,
+        target: target.clone(),
+        result: Ok(Some(FileDiffText::new(path, None, None))),
+    }));
+    publish(cx);
+    cx.update(|window, app| {
+        window.simulate_next_frame(app);
+        let _ = window.draw(app);
+    });
+    assert_eq!(
+        store.snapshot().repos[0].diff_state.diff_target.as_ref(),
+        Some(&target)
+    );
+    assert!(
+        rendered_content(cx),
+        "an early empty diff must not erase the rendered patch while the range result is pending"
+    );
+
+    store.dispatch(Msg::Internal(InternalMsg::RangeFilesLoaded {
+        repo_id,
+        from: from.clone(),
+        to: None,
+        request: latest_request,
+        result: Ok(gitcomet_core::services::Comparison::new(from, Vec::new())),
+    }));
+    publish(cx);
+    let state = store.snapshot();
+    let repo = &state.repos[0];
+    assert!(
+        repo.history_state
+            .range_files
+            .ready()
+            .is_some_and(|files| files.is_empty())
+    );
+    assert!(repo.diff_state.diff_target.is_none());
+    let after = repo.history_state.range_selection.as_ref().unwrap();
+    assert_eq!(
+        (&after.from, &after.to, after.source, after.options),
+        (&before.from, &before.to, before.source, before.options)
+    );
+    cx.update(|_, app| {
+        assert!(
+            view.read(app)
+                .diff_renderer
+                .read(app)
+                .rendered_diff_target()
+                .is_none()
+        );
+        assert_eq!(
+            view.read(app).main_pane.read(app).active_content(app),
+            crate::view::panes::main::MainPaneContent::History
+        );
+    });
+    assert!(cx.debug_bounds("range_comparison_body").is_some());
+    assert!(cx.debug_bounds("range_files_empty").is_some());
 }
 
 /// A selected worktree row shows *that* worktree's changed files, not this

@@ -12,6 +12,7 @@ mod history;
 mod keep_delete_conflict;
 mod next_file_advance;
 mod status_nav;
+pub(in crate::view) use status_nav::status_navigation_section;
 mod text_format_strip;
 
 #[cfg(test)]

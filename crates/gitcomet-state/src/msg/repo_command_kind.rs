@@ -18,6 +18,13 @@ pub(crate) fn worktree_checkout_label(checkout: &WorktreeCheckout) -> String {
             "new branch {name} tracking {}/{}",
             upstream.remote, upstream.branch
         ),
+        WorktreeCheckout::NewBranchFromRemote { name, upstream } => format!(
+            "new branch {name} from {}/{}",
+            upstream.remote, upstream.branch
+        ),
+        WorktreeCheckout::ExistingRemote { upstream } => {
+            format!("detached at {}/{}", upstream.remote, upstream.branch)
+        }
     }
 }
 

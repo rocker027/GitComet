@@ -257,9 +257,11 @@ pub(crate) fn msg_requires_available_git(msg: &Msg) -> bool {
             | Msg::LoadMoreHistory { .. }
             | Msg::SelectCommit { .. }
             | Msg::CompareCommitRange { .. }
+            | Msg::ToggleAdjacentComparison { .. }
             | Msg::CompareWithOptions { .. }
             | Msg::CompareWithMarked { .. }
             | Msg::CompareWithWorkingTree { .. }
+            | Msg::ToggleWorkingTreeComparisonUntracked { .. }
             | Msg::SelectDiff { .. }
             | Msg::SetTextOverride { .. }
             | Msg::SelectConflictDiff { .. }
@@ -943,9 +945,11 @@ fn worktree_finish_blocked_repo_id(state: &AppState, msg: &Msg) -> Option<RepoId
                     reference.as_str()
                 }
                 gitcomet_core::services::WorktreeCheckout::NewBranch { name, .. }
+                | gitcomet_core::services::WorktreeCheckout::NewBranchFromRemote { name, .. }
                 | gitcomet_core::services::WorktreeCheckout::TrackRemote { name, .. } => {
                     name.as_str()
                 }
+                gitcomet_core::services::WorktreeCheckout::ExistingRemote { .. } => return None,
             };
             state
                 .worktree_finish_protects_branch(*repo_id, target_branch)
@@ -1437,6 +1441,9 @@ fn reduce_inner(
             to_label,
             ComparisonSource::Explicit,
         ),
+        Msg::ToggleAdjacentComparison { repo_id, from, to } => {
+            effects::toggle_adjacent_comparison(state, repo_id, &from, &to)
+        }
         Msg::CompareWithWorkingTree {
             repo_id,
             from,
@@ -1450,6 +1457,9 @@ fn reduce_inner(
             "Working tree".to_string(),
             ComparisonSource::Explicit,
         ),
+        Msg::ToggleWorkingTreeComparisonUntracked { repo_id, expected } => {
+            effects::toggle_working_tree_comparison_untracked(state, repo_id, expected)
+        }
         Msg::CompareWithOptions {
             repo_id,
             from,

@@ -22,11 +22,7 @@ use std::sync::Arc;
 
 use super::{GitCometView, components};
 
-/// Shortest query worth asking git about.
-///
-/// Deliberately below git's four-character minimum abbreviation, because the
-/// input takes any revision and not only shas: a two-character tag like `v1`
-/// has to stay reachable. One character is the only length nobody means.
+/// Start automatic previews at two bytes. Enter can submit shorter ref names.
 const MIN_LOOKUP_QUERY_LEN: usize = 2;
 
 /// Shown while the query is too short to look up. Made-up values on purpose:
@@ -43,8 +39,8 @@ const EXAMPLES: &[(&str, &str)] = &[
 ];
 
 const EXACT_MATCH_HEADLINE: &str = "Matches are exact.";
-const EXACT_MATCH_DETAIL: &str = "This does not search commit messages — a short SHA must be unique, \
-and branch and tag names must be typed in full.";
+const EXACT_MATCH_DETAIL: &str = "Type a unique SHA abbreviation, full branch or tag name, or \
+revision. Press Enter to jump.";
 
 /// The failure line for `query`, in the user's terms.
 ///
@@ -68,7 +64,7 @@ names must be typed in full.",
 /// What the row under the input is showing.
 #[derive(Debug, Eq, PartialEq)]
 enum RevealRow<'a> {
-    /// Too little typed to ask git anything.
+    /// No automatic or explicitly requested lookup.
     Hint,
     /// A lookup is in flight, or the answer on hand is for an older query.
     Resolving,
@@ -82,15 +78,21 @@ enum RevealRow<'a> {
 /// replies land a keystroke or two behind, and showing the previous reference's
 /// commit under the current text would invite revealing the wrong commit.
 fn reveal_row<'a>(query: &str, lookup: Option<&'a CommitLookup>) -> RevealRow<'a> {
-    if query.len() < MIN_LOOKUP_QUERY_LEN {
+    if query.is_empty() {
         return RevealRow::Hint;
     }
-    let Some(lookup) = lookup else {
-        return RevealRow::Resolving;
+    let Some(lookup) = lookup.filter(|lookup| {
+        lookup
+            .reference
+            .as_ref()
+            .is_some_and(|reference| reference.as_ref() == query)
+    }) else {
+        return if query.len() < MIN_LOOKUP_QUERY_LEN {
+            RevealRow::Hint
+        } else {
+            RevealRow::Resolving
+        };
     };
-    if lookup.reference.as_ref().map(|r| r.as_ref()) != Some(query) {
-        return RevealRow::Resolving;
-    }
     match &lookup.result {
         Loadable::Ready(commit) => RevealRow::Match(commit),
         Loadable::Error(message) => RevealRow::NoMatch(message.as_str()),
@@ -112,6 +114,9 @@ pub(crate) struct RevealCommitView {
     repo_id: Option<RepoId>,
     query: SharedString,
     lookup: Option<CommitLookup>,
+    // Do not reuse a prior lookup of the same text after editing or reopening.
+    lookup_after: Option<u64>,
+    submit_on_match: bool,
     _input_subscription: gpui::Subscription,
 }
 
@@ -150,6 +155,8 @@ impl RevealCommitView {
             repo_id,
             query: SharedString::default(),
             lookup: None,
+            lookup_after: None,
+            submit_on_match: false,
             _input_subscription: input_subscription,
         }
     }
@@ -182,10 +189,35 @@ impl RevealCommitView {
         // repository has its own lookup slot, which nobody has asked about this
         // reference. Without re-asking, the row sits on "Resolving…" until the
         // user edits the query.
-        if repo_changed && self.open {
-            self.request_lookup();
-        }
         if self.open {
+            if repo_changed {
+                self.lookup_after = None;
+                self.submit_on_match = false;
+                self.request_lookup(false);
+            }
+            if self.submit_on_match {
+                match self.row() {
+                    RevealRow::Match(_) => {
+                        // The root still owns this snapshot update. Close and
+                        // reveal once it can be updated again.
+                        let dialog = cx.weak_entity();
+                        let id = cx.entity_id();
+                        cx.defer(move |app| {
+                            let _ = app.with_window(id, |window, app| {
+                                let _ = dialog.update(app, |this, cx| {
+                                    if this.submit_on_match
+                                        && matches!(this.row(), RevealRow::Match(_))
+                                    {
+                                        this.activate(window, cx);
+                                    }
+                                });
+                            });
+                        });
+                    }
+                    RevealRow::NoMatch(_) => self.submit_on_match = false,
+                    _ => {}
+                }
+            }
             cx.notify();
         }
     }
@@ -210,6 +242,8 @@ impl RevealCommitView {
         self.fallback_focus = Some(fallback_focus);
         self.repo_id = repo_id;
         self.query = SharedString::default();
+        self.lookup_after = None;
+        self.submit_on_match = false;
         self.query_input.update(cx, |input, cx| {
             // Reset the input completely, keys included — the same shape
             // `reset_picker_search_input` uses when a picker opens.
@@ -228,6 +262,7 @@ impl RevealCommitView {
             return;
         }
         self.open = false;
+        self.submit_on_match = false;
         let dialog_focus = self
             .query_input
             .read_with(cx, |input, _| input.focus_handle());
@@ -279,7 +314,9 @@ impl RevealCommitView {
             self.query = input.read_with(cx, |input, _| {
                 SharedString::from(input.text().trim().to_owned())
             });
-            self.request_lookup();
+            self.lookup_after = None;
+            self.submit_on_match = false;
+            self.request_lookup(false);
         }
 
         if enter_pressed {
@@ -292,16 +329,19 @@ impl RevealCommitView {
 
     /// Ask the store what the current query names.
     ///
-    /// Fires on every edit: the reducer's request counter drops replies a later
-    /// keystroke has overtaken, so there is nothing here for a debounce to
-    /// protect.
-    fn request_lookup(&self) {
+    /// Edits preview longer input. Enter also resolves short ref names.
+    fn request_lookup(&mut self, submitted: bool) {
         let Some(repo_id) = self.repo_id else {
             return;
         };
-        if self.query.len() < MIN_LOOKUP_QUERY_LEN {
+        if self.query.is_empty() || (!submitted && self.query.len() < MIN_LOOKUP_QUERY_LEN) {
             return;
         }
+        let snapshot = self.store.snapshot();
+        let Some(repo) = snapshot.repos.iter().find(|repo| repo.id == repo_id) else {
+            return;
+        };
+        self.lookup_after = Some(repo.history_state.commit_lookup.request);
         let reference = CommitId(self.query.as_ref().into());
         self.store.dispatch(Msg::ResolveCommitLookup {
             repo_id,
@@ -310,23 +350,38 @@ impl RevealCommitView {
         });
     }
 
-    /// Reveal whatever the row is offering.
-    ///
-    /// With a resolved commit the *full* id is handed over, so the history walk
-    /// matches loaded rows outright instead of going through prefix comparison.
-    /// While the lookup is still in flight the raw query goes instead —
-    /// `Msg::RevealCommit` resolves it itself and reports a bad reference — so
-    /// hitting Enter ahead of the answer is never swallowed.
+    fn row(&self) -> RevealRow<'_> {
+        let lookup = self.lookup.as_ref().filter(|lookup| {
+            self.lookup_after
+                .is_some_and(|before| lookup.request > before)
+        });
+        match reveal_row(self.query.as_ref(), lookup) {
+            RevealRow::Hint if self.lookup_after.is_some() => RevealRow::Resolving,
+            row => row,
+        }
+    }
+
+    /// Resolve before closing. Only a full commit id can reliably target the
+    /// same commit in the log, and a failed lookup should leave the view intact.
     fn activate(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
-        let target = match reveal_row(self.query.as_ref(), self.lookup.as_ref()) {
-            RevealRow::Match(commit) => Some(commit.id.clone()),
-            RevealRow::Resolving => Some(CommitId(self.query.as_ref().into())),
-            RevealRow::Hint | RevealRow::NoMatch(_) => None,
-        };
-        let Some(target) = target else {
+        if !self.open || self.query.is_empty() || self.store.snapshot().active_repo != self.repo_id
+        {
             return;
-        };
-        self.close_and_notify_root(Some(target), window, cx);
+        }
+        match self.row() {
+            RevealRow::Match(commit) => {
+                let target = commit.id.clone();
+                self.close_and_notify_root(Some(target), window, cx);
+            }
+            RevealRow::NoMatch(_) => {}
+            _ => {
+                self.submit_on_match = true;
+                if self.lookup_after.is_none() {
+                    self.request_lookup(true);
+                }
+                cx.notify();
+            }
+        }
     }
 
     fn close_and_notify_root(
@@ -348,8 +403,9 @@ impl RevealCommitView {
         let scaled_px = crate::ui_scale::scaler(ui_scale);
 
         // A headline plus a quieter explanation under it.
-        let message = |headline: String, detail: Option<&'static str>| {
+        let message = |selector: &'static str, headline: String, detail: Option<&'static str>| {
             div()
+                .debug_selector(move || selector.to_string())
                 .w_full()
                 .flex()
                 .flex_col()
@@ -372,12 +428,14 @@ impl RevealCommitView {
                 .into_any_element()
         };
 
-        match reveal_row(self.query.as_ref(), self.lookup.as_ref()) {
+        match self.row() {
             RevealRow::Hint => self.render_examples(cx),
-            RevealRow::Resolving => message("Resolving…".to_string(), None),
+            RevealRow::Resolving => {
+                message("reveal_commit_resolving", "Resolving…".to_string(), None)
+            }
             RevealRow::NoMatch(error) => {
                 let (headline, detail) = no_match_message(self.query.as_ref(), error);
-                message(headline, Some(detail))
+                message("reveal_commit_no_match", headline, Some(detail))
             }
             RevealRow::Match(commit) => self.render_match(commit, cx),
         }
@@ -634,11 +692,21 @@ mod tests {
     }
 
     #[test]
-    fn a_query_too_short_to_be_a_reference_asks_git_nothing() {
+    fn a_short_query_without_a_lookup_shows_examples() {
         assert_eq!(reveal_row("", None), RevealRow::Hint);
         assert_eq!(reveal_row("d", None), RevealRow::Hint);
         // Two characters is already a plausible tag, so the lookup starts here.
         assert_eq!(reveal_row("v1", None), RevealRow::Resolving);
+    }
+
+    #[test]
+    fn a_short_reference_can_show_its_explicit_lookup() {
+        let resolved = lookup("a", Loadable::Ready(commit("deadbeef")));
+        assert_eq!(
+            reveal_row("a", Some(&resolved)),
+            RevealRow::Match(&commit("deadbeef"))
+        );
+        assert_eq!(reveal_row("v", Some(&resolved)), RevealRow::Hint);
     }
 
     #[test]

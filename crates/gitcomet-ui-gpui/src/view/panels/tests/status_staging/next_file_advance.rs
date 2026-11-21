@@ -21,6 +21,8 @@ enum Trigger {
     /// a status row does, which does not arm the advance.
     DiscardOtherThenStageFromRow,
     FileButton,
+    RowButton,
+    LongFileButton,
     FileButtonThenOpenOther,
     FileButtonThenClose,
 }
@@ -52,6 +54,13 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
         std::fs::write(dir.path().join(name), BASE).unwrap();
         git(dir.path(), &["add", name]);
     }
+    if matches!(case.trigger, Trigger::LongFileButton) {
+        for ix in 0..60 {
+            let name = format!("b-{ix:03}.txt");
+            std::fs::write(dir.path().join(&name), BASE).unwrap();
+            git(dir.path(), &["add", &name]);
+        }
+    }
     commit(dir.path(), "base");
     std::fs::write(dir.path().join("a.txt"), case.a_contents).unwrap();
     std::fs::write(dir.path().join("b.txt"), ONE_CHANGE).unwrap();
@@ -62,6 +71,17 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
     if case.partial_staged {
         git(dir.path(), &["add", "a.txt"]);
         std::fs::write(dir.path().join("a.txt"), TWO_CHANGES).unwrap();
+    }
+
+    if matches!(case.trigger, Trigger::LongFileButton) {
+        // Destination already contains 60 paths before c.txt is transferred.
+        for ix in 0..60 {
+            let name = format!("b-{ix:03}.txt");
+            std::fs::write(dir.path().join(&name), ONE_CHANGE).unwrap();
+            if case.area == DiffArea::Unstaged {
+                git(dir.path(), &["add", &name]);
+            }
+        }
     }
 
     let backend = gitcomet_git_gix::GixBackend.open(dir.path()).unwrap();
@@ -134,7 +154,10 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
         std::fs::write(dir.path().join(".git/index.lock"), b"locked for test").unwrap();
     }
     match case.trigger {
-        Trigger::FileButton | Trigger::FileButtonThenOpenOther | Trigger::FileButtonThenClose => {
+        Trigger::FileButton
+        | Trigger::LongFileButton
+        | Trigger::FileButtonThenOpenOther
+        | Trigger::FileButtonThenClose => {
             click(cx, "diff_bar_stage");
             if matches!(case.trigger, Trigger::FileButtonThenOpenOther) {
                 store.dispatch(Msg::SelectDiff {
@@ -151,6 +174,17 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
                         });
                 });
             }
+        }
+        Trigger::RowButton => {
+            let section = match case.area {
+                DiffArea::Unstaged => "unstaged",
+                DiffArea::Staged => "staged",
+            };
+            let row = format!("status_row_{}_{section}_0", REPO.0);
+            let bounds = cx.debug_bounds(Box::leak(row.into_boxed_str())).unwrap();
+            cx.simulate_mouse_move(bounds.center(), None, Modifiers::default());
+            draw_and_drain_test_window(cx);
+            click(cx, &format!("status_stage_button_{}_{section}_0", REPO.0));
         }
         Trigger::Key(key) => cx.simulate_keystrokes(key),
         Trigger::StageHunkMenu => cx.update(|window, app| {
@@ -206,7 +240,10 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
     draw_and_drain_test_window(cx);
     let shown = match store.snapshot().repos[0].diff_state.diff_target.as_ref() {
         Some(DiffTarget::WorkingTree { path, area, .. }) => {
-            let expected_area = if matches!(case.trigger, Trigger::FileButton) && !case.index_locked
+            let expected_area = if matches!(
+                case.trigger,
+                Trigger::FileButton | Trigger::LongFileButton | Trigger::RowButton
+            ) && !case.index_locked
             {
                 match case.area {
                     DiffArea::Unstaged => DiffArea::Staged,
@@ -221,7 +258,11 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
         None => None,
         other => panic!("{label}: expected a working-tree diff, got {other:?}"),
     };
-    if matches!(case.trigger, Trigger::FileButton) && !case.index_locked {
+    if matches!(
+        case.trigger,
+        Trigger::FileButton | Trigger::LongFileButton | Trigger::RowButton
+    ) && !case.index_locked
+    {
         // Exercise the completion against its real post-SelectDiff snapshot:
         // that request advanced the canvas generation, and must still restore
         // the retained position. A later user request must cancel instead.
@@ -233,10 +274,12 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
                     let repo = pane.active_repo().unwrap();
                     let generation = repo.navigation.canvas_requests;
                     let ops_rev = repo.ops_rev;
+                    let repo_lifetime = repo.lifetime();
                     for (requests_since_source, expected) in [(1, -13.0), (2, -13.0)] {
                         pane.stage_file_transfer = Some(
                             crate::view::panes::diff::helpers::state::StageFileTransfer {
                                 repo_id: REPO,
+                                repo_lifetime,
                                 path: case.open.into(),
                                 from: case.area,
                                 ops_rev,
@@ -261,6 +304,82 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
                         );
                     }
                 });
+        });
+    }
+
+    if matches!(case.trigger, Trigger::LongFileButton) {
+        draw_and_drain_test_window(cx);
+        let (selector, viewport, offset_before) = cx.update(|_, app| {
+            let pane = view.read(app).details_pane.read(app);
+            let section = match case.area {
+                DiffArea::Unstaged => StatusSection::Staged,
+                DiffArea::Staged => StatusSection::CombinedUnstaged,
+            };
+            let position = pane
+                .status_path_display_position(section, std::path::Path::new(case.open))
+                .unwrap();
+            assert!(position >= 60, "{label}: fixture must require scrolling");
+            let scroll = if case.area == DiffArea::Unstaged {
+                &pane.staged_scroll
+            } else {
+                &pane.unstaged_scroll
+            };
+            assert!(
+                scroll.0.borrow().base_handle.offset().y < px(0.0),
+                "{label}: destination must scroll"
+            );
+            let scroll = scroll.0.borrow();
+            (
+                format!("status_row_{}_{}_{position}", REPO.0, section.id_label()),
+                scroll.base_handle.bounds(),
+                scroll.base_handle.offset(),
+            )
+        });
+        let row = cx
+            .debug_bounds(Box::leak(selector.into_boxed_str()))
+            .expect("transferred path is rendered");
+        assert!(
+            row.top() >= viewport.top() && row.bottom() <= viewport.bottom(),
+            "{label}: row must be fully visible"
+        );
+        // Another reveal of the already visible row must not center or jump it.
+        cx.update(|_, app| {
+            view.read(app)
+                .diff_renderer
+                .clone()
+                .update(app, |pane, cx| {
+                    let repo = pane.active_repo().unwrap();
+                    pane.commands.defer(
+                        crate::view::panes::diff::services::DiffCommand::RevealStatus {
+                            section: if case.area == DiffArea::Unstaged {
+                                StatusSection::Staged
+                            } else {
+                                StatusSection::CombinedUnstaged
+                            },
+                            path: case.open.into(),
+                            after_transfer: Some((
+                                REPO,
+                                repo.lifetime(),
+                                repo.navigation.canvas_requests,
+                            )),
+                        },
+                        cx,
+                    );
+                });
+        });
+        draw_and_drain_test_window(cx);
+        cx.update(|_, app| {
+            let pane = view.read(app).details_pane.read(app);
+            let scroll = if case.area == DiffArea::Unstaged {
+                &pane.staged_scroll
+            } else {
+                &pane.unstaged_scroll
+            };
+            assert_eq!(
+                scroll.0.borrow().base_handle.offset(),
+                offset_before,
+                "{label}: visible row must stay put"
+            );
         });
     }
 
@@ -420,5 +539,27 @@ fn closing_the_diff_cancels_the_pending_lane_transfer(cx: &mut gpui::TestAppCont
     for area in [DiffArea::Unstaged, DiffArea::Staged] {
         let case = case(area, "a.txt", Trigger::FileButtonThenClose);
         assert_eq!(shown_after(cx, case), None, "{case:?}");
+    }
+}
+
+#[gpui::test]
+fn row_buttons_follow_the_open_file_to_the_other_lane(cx: &mut gpui::TestAppContext) {
+    for area in [DiffArea::Unstaged, DiffArea::Staged] {
+        assert_eq!(
+            shown_after(cx, case(area, "a.txt", Trigger::RowButton)).as_deref(),
+            Some("a.txt")
+        );
+    }
+}
+
+#[gpui::test]
+fn file_buttons_reveal_the_transferred_path_in_long_destination_lists(
+    cx: &mut gpui::TestAppContext,
+) {
+    for area in [DiffArea::Unstaged, DiffArea::Staged] {
+        assert_eq!(
+            shown_after(cx, case(area, "c.txt", Trigger::LongFileButton)).as_deref(),
+            Some("c.txt")
+        );
     }
 }

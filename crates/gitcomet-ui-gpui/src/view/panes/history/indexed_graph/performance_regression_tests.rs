@@ -7,6 +7,10 @@ fn indexed_history_skipped_rows_and_warm_windows_materialize_no_paint() {
         let fixture = IndexedHistoryFixture::new(20_000, width, 20);
         assert_eq!(fixture.build_index(), fixture.retained_bytes());
         assert!(fixture.estimated_index_peak_bytes() >= fixture.retained_bytes());
+        assert_eq!(
+            fixture.branch_navigation_bytes(),
+            20_000 * std::mem::size_of::<u32>()
+        );
         {
             let _capture = history_perf::capture();
             fixture.build_graph();
@@ -52,11 +56,12 @@ fn indexed_history_wide_graph_phase_benchmark() {
             cold.sort_by(f64::total_cmp);
             warm.sort_by(f64::total_cmp);
             eprintln!(
-                "rows={count} width={width} construct_s={:.3} retained_bytes={} checkpoint_bytes={} lane_span_bytes={} first_touch_ms_p50_p95_p99={:?} warm_ms_p50_p95_p99={:?}",
+                "rows={count} width={width} construct_s={:.3} retained_bytes={} checkpoint_bytes={} lane_span_bytes={} branch_navigation_bytes={} first_touch_ms_p50_p95_p99={:?} warm_ms_p50_p95_p99={:?}",
                 construction.as_secs_f64(),
                 fixture.retained_bytes(),
                 fixture.checkpoint_bytes(),
                 fixture.lane_span_bytes(),
+                fixture.branch_navigation_bytes(),
                 [cold[50], cold[95], cold[99]],
                 [warm[50], warm[95], warm[99]]
             );

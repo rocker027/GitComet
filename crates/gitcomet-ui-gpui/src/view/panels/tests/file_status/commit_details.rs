@@ -2490,7 +2490,7 @@ fn commit_card_branch_badges_open_the_sidebar_branch_menu(cx: &mut gpui::TestApp
                 .find(|repo| repo.id == repo_id)
                 .expect("fixture repo");
             repo.branches = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Branch {
-                name: "feature".into(),
+                name: "origin/feature".into(),
                 target: target.clone(),
                 upstream: None,
                 divergence: None,
@@ -2512,11 +2512,11 @@ fn commit_card_branch_badges_open_the_sidebar_branch_menu(cx: &mut gpui::TestApp
 
     for (menu, expected) in [
         (
-            "commit_card_ref_menu_feature",
-            crate::view::branch_sidebar::BranchMenuTarget::local("feature"),
+            "commit_card_ref_menu_local_origin/feature",
+            crate::view::branch_sidebar::BranchMenuTarget::local("origin/feature"),
         ),
         (
-            "commit_card_ref_menu_origin/feature",
+            "commit_card_ref_menu_remote_origin/feature",
             crate::view::branch_sidebar::BranchMenuTarget::remote("origin", "feature"),
         ),
     ] {
@@ -2534,15 +2534,104 @@ fn commit_card_branch_badges_open_the_sidebar_branch_menu(cx: &mut gpui::TestApp
             "{menu}"
         );
         cx.update(|_window, app| {
+            assert_eq!(
+                view.read(app).active_context_menu_invoker.as_deref(),
+                Some(menu)
+            );
             let host = view.read(app).popover_host.clone();
             host.update(app, |host, cx| host.close_popover(cx));
         });
         draw_and_drain_test_window(cx);
     }
     assert!(
-        cx.debug_bounds("commit_card_ref_menu_v1.0").is_none(),
+        cx.debug_bounds("commit_card_ref_menu_tag_v1.0").is_none(),
         "a tag badge has no branch menu"
     );
+}
+
+#[gpui::test]
+fn commit_card_overflow_opens_refs_including_remotes_hidden_from_graph(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::view::branch_sidebar::BranchMenuTarget;
+    use crate::view::{CommitMenuRefs, HistoryMenuRef};
+
+    let (view, cx) = commit_card_chip_fixture(cx);
+    let repo_id = gitcomet_state::model::RepoId(41);
+    let target = gitcomet_core::domain::CommitId(CHIP_COMMIT_SHA.into());
+    show_card_branches(
+        cx,
+        &view,
+        &["origin/feature", "main", "release", "qa"],
+        280.0,
+    );
+    assert!(
+        cx.debug_bounds("commit_card_ref_overflow").is_none(),
+        "four refs fit without an overflow control"
+    );
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            let mut state = (*this.state).clone();
+            let repo = state
+                .repos
+                .iter_mut()
+                .find(|repo| repo.id == repo_id)
+                .unwrap();
+            crate::view::test_support::hide_remotes_in_history(repo, &["origin"]);
+            repo.remote_branches =
+                Loadable::Ready(Arc::new(vec![gitcomet_core::domain::RemoteBranch {
+                    remote: "origin".into(),
+                    name: "feature".into(),
+                    target: target.clone(),
+                }]));
+            repo.tags = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Tag {
+                name: "v1.0".into(),
+                target: target.clone(),
+            }]));
+            push_test_state(this, Arc::new(state), cx);
+        });
+    });
+    draw_and_drain_test_window(cx);
+
+    let overflow = cx.debug_bounds("commit_card_ref_overflow").unwrap();
+    let card = cx.debug_bounds("commit_details_card").unwrap();
+    assert!(overflow.left() >= card.left() && overflow.right() <= card.right());
+    simulate_counted_click(cx, overflow.center(), 1);
+    draw_and_drain_test_window(cx);
+    let expected = PopoverKind::CommitMenu {
+        repo_id,
+        commit_id: target,
+        refs: CommitMenuRefs::DetailsChooser,
+    };
+    cx.update(|_window, app| {
+        let view = view.read(app);
+        assert_eq!(
+            crate::view::test_support::popover_kind(view, app),
+            Some(expected.clone())
+        );
+        let host = view.popover_host.clone();
+        let actions = host.update(app, |host, cx| {
+            host.context_menu_actions_for_test(&expected, cx)
+        });
+        let refs = actions
+            .into_iter()
+            .map(|action| match action {
+                ContextMenuAction::ToggleHistoryRefGroup { target } => target,
+                _ => panic!("the chooser must initially contain only ref groups"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            refs,
+            [
+                HistoryMenuRef::Branch(BranchMenuTarget::local("main")),
+                HistoryMenuRef::Branch(BranchMenuTarget::local("origin/feature")),
+                HistoryMenuRef::Branch(BranchMenuTarget::local("qa")),
+                HistoryMenuRef::Branch(BranchMenuTarget::local("release")),
+                HistoryMenuRef::Branch(BranchMenuTarget::remote("origin", "feature")),
+                HistoryMenuRef::Tag("v1.0".into()),
+            ]
+        );
+    });
 }
 
 /// A branch name wider than the card ends in an ellipsis inside the card,
@@ -2583,9 +2672,10 @@ fn commit_card_long_branch_badges_truncate_inside_the_card(cx: &mut gpui::TestAp
     let card = cx
         .debug_bounds("commit_details_card")
         .expect("expected the commit card");
-    for name in [branch, remote.as_str()] {
+    for (kind, name) in [("local", branch), ("remote", remote.as_str())] {
         let label: &'static str = Box::leak(format!("commit_card_ref_{name}").into_boxed_str());
-        let menu: &'static str = Box::leak(format!("commit_card_ref_menu_{name}").into_boxed_str());
+        let menu: &'static str =
+            Box::leak(format!("commit_card_ref_menu_{kind}_{name}").into_boxed_str());
         let label_bounds = cx.debug_bounds(label).expect(label);
         let menu_bounds = cx.debug_bounds(menu).expect(menu);
         assert!(

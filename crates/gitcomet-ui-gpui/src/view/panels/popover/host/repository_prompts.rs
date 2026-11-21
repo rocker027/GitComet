@@ -423,6 +423,7 @@ impl PopoverHost {
             &worktree_add_prompt::WorktreeAddFields {
                 folder: &folder,
                 source: &self.worktree_ref_source_target,
+                source_upstream: self.worktree_ref_source_upstream.as_ref(),
                 create_branch: self.worktree_add_create_branch,
                 new_branch: &new_branch,
             },

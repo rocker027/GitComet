@@ -33,9 +33,10 @@ fn indexed_history_two_million_graph_window_benchmark() {
     let started = Instant::now();
     let graph = IndexedGraph::build(index, &[], &[], &[], None, None, &cancellation).unwrap();
     eprintln!(
-        "graph rows={count} seconds={:.3} checkpoints={}",
+        "graph rows={count} seconds={:.3} checkpoints={} branch_navigation_bytes={}",
         started.elapsed().as_secs_f64(),
-        graph.checkpoints.len()
+        graph.checkpoints.len(),
+        graph.branch_children.bytes()
     );
     let mut samples = Vec::new();
     for ix in 0..100 {

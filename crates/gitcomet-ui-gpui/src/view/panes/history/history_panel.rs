@@ -4,7 +4,10 @@ use crate::localization::{Language, text};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::HistoryView;
+use super::{
+    HistoryPointerClick, HistoryPrimarySelection, HistoryView, history_worktree_menu_invoker,
+    history_worktree_menu_target,
+};
 use crate::view::caches::{HistoryListPlan, HistoryListRow};
 use crate::view::components::{ControlInteractionExt, InteractionState, InteractionStyle};
 
@@ -226,6 +229,37 @@ impl HistoryView {
             .min_h(px(0.0))
             .bg(bg)
             .track_focus(&self.history_panel_focus_handle)
+            .on_mouse_down_all({
+                let view = cx.entity().downgrade();
+                move |event, phase, _, _, cx| {
+                    if phase == gpui::DispatchPhase::Capture
+                        && (event.button != MouseButton::Left
+                            || event.click_count != 2
+                            || event.modifiers.number_of_modifiers() != 0)
+                        && let Some(view) = view.upgrade()
+                        && view.read(cx).history_first_pointer_click.is_some()
+                    {
+                        view.update(cx, |this, _| this.history_first_pointer_click = None);
+                    }
+                }
+            })
+            .on_mouse_up_all({
+                let view = cx.entity().downgrade();
+                move |event, phase, _, _, cx| {
+                    if phase == gpui::DispatchPhase::Capture
+                        && event.button == MouseButton::Left
+                        && event.click_count == 2
+                        && let Some(view) = view.upgrade()
+                        && view.read(cx).history_first_pointer_click.is_some()
+                    {
+                        // Row handlers consume valid pairs in bubble. A release
+                        // outside the pressed control consumes the pair too.
+                        cx.defer(move |cx| {
+                            view.update(cx, |this, _| this.history_first_pointer_click = None)
+                        });
+                    }
+                }
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _e: &MouseDownEvent, window, cx| {
@@ -239,8 +273,19 @@ impl HistoryView {
                 let key = e.keystroke.key.as_str();
                 let mods = e.keystroke.modifiers;
 
+                if key == "escape"
+                    && cx.active_drag().is_some_and(|drag| {
+                        drag.value
+                            .is::<crate::view::rows::branch_drag::BranchDrag>()
+                    })
+                {
+                    window.cancel_drag(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+
                 if key == "f10" && mods.shift && mods.number_of_modifiers() == 1 {
-                    if this.open_review_commit_menu(window, cx) {
+                    if this.open_review_history_menu(window, cx) {
                         cx.stop_propagation();
                     }
                     return;
@@ -250,23 +295,16 @@ impl HistoryView {
                     && !mods.alt
                     && !mods.platform
                     && !mods.function
-                    && !mods.shift
-                    && match key {
-                        "up" => this.history_select_adjacent_commit(-1, cx),
-                        "down" => this.history_select_adjacent_commit(1, cx),
-                        "pageup" if this.history_panel_focus_handle.is_focused(window) => {
-                            this.history_select_page(-1, cx)
-                        }
-                        "pagedown" if this.history_panel_focus_handle.is_focused(window) => {
-                            this.history_select_page(1, cx)
-                        }
-                        "home" if this.history_panel_focus_handle.is_focused(window) => {
-                            this.history_select_edge(-1, cx)
-                        }
-                        "end" if this.history_panel_focus_handle.is_focused(window) => {
-                            this.history_select_edge(1, cx)
-                        }
-                        "enter" => {
+                    && match (key, mods.shift) {
+                        ("up" | "k", true) => this.history_select_on_branch(-1, cx),
+                        ("down" | "j", true) => this.history_select_on_branch(1, cx),
+                        ("up" | "k", false) => this.history_select_adjacent_commit(-1, cx),
+                        ("down" | "j", false) => this.history_select_adjacent_commit(1, cx),
+                        ("pageup", false) => this.history_select_page(-1, cx),
+                        ("pagedown", false) => this.history_select_page(1, cx),
+                        ("home", false) => this.history_select_edge(-1, cx),
+                        ("end", false) => this.history_select_edge(1, cx),
+                        ("enter", false) => {
                             if !this.history_open_selected_worktree(window, cx) {
                                 crate::view::review_navigation::defer(
                                     this.root_view.clone(),
@@ -279,11 +317,11 @@ impl HistoryView {
                             }
                             true
                         }
-                        "escape" if this.history_find_is_open() => {
+                        ("escape", false) if this.history_find_is_open() => {
                             this.close_history_find(window, cx);
                             true
                         }
-                        "escape" => {
+                        ("escape", false) => {
                             crate::view::review_navigation::defer(
                                 this.root_view.clone(),
                                 crate::view::review_navigation::ReviewNavigation::WorkingCopy,
@@ -324,6 +362,56 @@ impl HistoryView {
             .children(find_bar)
     }
 
+    pub(in crate::view) fn complete_history_double_click(
+        &mut self,
+        click: &gpui::MouseClickEvent,
+        clicked: HistoryPointerClick,
+    ) -> bool {
+        let first = self.history_first_pointer_click.take();
+        if click.down.click_count != click.up.click_count
+            || click.down.modifiers.number_of_modifiers() != 0
+            || click.up.modifiers.number_of_modifiers() != 0
+        {
+            return false;
+        }
+        if click.up.click_count == 1 {
+            self.history_first_pointer_click = Some(clicked);
+            return false;
+        }
+        click.up.click_count == 2 && first == Some(clicked)
+    }
+
+    pub(in crate::view) fn open_history_worktree_row(
+        &self,
+        repo_id: RepoId,
+        lifetime: u64,
+        path: &std::path::Path,
+        window: &Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(state) = self.store.snapshot() else {
+            return false;
+        };
+        if !history_worktree_menu_target(&state, repo_id, path)
+            .is_some_and(|(current_lifetime, _)| current_lifetime == lifetime)
+            || !state.repos.iter().any(|repo| {
+                repo.id == repo_id
+                    && repo
+                        .worktree_dirty
+                        .ready()
+                        .is_some_and(|dirty| dirty.iter().any(|summary| summary.path == path))
+            })
+        {
+            return false;
+        }
+        crate::app::open_repository_from_view(
+            cx,
+            window.window_handle().window_id(),
+            path.to_path_buf(),
+        );
+        true
+    }
+
     /// Enter on a worktree row opens that worktree, matching what clicking its
     /// badge does. Returns `false` for every other selection so the key keeps
     /// falling through to whatever else handles it.
@@ -342,36 +430,96 @@ impl HistoryView {
         true
     }
 
-    fn open_review_commit_menu(
+    pub(in crate::view) fn open_history_worktree_menu(
+        &mut self,
+        repo_id: RepoId,
+        lifetime: u64,
+        path: &std::path::Path,
+        anchor: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(state) = self.store.snapshot() else {
+            return false;
+        };
+        let Some((current_lifetime, branch)) = history_worktree_menu_target(&state, repo_id, path)
+        else {
+            return false;
+        };
+        if lifetime != current_lifetime {
+            return false;
+        }
+        self.open_popover_at(
+            PopoverKind::worktree(
+                repo_id,
+                WorktreePopoverKind::Menu {
+                    path: path.to_path_buf(),
+                    branch: branch.map(str::to_owned),
+                },
+            )
+            .invoked_by(history_worktree_menu_invoker(repo_id, lifetime, path))
+            .returning_focus_to(self.history_panel_focus_handle.clone()),
+            anchor,
+            window,
+            cx,
+        );
+        true
+    }
+
+    fn open_review_history_menu(
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> bool {
-        let Some(repo) = self.active_repo() else {
-            return false;
+        let plan = if self.indexed.presentation.is_some() {
+            self.indexed.plan.clone()
+        } else {
+            self.ensure_history_list_plan()
         };
-        let Some(commit_id) = repo.history_state.selected_commit.clone() else {
+        let Some(repo) = self.active_repo() else {
             return false;
         };
         let Some(bounds) = self.history_viewport_bounds() else {
             return false;
         };
         let repo_id = repo.id;
-        let y = self
-            .history_selected_list_index_cache
-            .as_ref()
-            .filter(|cache| {
-                cache.repo_id == repo_id && cache.selected_commit.as_ref() == Some(&commit_id)
-            })
-            .map(|cache| {
-                bounds.top()
-                    + crate::view::rows::history_row_height(self.ui_scale())
-                        * (cache.list_ix + 1) as f32
-                    - px(self.history_scroll_position() as f32)
-            })
-            .unwrap_or(bounds.center().y)
-            .max(bounds.top())
-            .min(bounds.bottom());
+        let row_anchor = |list_ix: Option<usize>| {
+            let y = list_ix
+                .map(|list_ix| {
+                    bounds.top()
+                        + crate::view::rows::history_row_height(self.ui_scale())
+                            * (list_ix + 1) as f32
+                        - px(self.history_scroll_position() as f32)
+                })
+                .unwrap_or(bounds.center().y)
+                .max(bounds.top())
+                .min(bounds.bottom());
+            point(bounds.left() + self.ui_scale().px(24.0), y)
+        };
+        let selection =
+            self.history_navigation_selection(repo, plan.show_working_tree_summary_row());
+        if let Some(HistoryPrimarySelection::Worktree(path)) = selection.as_ref() {
+            let anchor = row_anchor(super::worktree_row_list_ix(&plan, Some(repo), path));
+            return self.open_history_worktree_menu(
+                repo_id,
+                repo.lifetime(),
+                path,
+                anchor,
+                window,
+                cx,
+            );
+        }
+        let Some(HistoryPrimarySelection::Commit(commit_id)) = selection else {
+            return false;
+        };
+        let anchor = row_anchor(
+            self.history_selected_list_index_cache
+                .as_ref()
+                .filter(|cache| {
+                    cache.repo_id == repo_id && cache.selected_commit.as_ref() == Some(&commit_id)
+                })
+                .map(|cache| cache.list_ix),
+        );
         let invoker: SharedString =
             format!("history_commit_menu_{}_{}", repo_id.0, commit_id.as_ref()).into();
         self.open_popover_at(
@@ -381,7 +529,7 @@ impl HistoryView {
                 refs: CommitMenuRefs::All,
             }
             .invoked_by(invoker),
-            point(bounds.left() + self.ui_scale().px(24.0), y),
+            anchor,
             window,
             cx,
         );
@@ -394,6 +542,105 @@ impl HistoryView {
         cx: &mut gpui::Context<Self>,
     ) -> bool {
         self.history_select_by_rows(direction, 1, false, cx)
+    }
+
+    /// Move along the first-parent path of the selected commit. Worktree rows
+    /// have no branch position for this shortcut.
+    fn history_select_on_branch(&mut self, direction: i8, cx: &mut gpui::Context<Self>) -> bool {
+        use super::branch_navigation::{indexed_branch_neighbor, paged_branch_neighbor};
+
+        let Some(repo_id) = self.active_repo_id() else {
+            return false;
+        };
+        self.cancel_history_find_navigation();
+        let indexed = self
+            .indexed
+            .presentation
+            .as_ref()
+            .is_some_and(|shown| shown.key.repo_id == repo_id);
+        let plan = if indexed {
+            self.indexed.plan.clone()
+        } else {
+            self.ensure_history_list_plan()
+        };
+        let Some(super::HistoryPrimarySelection::Commit(current)) =
+            self.active_repo().and_then(|repo| {
+                self.history_navigation_selection(repo, plan.show_working_tree_summary_row())
+            })
+        else {
+            return true;
+        };
+
+        let trail_matches =
+            |trail: &super::BranchNavigation| trail.repo_id == repo_id && trail.current == current;
+        let preferred = self
+            .branch_navigation
+            .as_ref()
+            .filter(|trail| trail_matches(trail))
+            .and_then(|trail| trail.newer.last());
+        let target = if let Some(shown) = self
+            .indexed
+            .presentation
+            .as_ref()
+            .filter(|shown| shown.key.repo_id == repo_id)
+        {
+            let projection = &shown.graph.projection;
+            indexed_branch_neighbor(
+                projection,
+                &shown.graph.branch_children,
+                &current,
+                direction,
+                preferred,
+            )
+            .and_then(|row| Some((row, projection.commit_id(row)?)))
+        } else {
+            self.history_cache
+                .as_ref()
+                .filter(|cache| cache.base.request.repo_id == repo_id)
+                .and_then(|cache| {
+                    let visible = &cache.base.visible_indices;
+                    let commits = &cache.page.commits;
+                    let row = paged_branch_neighbor(
+                        commits,
+                        visible,
+                        &cache.base.visible_ix_by_commit,
+                        &current,
+                        direction,
+                        preferred,
+                    )?;
+                    Some((row, commits.get(visible.get(row)?)?.id.clone()))
+                })
+        };
+        let Some((row, next)) = target else {
+            return true;
+        };
+
+        let mut newer = self
+            .branch_navigation
+            .take()
+            .filter(trail_matches)
+            .map_or_else(Vec::new, |trail| trail.newer);
+        self.cancel_history_scroll_reveal();
+        let selected = if indexed {
+            self.select_indexed_commit_row(repo_id, row, false, cx)
+        } else {
+            self.select_paged_commit_row(repo_id, &plan, row, cx)
+        };
+        if selected {
+            if direction.is_positive() {
+                newer.push(current);
+            } else if newer.last() == Some(&next) {
+                newer.pop();
+            } else {
+                newer.clear();
+            }
+            self.branch_navigation = (!newer.is_empty()).then_some(super::BranchNavigation {
+                repo_id,
+                current: next,
+                newer,
+            });
+        }
+        true
     }
 
     pub(in crate::view) fn history_select_page(
@@ -693,6 +940,7 @@ impl HistoryView {
         static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let request_id = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.active_repo_id() == Some(repo_id) {
+            self.branch_navigation = None;
             self.pending_history_selections
                 .push_back(super::PendingHistorySelection {
                     request_id,
@@ -874,6 +1122,17 @@ impl HistoryView {
         let index_error = self
             .active_repo()
             .is_some_and(|repo| repo.history_state.indexed.error.is_some());
+        let author_filter_active = self
+            .active_repo()
+            .is_some_and(|r| r.history_state.history_author_filter.is_some());
+        let message_content_width =
+            self.history_message_content_width((show_graph, show_author, show_date, show_sha));
+        let filter_toolbar = !show_author
+            && author_filter_active
+            && message_content_width < super::history_message_min_width(self.ui_scale_percent);
+        let index_loading = self.loading.status_visible(cx.background_executor().now());
+        let compact_author_status =
+            !show_author && author_filter_active && (index_error || index_loading);
         let message_label: Option<SharedString> = if index_error {
             Some(
                 text(
@@ -883,7 +1142,7 @@ impl HistoryView {
                 )
                 .into(),
             )
-        } else if self.loading.status_visible(cx.background_executor().now()) {
+        } else if index_loading {
             Some(
                 self.active_repo()
                     .filter(|repo| repo.history_state.indexed.loading)
@@ -903,6 +1162,7 @@ impl HistoryView {
             self.indexed.presentation.as_ref().map(|shown| {
                 let count = shown.graph.projection.len();
                 match language {
+                    Language::English if count == 1 => "1 commit".to_owned(),
                     Language::English => format!("{count} commits"),
                     Language::TraditionalChinese => format!("{count} 筆提交"),
                 }
@@ -921,15 +1181,22 @@ impl HistoryView {
         let author_label: SharedString = self
             .active_repo()
             .and_then(|r| r.history_state.history_author_filter.clone())
+            .map(|name| {
+                if show_author {
+                    name
+                } else {
+                    match language {
+                        Language::English => format!("Author: {name}"),
+                        Language::TraditionalChinese => format!("作者：{name}"),
+                    }
+                }
+            })
             .unwrap_or_else(|| text(cx, "Author", "作者").to_owned())
             .into();
         let author_invoker: SharedString = "history_author_filter_header".into();
         let author_anchor_bounds: Rc<RefCell<Option<Bounds<Pixels>>>> = Rc::new(RefCell::new(None));
         let author_anchor_bounds_for_prepaint = Rc::clone(&author_anchor_bounds);
         let author_anchor_bounds_for_click = Rc::clone(&author_anchor_bounds);
-        let author_filter_active = self
-            .active_repo()
-            .is_some_and(|r| r.history_state.history_author_filter.is_some());
         let author_active = self
             .active_context_menu_invoker
             .as_ref()
@@ -950,6 +1217,139 @@ impl HistoryView {
             })
             .unwrap_or_else(|| text(cx, "Filter history by author", "依作者篩選歷史").to_owned())
             .into();
+
+        // One control moves between columns, retaining its anchor, focus and menu.
+        let mut author_control = Some(
+            div()
+                .when(!show_author, |chip| {
+                    chip.debug_selector(move || {
+                        if filter_toolbar {
+                            "history_author_filter_toolbar_control"
+                        } else {
+                            "history_author_filter_message_header"
+                        }
+                        .to_string()
+                    })
+                    .flex()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .max_w(scaled_px(160.0))
+                    .overflow_hidden()
+                })
+                .on_children_prepainted(move |children_bounds, _w, _cx| {
+                    if let Some(bounds) = children_bounds.first() {
+                        *author_anchor_bounds_for_prepaint.borrow_mut() = Some(*bounds);
+                    }
+                })
+                .child(
+                    div()
+                        .id("history_author_filter_header")
+                        .when(!show_author, |chip| chip.w_full().min_w(px(0.0)))
+                        .debug_selector(|| "history_author_filter_header".to_string())
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .px_1()
+                        .h(ui_scale.row_height(
+                            HISTORY_HEADER_CHIP_HEIGHT_PX,
+                            HISTORY_HEADER_CHIP_COMFORTABLE_HEIGHT_PX,
+                        ))
+                        .line_height(scaled_px(HISTORY_HEADER_CHIP_HEIGHT_PX))
+                        .rounded(px(theme.radii.row))
+                        .tab_index(0)
+                        .control_interaction(header_chip.clone(), author_chip_state)
+                        .child(
+                            div()
+                                .min_w(px(0.0))
+                                .line_clamp(1)
+                                .whitespace_nowrap()
+                                .when(!show_author, |label| label.flex_1().text_ellipsis())
+                                .when(author_filter_active, |d| {
+                                    d.text_color(
+                                        header_chip.color(
+                                            theme.colors.accent.foreground,
+                                            author_chip_state,
+                                        ),
+                                    )
+                                })
+                                .when(!author_filter_active, |d| {
+                                    d.text_color(header_chip.color(
+                                        theme.colors.foreground.secondary,
+                                        author_chip_state,
+                                    ))
+                                })
+                                .child(author_label.clone()),
+                        )
+                        .child(svg_icon(
+                            "icons/chevron_down.svg",
+                            header_chip.color(icon_muted, author_chip_state),
+                            scaled_px(12.0),
+                        ))
+                        .when_some(scope_repo_id, |this, repo_id| {
+                            let author_invoker = author_invoker.clone();
+                            let author_anchor_bounds_for_click =
+                                Rc::clone(&author_anchor_bounds_for_click);
+                            this.on_activate(
+                                false,
+                                controls::ControlActivation::Action,
+                                cx.listener(move |this, e: &ClickEvent, window, cx| {
+                                    let request = (PopoverKind::HistoryAuthorFilter { repo_id })
+                                        .invoked_by(author_invoker.clone());
+                                    if let Some(bounds) = *author_anchor_bounds_for_click.borrow() {
+                                        this.open_popover_for_bounds(request, bounds, window, cx);
+                                    } else {
+                                        this.open_popover_at(request, e.position(), window, cx);
+                                    }
+                                }),
+                            )
+                        })
+                        .gitcomet_tooltip(theme, author_tooltip),
+                ),
+        );
+
+        let mut status_control = message_label.map(|label| {
+            let displayed_label = if compact_author_status {
+                if index_error {
+                    text(cx, "Retry history", "重試歷史").into()
+                } else {
+                    text(cx, "Loading…", "載入中…").into()
+                }
+            } else {
+                label.clone()
+            };
+            div()
+                .id("history_index_status")
+                .when(compact_author_status, |status| {
+                    status.flex_none().gitcomet_tooltip(theme, label)
+                })
+                .when(!compact_author_status, |status| status.flex_1())
+                .min_w(px(0.0))
+                .line_clamp(1)
+                .whitespace_nowrap()
+                .font_weight(FontWeight::NORMAL)
+                .debug_selector(|| "history_index_status".to_string())
+                .child(format!(" · {displayed_label}"))
+                .when(index_error, |status| {
+                    status
+                        .control_interaction(
+                            components::InteractionStyle::link(theme),
+                            components::InteractionState::default(),
+                        )
+                        .on_activate(
+                            false,
+                            components::ControlActivation::Action,
+                            cx.listener(move |this, _, _, _| {
+                                if let Some(repo_id) = scope_repo_id {
+                                    this.store.dispatch(Msg::IndexedHistory(
+                                        gitcomet_state::indexed_history::IndexedHistoryMsg::Retry {
+                                            repo_id,
+                                        },
+                                    ));
+                                }
+                            }),
+                        )
+                })
+        });
 
         let ui_scale_percent = self.ui_scale_percent;
         let active_col_resize = self.history_col_resize;
@@ -1131,18 +1531,20 @@ impl HistoryView {
             .text_size(theme.ui_text(12.0))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme.colors.foreground.secondary)
-            .when_some(ref_control, |header, control| header.child(
-                div()
-                    .debug_selector(|| "history_ref_header_cell".to_string())
-                    .w(col_branch)
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .min_w(px(0.0))
-                    .px(cell_pad)
-                    .overflow_hidden()
-                    .child(control),
-            ))
+            .when_some(ref_control, |header, control| {
+                header.child(
+                    div()
+                        .debug_selector(|| "history_ref_header_cell".to_string())
+                        .w(col_branch)
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .min_w(px(0.0))
+                        .px(cell_pad)
+                        .overflow_hidden()
+                        .child(control),
+                )
+            })
             .when(show_graph, |header| {
                 // The graph column explains itself; a header label only adds noise.
                 header.child(
@@ -1164,19 +1566,15 @@ impl HistoryView {
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .debug_selector(|| "history_message_header_cell".to_string())
-                    .when_some(message_control, |cell, control| cell
-                        .items_center().gap_2().child(control))
+                    .when_some(message_control, |cell, control| {
+                        cell.items_center().gap_2().child(control)
+                    })
                     .child(div().flex_none().child(text(cx, "MESSAGE", "提交訊息")))
-                    .when_some(message_label, |cell, label| cell.child(
-                        div()
-                            .flex_1().min_w(px(0.0)).line_clamp(1).whitespace_nowrap()
-                            .font_weight(FontWeight::NORMAL)
-                            .id("history_index_status")
-                            .child(format!(" · {label}"))
-                            .when(index_error, |label| label.control_interaction(components::InteractionStyle::link(theme), components::InteractionState::default()).on_activate(false, components::ControlActivation::Action, cx.listener(move |this, _, _, _| {
-                                if let Some(repo_id) = scope_repo_id { this.store.dispatch(Msg::IndexedHistory(gitcomet_state::indexed_history::IndexedHistoryMsg::Retry { repo_id })); }
-                            }))),
-                    )),
+                    .when(!filter_toolbar, |cell| cell.children(status_control.take()))
+                    .when(
+                        !show_author && author_filter_active && !filter_toolbar,
+                        |cell| cell.items_center().gap_2().children(author_control.take()),
+                    ),
             )
             .when(show_author, |header| {
                 header.child(
@@ -1192,87 +1590,7 @@ impl HistoryView {
                         .pr(cell_pad)
                         .whitespace_nowrap()
                         .overflow_hidden()
-                        .child(
-                            div()
-                                .on_children_prepainted(move |children_bounds, _w, _cx| {
-                                    if let Some(bounds) = children_bounds.first() {
-                                        *author_anchor_bounds_for_prepaint.borrow_mut() =
-                                            Some(*bounds);
-                                    }
-                                })
-                                .child(
-                                    div()
-                                        .id("history_author_filter_header")
-                                        .debug_selector(|| {
-                                            "history_author_filter_header".to_string()
-                                        })
-                                        .flex()
-                                        .items_center()
-                                        .gap_1()
-                                        .px_1()
-                                        .h(ui_scale.row_height(
-                                            HISTORY_HEADER_CHIP_HEIGHT_PX,
-                                            HISTORY_HEADER_CHIP_COMFORTABLE_HEIGHT_PX,
-                                        ))
-                                        .line_height(scaled_px(HISTORY_HEADER_CHIP_HEIGHT_PX))
-                                        .rounded(px(theme.radii.row))
-                                        .tab_index(0)
-                                        .control_interaction(
-                                            header_chip.clone(),
-                                            author_chip_state,
-                                        )
-                                        .child(
-                                            div()
-                                                .min_w(px(0.0))
-                                                .line_clamp(1)
-                                                .whitespace_nowrap()
-                                                .when(author_filter_active, |d| {
-                                                    d.text_color(header_chip.color(theme.colors.accent.foreground, author_chip_state))
-                                                })
-                                                .when(!author_filter_active, |d| {
-                                                    d.text_color(header_chip.color(
-                                                        theme.colors.foreground.secondary,
-                                                        author_chip_state,
-                                                    ))
-                                                })
-                                                .child(author_label.clone()),
-                                        )
-                                        .child(svg_icon(
-                                            "icons/chevron_down.svg",
-                                            header_chip.color(icon_muted, author_chip_state),
-                                            scaled_px(12.0),
-                                        ))
-                                        .when_some(scope_repo_id, |this, repo_id| {
-                                            let author_invoker = author_invoker.clone();
-                                            let author_anchor_bounds_for_click =
-                                                Rc::clone(&author_anchor_bounds_for_click);
-                                            this.on_activate(false, controls::ControlActivation::Action, cx.listener(
-                                                move |this, e: &ClickEvent, window, cx| {
-                                                    let request = (PopoverKind::HistoryAuthorFilter { repo_id })
-                                                        .invoked_by(author_invoker.clone());
-                                                    if let Some(bounds) =
-                                                        *author_anchor_bounds_for_click.borrow()
-                                                    {
-                                                        this.open_popover_for_bounds(
-                                                            request,
-                                                            bounds,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    } else {
-                                                        this.open_popover_at(
-                                                            request,
-                                                            e.position(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                },
-                                            ))
-                                        })
-                                        .gitcomet_tooltip(theme, author_tooltip),
-                                ),
-                        ),
+                        .children(author_control.take()),
                 )
             });
 
@@ -1354,6 +1672,33 @@ impl HistoryView {
             );
         }
 
-        header_with_handles
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .min_w(px(0.0))
+            .child(header_with_handles)
+            .when(filter_toolbar, |header| {
+                header.child(
+                    div()
+                        .debug_selector(|| "history_filter_toolbar".to_string())
+                        .flex()
+                        .w_full()
+                        .min_w(px(0.0))
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .h(ui_scale.row_height(
+                            HISTORY_HEADER_HEIGHT_PX,
+                            HISTORY_HEADER_COMFORTABLE_HEIGHT_PX,
+                        ))
+                        .overflow_hidden()
+                        .text_size(theme.ui_text(12.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.colors.foreground.secondary)
+                        .children(status_control.take())
+                        .children(author_control.take()),
+                )
+            })
     }
 }

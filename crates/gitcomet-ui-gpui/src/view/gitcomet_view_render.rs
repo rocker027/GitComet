@@ -874,7 +874,9 @@ impl Render for GitCometView {
             }
         }));
         root = root.on_any_mouse_down(cx.listener(|this, _e: &MouseDownEvent, _window, cx| {
-            this.dismiss_history_refs_menus(cx);
+            // The click-open refs picker uses the context menu's scrim. Let
+            // clicks inside it reach the menu before closing anything.
+            this.dismiss_history_refs_hover_menu(cx);
         }));
         root = root
             .on_mouse_down(

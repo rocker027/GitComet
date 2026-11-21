@@ -1,3 +1,4 @@
+use super::branch_navigation::IndexedBranchChildren;
 use super::*;
 use gitcomet_core::history_index::{HistoryIndexHandle, HistoryProjection, MISSING_PARENT};
 use gitcomet_core::services::{CancellationToken, Result};
@@ -53,6 +54,7 @@ struct Containment {
 
 pub(in crate::view) struct IndexedGraph {
     pub projection: HistoryProjection,
+    pub(super) branch_children: IndexedBranchChildren,
     checkpoints: Vec<Checkpoint>,
     branch_heads: FxHashSet<usize>,
     listed_stash_rows: FxHashSet<usize>,
@@ -243,12 +245,18 @@ impl IndexedGraph {
         let main = head_id
             .and_then(|id| projection.position(id))
             .or_else(|| (!projection.is_empty()).then_some(0));
-        // Ref names/decorations can change without changing lane geometry. A new
-        // head position (even at an existing commit) must invalidate geometry.
-        let reusable = previous.filter(|old| {
-            Arc::ptr_eq(&old.projection.index, &projection.index)
-                && old.projection == projection
-                && old.listed_stash_rows == listed_stash_rows
+        // Branch keyboard navigation depends on visible topology alone.
+        let same_projection = previous.filter(|old| {
+            Arc::ptr_eq(&old.projection.index, &projection.index) && old.projection == projection
+        });
+        let branch_children = match same_projection {
+            Some(old) => old.branch_children.clone(),
+            None => IndexedBranchChildren::build(&projection, cancellation)?,
+        };
+        // A new head position (even at an existing commit) invalidates geometry,
+        // but the same projection can still share its branch navigation table.
+        let reusable = same_projection.filter(|old| {
+            old.listed_stash_rows == listed_stash_rows
                 && old.branch_heads == branch_heads
                 && old.main == main
         });
@@ -271,6 +279,7 @@ impl IndexedGraph {
         };
         let mut graph = Self {
             projection,
+            branch_children,
             checkpoints: Vec::new(),
             branch_heads,
             listed_stash_rows,
@@ -662,6 +671,9 @@ impl IndexedHistoryFixture {
     pub fn lane_span_bytes(&self) -> usize {
         self.graph.lane_span_bytes()
     }
+    pub fn branch_navigation_bytes(&self) -> usize {
+        self.graph.branch_children.bytes()
+    }
     pub fn clear_window(&self) {
         *self.graph.window_cache.lock().unwrap() = None;
         *self.graph.geometry_cache.lock().unwrap() = None;
@@ -708,6 +720,11 @@ mod geometry_reuse_regressions {
         )
         .unwrap();
         assert!(Arc::ptr_eq(&first.lane_spans, &next.lane_spans));
+        assert!(
+            first
+                .branch_children
+                .shares_storage_with(&next.branch_children)
+        );
         assert!(Arc::ptr_eq(
             &first.checkpoints[0].walk,
             &next.checkpoints[0].walk
@@ -736,6 +753,10 @@ mod geometry_reuse_regressions {
         )
         .unwrap();
         assert!(!Arc::ptr_eq(&next.lane_spans, &changed.lane_spans));
+        assert!(
+            next.branch_children
+                .shares_storage_with(&changed.branch_children)
+        );
         assert!(!Arc::ptr_eq(
             &next.checkpoints[0].walk,
             &changed.checkpoints[0].walk

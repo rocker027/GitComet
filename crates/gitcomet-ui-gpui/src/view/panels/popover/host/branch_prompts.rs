@@ -83,6 +83,61 @@ impl PopoverHost {
         }
     }
 
+    pub(in crate::view::panels::popover) fn handle_inline_worktree_source_select(
+        &mut self,
+        name: String,
+        upstream: Option<Upstream>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !matches!(
+            self.popover,
+            Some(PopoverKind::Repo {
+                kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
+                ..
+            })
+        ) {
+            return;
+        }
+        self.worktree_ref_source_target = name;
+        self.worktree_ref_source_upstream = upstream;
+        if let Some(input) = &self.branch_picker_search_input {
+            input.update(cx, |input, cx| {
+                input.clear_transient_key_presses();
+                input.set_text(self.worktree_ref_source_target.clone(), cx);
+                cx.notify();
+            });
+        }
+        self.branch_picker_selected_index = None;
+        // Hand focus to Add once the keystroke that picked the ref has
+        // finished dispatching, so it cannot land on the button it just
+        // moved to; `suppress_worktree_submit_after_ref_enter` covers
+        // the same Enter until the next frame is on screen.
+        cx.defer_in(window, |this, window, cx| {
+            if matches!(
+                this.popover,
+                Some(PopoverKind::Repo {
+                    kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
+                    ..
+                })
+            ) {
+                let focus = if this.can_submit_worktree_add(cx) {
+                    this.worktree_focus.submit.clone()
+                } else {
+                    this.worktree_path_input
+                        .read_with(cx, |input, _| input.focus_handle())
+                };
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            cx.on_next_frame(window, |this, _window, cx| {
+                this.suppress_worktree_submit_after_ref_enter = false;
+                cx.notify();
+            });
+        });
+        cx.notify();
+    }
+
     pub(in crate::view::panels::popover) fn handle_inline_branch_picker_select(
         &mut self,
         name: String,
@@ -119,42 +174,7 @@ impl PopoverHost {
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
                 ..
             }) => {
-                self.worktree_ref_source_target = name;
-                if let Some(input) = &self.branch_picker_search_input {
-                    input.update(cx, |input, cx| {
-                        input.clear_transient_key_presses();
-                        input.set_text(self.worktree_ref_source_target.clone(), cx);
-                        cx.notify();
-                    });
-                }
-                self.branch_picker_selected_index = None;
-                // Hand focus to Add once the keystroke that picked the ref has
-                // finished dispatching, so it cannot land on the button it just
-                // moved to; `suppress_worktree_submit_after_ref_enter` covers
-                // the same Enter until the next frame is on screen.
-                cx.defer_in(window, |this, window, cx| {
-                    if matches!(
-                        this.popover,
-                        Some(PopoverKind::Repo {
-                            kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
-                            ..
-                        })
-                    ) {
-                        let focus = if this.can_submit_worktree_add(cx) {
-                            this.worktree_focus.submit.clone()
-                        } else {
-                            this.worktree_path_input
-                                .read_with(cx, |input, _| input.focus_handle())
-                        };
-                        window.focus(&focus, cx);
-                        cx.notify();
-                    }
-                    cx.on_next_frame(window, |this, _window, cx| {
-                        this.suppress_worktree_submit_after_ref_enter = false;
-                        cx.notify();
-                    });
-                });
-                cx.notify();
+                self.handle_inline_worktree_source_select(name, None, window, cx);
             }
             Some(PopoverKind::BranchPicker {
                 purpose: BranchPickerPurpose::Delete,

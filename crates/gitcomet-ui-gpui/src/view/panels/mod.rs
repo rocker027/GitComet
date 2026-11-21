@@ -58,6 +58,10 @@ pub(in crate::view) enum HistoryMenuRef {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(in crate::view) enum CommitMenuRefs {
     All,
+    /// The graph's overflow chooser: named refs only, without commit actions.
+    Chooser,
+    /// The details card's overflow chooser includes remotes hidden from the graph.
+    DetailsChooser,
     /// The one ref picked from the row's ref list.
     Only(HistoryMenuRef),
     /// The detached HEAD picked from the row's ref list: no ref of its own.
@@ -67,7 +71,7 @@ pub(in crate::view) enum CommitMenuRefs {
 impl CommitMenuRefs {
     pub(in crate::view) fn admits(&self, target: &HistoryMenuRef) -> bool {
         match self {
-            Self::All => true,
+            Self::All | Self::Chooser | Self::DetailsChooser => true,
             Self::Only(only) => only == target,
             Self::Hidden => false,
         }
@@ -877,6 +881,7 @@ mod bars;
 mod bottom_status_bar;
 mod layout;
 mod main;
+pub(in crate::view) use main::status_navigation_section;
 pub(in crate::view) mod popover;
 mod repo_tabs_bar;
 

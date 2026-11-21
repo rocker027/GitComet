@@ -11,7 +11,9 @@ use super::{
 };
 use crate::view::markdown_preview::MarkdownInlineSpan;
 use crate::view::panes::diff::diff_search::{DiffSearchMatcher, DiffSearchOptions};
-use crate::view::{AppTheme, DateTimeFormat, Timezone, format_datetime, format_datetime_utc};
+use crate::view::{
+    AppTheme, BranchMenuTarget, DateTimeFormat, Timezone, format_datetime, format_datetime_utc,
+};
 use crate::view::{
     HISTORY_COL_HANDLE_PX, HISTORY_MESSAGE_BORDER_GAP_PX, HISTORY_MESSAGE_BORDER_W_PX,
 };
@@ -1160,23 +1162,112 @@ fn double_clicking_a_branch_uses_its_exact_ref_and_opens_linked_worktrees() {
     }]));
 
     assert_eq!(
-        history_double_click_branch(&repo, "feature"),
+        history_double_click_branch(&repo, &BranchMenuTarget::local("feature")),
         Some(HistoryBranchActivation::Checkout("feature".into()))
     );
-    assert_eq!(history_double_click_branch(&repo, "main"), None);
+    assert_eq!(
+        history_double_click_branch(&repo, &BranchMenuTarget::local("main")),
+        None
+    );
     for name in ["left", "right"] {
         assert_eq!(
-            history_double_click_branch(&repo, name),
+            history_double_click_branch(&repo, &BranchMenuTarget::local(name)),
             Some(HistoryBranchActivation::Checkout(name.into()))
         );
     }
-    assert_eq!(history_double_click_branch(&repo, "missing"), None);
     assert_eq!(
-        history_double_click_branch(&repo, "elsewhere"),
+        history_double_click_branch(&repo, &BranchMenuTarget::local("missing")),
+        None
+    );
+    assert_eq!(
+        history_double_click_branch(&repo, &BranchMenuTarget::local("elsewhere")),
         Some(HistoryBranchActivation::Open(
             "/tmp/history-double-click-other".into()
         ))
     );
     repo.repository_mode = Some(RepositoryMode::Bare);
-    assert_eq!(history_double_click_branch(&repo, "feature"), None);
+    assert_eq!(
+        history_double_click_branch(&repo, &BranchMenuTarget::local("feature")),
+        None
+    );
+}
+
+#[test]
+fn double_clicking_a_remote_branch_respects_its_exact_upstream_and_worktree() {
+    use super::{HistoryBranchActivation, history_double_click_branch};
+    use gitcomet_core::domain::{
+        Branch, CommitId, RemoteBranch, RepoSpec, RepositoryMode, Upstream, Worktree,
+    };
+    use gitcomet_state::model::{Loadable, RepoId, RepoState};
+
+    let mut repo = RepoState::new_opening(
+        RepoId(4),
+        RepoSpec {
+            workdir: "/tmp/history-double-click".into(),
+        },
+    );
+    repo.repository_mode = Some(RepositoryMode::WorkingTree);
+    let target = CommitId("tip".into());
+    repo.remote_branches = Loadable::Ready(Arc::new(
+        ["origin", "peer"]
+            .into_iter()
+            .map(|remote| RemoteBranch {
+                remote: remote.into(),
+                name: "topic".into(),
+                target: target.clone(),
+            })
+            .collect(),
+    ));
+    let origin = BranchMenuTarget::remote("origin", "topic");
+    let peer = BranchMenuTarget::remote("peer", "topic");
+    let prompt = |remote: &str| {
+        Some(HistoryBranchActivation::PromptForTrackingName {
+            remote: remote.into(),
+            branch: "topic".into(),
+        })
+    };
+    assert_eq!(
+        history_double_click_branch(&repo, &origin),
+        prompt("origin")
+    );
+    repo.branches = Loadable::Ready(Arc::new(vec![
+        Branch {
+            name: "tracking-topic".into(),
+            target: target.clone(),
+            upstream: Some(Upstream {
+                remote: "origin".into(),
+                branch: "topic".into(),
+            }),
+            divergence: None,
+        },
+        Branch {
+            name: "topic".into(),
+            target: target.clone(),
+            upstream: None,
+            divergence: None,
+        },
+    ]));
+    assert_eq!(
+        history_double_click_branch(&repo, &origin),
+        Some(HistoryBranchActivation::Checkout("tracking-topic".into()))
+    );
+    assert_eq!(history_double_click_branch(&repo, &peer), prompt("peer"));
+    let linked: std::path::PathBuf = "/tmp/history-double-click-linked".into();
+    repo.worktrees = Loadable::Ready(Arc::new(vec![Worktree {
+        bare: false,
+        path: linked.clone(),
+        head: Some(target),
+        branch: Some("tracking-topic".into()),
+        detached: false,
+    }]));
+    assert_eq!(
+        history_double_click_branch(&repo, &origin),
+        Some(HistoryBranchActivation::Open(linked))
+    );
+    assert_eq!(
+        history_double_click_branch(&repo, &BranchMenuTarget::remote("missing", "topic")),
+        None
+    );
+    repo.repository_mode = Some(RepositoryMode::Bare);
+    assert_eq!(history_double_click_branch(&repo, &peer), None);
 }

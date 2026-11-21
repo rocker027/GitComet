@@ -259,12 +259,16 @@ pub(super) fn activate(
                 return;
             };
             // A new branch off the base the row's "based on <head>" label names.
-            this.pending_worktree_add_prefill = Some(WorktreeAddPrefill {
-                source: create_base_ref(repo),
-                create_branch: true,
-                new_branch: query.trim().to_string(),
-                open_after: false,
-            });
+            this.pending_worktree_add_prefill = Some((
+                repo_id,
+                WorktreeAddPrefill {
+                    source: create_base_ref(repo),
+                    source_upstream: None,
+                    create_branch: true,
+                    new_branch: query.trim().to_string(),
+                    open_after: false,
+                },
+            ));
             this.open_popover_centered(
                 PopoverKind::worktree(repo_id, WorktreePopoverKind::AddPrompt),
                 window,

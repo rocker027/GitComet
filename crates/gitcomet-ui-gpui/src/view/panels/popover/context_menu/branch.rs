@@ -90,30 +90,47 @@ pub(super) fn model(
             .unwrap_or_else(|| name.clone()),
     };
 
-    let checkout_disabled = worktree_finish_busy
-        || (section == BranchSection::Local
-            && this.state.worktree_finish_protects_branch(repo_id, &name));
-    items.push(ContextMenuItem::Entry {
-        label: language.text("Checkout", "切換分支").into(),
-        icon: Some("icons/git_branch.svg".into()),
-        shortcut: None,
-        disabled: checkout_disabled,
-        action: Box::new(match target {
-            BranchMenuTarget::Local { name } => ContextMenuAction::CheckoutBranch {
-                repo_id,
-                name: name.clone(),
-            },
-            BranchMenuTarget::Remote { remote, branch } => ContextMenuAction::OpenPopover {
-                kind: PopoverKind::CheckoutRemoteBranchPrompt {
-                    repo_id,
-                    remote: remote.clone(),
-                    branch: branch.clone(),
-                },
-            },
-        }),
+    let worktree_items = repo
+        .map(|repo| worktree_entries(repo, repo_id, target, language))
+        .unwrap_or_default();
+    let has_open_worktree = worktree_items.iter().any(|item| {
+        matches!(item, ContextMenuItem::Entry { action, .. }
+            if matches!(action.as_ref(), ContextMenuAction::OpenRepo { .. }))
     });
-    if let Some(repo) = repo {
-        items.extend(worktree_entries(repo, repo_id, target, language));
+    // A local branch checked out elsewhere can be opened at its existing
+    // path. Git refuses to check it out in the active worktree.
+    if section != BranchSection::Local || !has_open_worktree {
+        let checkout_disabled = worktree_finish_busy
+            || (section == BranchSection::Local
+                && this.state.worktree_finish_protects_branch(repo_id, &name));
+        items.push(ContextMenuItem::Entry {
+            label: language.text("Checkout", "切換分支").into(),
+            icon: Some("icons/git_branch.svg".into()),
+            shortcut: None,
+            disabled: checkout_disabled,
+            action: Box::new(match target {
+                BranchMenuTarget::Local { name } => ContextMenuAction::CheckoutBranch {
+                    repo_id,
+                    name: name.clone(),
+                },
+                BranchMenuTarget::Remote { remote, branch } => ContextMenuAction::OpenPopover {
+                    kind: PopoverKind::CheckoutRemoteBranchPrompt {
+                        repo_id,
+                        remote: remote.clone(),
+                        branch: branch.clone(),
+                    },
+                },
+            }),
+        });
+    }
+    for item in worktree_items {
+        if let ContextMenuItem::Entry { action, .. } = &item
+            && let ContextMenuAction::OpenRepo { path } = action.as_ref()
+        {
+            branch_entry_tooltips.insert(items.len(), path.display().to_string().into());
+            branch_entry_source_labels.insert(items.len(), "Open worktree".into());
+        }
+        items.push(item);
     }
 
     if let BranchMenuTarget::Local { name } = target {
@@ -570,10 +587,12 @@ fn worktree_entries(
         WorktreeStart::Local(local) => Some(local.as_str()),
         WorktreeStart::Track { .. } => None,
     };
+    let checked_out_path =
+        local.and_then(|local| crate::view::rows::branch_checked_out_at(repo, local));
+    // Git checks a branch out in one worktree only.
+    let checked_out = checked_out_path.is_some();
     let mut items = Vec::new();
-    if let Some(path) =
-        local.and_then(|local| crate::view::rows::branch_held_elsewhere(repo, local))
-    {
+    if let Some(path) = checked_out_path.filter(|path| path != &repo.spec.workdir) {
         items.push(ContextMenuItem::Entry {
             label: language.text("Open worktree", "開啟工作樹").into(),
             icon: Some("icons/git_worktree.svg".into()),
@@ -582,18 +601,20 @@ fn worktree_entries(
             action: Box::new(ContextMenuAction::OpenRepo { path }),
         });
     }
-    // Git checks a branch out in one worktree only.
-    let checked_out =
-        local.is_some_and(|local| crate::view::rows::branch_checked_out_at(repo, local).is_some());
     let prefill = match start {
         WorktreeStart::Local(local) => WorktreeAddPrefill {
             source: local,
+            source_upstream: None,
             create_branch: checked_out,
             new_branch: String::new(),
             open_after: true,
         },
         WorktreeStart::Track { remote, branch } => WorktreeAddPrefill {
             source: format!("{remote}/{branch}"),
+            source_upstream: Some(Upstream {
+                remote: remote.to_string(),
+                branch: branch.to_string(),
+            }),
             create_branch: true,
             new_branch: branch.to_string(),
             open_after: true,
@@ -710,6 +731,7 @@ mod tests {
     fn new_branch_from(source: &str) -> WorktreeAddPrefill {
         WorktreeAddPrefill {
             source: source.to_string(),
+            source_upstream: None,
             create_branch: true,
             new_branch: String::new(),
             open_after: true,
@@ -743,6 +765,7 @@ mod tests {
             prefill(action),
             WorktreeAddPrefill {
                 source: "feat/free".to_string(),
+                source_upstream: None,
                 create_branch: false,
                 new_branch: String::new(),
                 open_after: true,
@@ -815,10 +838,36 @@ mod tests {
             prefill(action),
             WorktreeAddPrefill {
                 source: "origin/feat/new".to_string(),
+                source_upstream: Some(Upstream {
+                    remote: "origin".into(),
+                    branch: "feat/new".into()
+                }),
                 create_branch: true,
                 new_branch: "feat/new".to_string(),
                 open_after: true,
             }
         );
+    }
+
+    #[test]
+    fn tracking_prefill_keeps_typed_remote_identity_when_display_names_collide() {
+        let left = prefill(entry(remote("team/origin", "topic")).2);
+        let right = prefill(entry(remote("team", "origin/topic")).2);
+        assert_eq!(left.source, right.source);
+        assert_eq!(
+            left.source_upstream,
+            Some(Upstream {
+                remote: "team/origin".into(),
+                branch: "topic".into()
+            })
+        );
+        assert_eq!(
+            right.source_upstream,
+            Some(Upstream {
+                remote: "team".into(),
+                branch: "origin/topic".into()
+            })
+        );
+        assert_ne!(left.source_upstream, right.source_upstream);
     }
 }

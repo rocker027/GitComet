@@ -1,6 +1,7 @@
 use super::*;
 use crate::view::components::ControlInteractionExt;
 use crate::view::gitcomet_view_requests::{RootRequest, RootRequests as _};
+use gitcomet_core::domain::Upstream;
 use gitcomet_core::services::InteractiveRebaseAction;
 use std::rc::Rc;
 
@@ -336,7 +337,7 @@ pub(in super::super) struct PopoverHost {
     worktree_badge_picker_selected_index: Option<usize>,
     /// What another surface hands the Add-worktree dialog. Consumed when that
     /// dialog opens, so a later open from elsewhere starts from the defaults.
-    pending_worktree_add_prefill: Option<WorktreeAddPrefill>,
+    pending_worktree_add_prefill: Option<(RepoId, WorktreeAddPrefill)>,
     submodule_picker_selected_index: Option<usize>,
     history_author_filter_selected_index: Option<usize>,
     /// Collected author names survive frames and active author filters.
@@ -403,6 +404,7 @@ pub(in super::super) struct PopoverHost {
     create_branch_checkout_enabled: bool,
     create_branch_source_target: String,
     worktree_ref_source_target: String,
+    worktree_ref_source_upstream: Option<Upstream>,
     suppress_worktree_submit_after_ref_enter: bool,
     /// Set while a row menu floating over a picker runs one of its entries. The
     /// menu has already closed itself by then, and the popover underneath is the

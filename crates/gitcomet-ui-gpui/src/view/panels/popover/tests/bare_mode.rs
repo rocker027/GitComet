@@ -33,6 +33,100 @@ fn entry(action: ContextMenuAction, disabled: bool) -> ContextMenuItem {
     }
 }
 
+#[gpui::test]
+fn worktree_source_upstream_resets_on_explicit_selection_close_and_repo_switch(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let mut fixture = (*state(RepositoryMode::WorkingTree)).clone();
+    fixture.repos[0].head_branch = Loadable::Ready("main".into());
+    let mut other = fixture.repos[0].clone();
+    other.id = RepoId(2);
+    other.spec.workdir = PathBuf::from("/tmp/worktree-source-other");
+    other.head_branch = Loadable::Ready("other".into());
+    fixture.repos.push(other);
+    let fixture = Arc::new(fixture);
+    let upstream = gitcomet_core::domain::Upstream {
+        remote: "team/origin".into(),
+        branch: "topic".into(),
+    };
+    cx.update(|window, app| {
+        view.update(app, |view, cx| {
+            crate::view::test_support::push_test_state(view, fixture.clone(), cx)
+        });
+        let host = view.read(app).popover_host.clone();
+        host.update(app, |host, cx| {
+            host.state = fixture;
+            let typed_prefill = WorktreeAddPrefill {
+                source: "team/origin/topic".into(),
+                source_upstream: Some(upstream.clone()),
+                create_branch: true,
+                new_branch: "topic".into(),
+                open_after: false,
+            };
+            host.pending_worktree_add_prefill = Some((RepoId(1), typed_prefill.clone()));
+            host.open_popover_centered(
+                PopoverKind::worktree(RepoId(1), WorktreePopoverKind::AddPrompt),
+                window,
+                cx,
+            );
+            assert_eq!(
+                host.worktree_ref_source_upstream_for_tests(),
+                Some(&upstream)
+            );
+            host.handle_inline_branch_picker_select("main".into(), RepoId(1), window, cx);
+            assert_eq!(host.worktree_ref_source_target_for_tests(), "main");
+            assert_eq!(host.worktree_ref_source_upstream_for_tests(), None);
+            host.handle_inline_worktree_source_select(
+                "team/origin/topic".into(),
+                Some(upstream.clone()),
+                window,
+                cx,
+            );
+            assert_eq!(
+                host.worktree_ref_source_upstream_for_tests(),
+                Some(&upstream)
+            );
+            host.close_popover(cx);
+            assert_eq!(host.worktree_ref_source_upstream_for_tests(), None);
+            host.open_popover_centered(
+                PopoverKind::worktree(RepoId(1), WorktreePopoverKind::AddPrompt),
+                window,
+                cx,
+            );
+            assert_eq!(host.worktree_ref_source_upstream_for_tests(), None);
+            assert_eq!(host.worktree_ref_source_target_for_tests(), "main");
+            host.handle_inline_worktree_source_select(
+                "team/origin/topic".into(),
+                Some(upstream.clone()),
+                window,
+                cx,
+            );
+            host.pending_worktree_add_prefill = Some((RepoId(1), typed_prefill.clone()));
+            host.open_popover_centered(
+                PopoverKind::worktree(RepoId(2), WorktreePopoverKind::AddPrompt),
+                window,
+                cx,
+            );
+            assert_eq!(host.worktree_ref_source_upstream_for_tests(), None);
+            assert_eq!(host.worktree_ref_source_target_for_tests(), "other");
+            assert!(host.pending_worktree_add_prefill.is_none());
+
+            // Bare refusal happens before the normal opening resets. It must
+            // still discard a pending source rather than leaking it to a later form.
+            host.close_popover(cx);
+            host.state = state(RepositoryMode::Bare);
+            host.pending_worktree_add_prefill = Some((RepoId(1), typed_prefill));
+            host.open_popover_centered(PopoverKind::StashPrompt, window, cx);
+            assert!(!host.is_open());
+            assert!(host.pending_worktree_add_prefill.is_none());
+            assert_eq!(host.worktree_ref_source_upstream_for_tests(), None);
+        });
+    });
+}
+
 #[test]
 fn bare_mode_changes_refresh_open_application_and_repository_menus() {
     let normal = state(RepositoryMode::WorkingTree);
@@ -97,6 +191,7 @@ fn bare_context_menus_preserve_supported_actions_and_existing_disabled_reasons(
                     repo_id: RepoId(1),
                     prefill: WorktreeAddPrefill {
                         source: "HEAD".into(),
+                        source_upstream: None,
                         create_branch: false,
                         new_branch: String::new(),
                         open_after: false,

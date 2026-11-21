@@ -855,6 +855,16 @@ impl PopoverHost {
                 repo_id,
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::Menu { path, branch }),
             } => Some(localized_menu(cx, |language| {
+                if self.history_worktree_menu_is_stale() {
+                    return ContextMenuModel::new(vec![ContextMenuItem::Label(
+                        language
+                            .text(
+                                "Worktree changed. Reopen the menu.",
+                                "工作樹已變更，請重新開啟選單。",
+                            )
+                            .into(),
+                    )]);
+                }
                 let protected_by_finish =
                     self.state.worktree_finish_protects_worktree(*repo_id, path)
                         || branch.as_deref().is_some_and(|b| {

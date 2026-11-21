@@ -1642,6 +1642,145 @@ fn reveal_commit_enter_reveals_the_resolved_full_id(cx: &mut gpui::TestAppContex
     );
 }
 
+fn open_delayed_reveal_fixture(
+    cx: &mut gpui::TestAppContext,
+) -> (
+    AppStore,
+    gpui::Entity<GitCometView>,
+    &mut gpui::VisualTestContext,
+) {
+    let backend: Arc<dyn GitBackend> = Arc::new(TestBackend);
+    let (store, events) = AppStore::new_test(backend.clone());
+    let store_for_view = store.clone();
+    let (view, cx) = cx
+        .add_window_view(|window, cx| GitCometView::new(store_for_view, events, None, window, cx));
+    install_app_shortcuts_for_test(cx, backend);
+    install_repo_tab_test_state(&store, &view, cx, RepoId(1));
+    open_reveal_commit_dialog(cx, &view);
+    cx.update(|window, app| {
+        app.bind_keys([gpui::KeyBinding::new(
+            "enter",
+            crate::kit::Enter,
+            Some("TextInput"),
+        )]);
+        let _ = window.draw(app);
+    });
+    (store, view, cx)
+}
+
+fn publish_delayed_reveal_lookup(
+    cx: &mut gpui::VisualTestContext,
+    view: &gpui::Entity<GitCometView>,
+    store: &AppStore,
+    reference: &str,
+    request: u64,
+    full: Option<&CommitId>,
+) {
+    let mut state = (*store.snapshot()).clone();
+    let lookup = &mut state.repos[0].history_state.commit_lookup;
+    lookup.reference = Some(CommitId(reference.into()));
+    lookup.request = request;
+    lookup.result = match full {
+        None => gitcomet_state::model::Loadable::Loading,
+        Some(id) => gitcomet_state::model::Loadable::Ready(gitcomet_core::domain::Commit {
+            id: id.clone(),
+            parent_ids: gitcomet_core::domain::CommitParentIds::new(),
+            summary: "delayed result".into(),
+            author: "Test User".into(),
+            time: std::time::SystemTime::UNIX_EPOCH,
+        }),
+    };
+    store.replace_snapshot_for_test(Arc::new(state));
+    sync_view_snapshot(cx, view);
+    cx.run_until_parked();
+    test_support::redraw(cx);
+}
+
+#[gpui::test]
+fn reveal_commit_enter_while_loading_waits_then_automatically_reveals_the_full_id(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, view, cx) = open_delayed_reveal_fixture(cx);
+    cx.simulate_input("dead");
+    wait_for_commit_lookup(&store, RepoId(1), "dead");
+    let request = commit_lookup(&store).request;
+    publish_delayed_reveal_lookup(cx, &view, &store, "dead", request, None);
+    let before = store.snapshot().repos[0].history_state.clone();
+    assert!(cx.debug_bounds("reveal_commit_resolving").is_some());
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    test_support::redraw(cx);
+    assert!(reveal_commit_is_open(cx, &view));
+    assert_eq!(
+        store.snapshot().repos[0].history_state.reveal_target,
+        before.reveal_target
+    );
+    assert_eq!(
+        store.snapshot().repos[0].history_state.selected_commit,
+        before.selected_commit
+    );
+    let full = CommitId(format!("dead{}", "0".repeat(36)).into());
+    publish_delayed_reveal_lookup(cx, &view, &store, "dead", request, Some(&full));
+    assert!(
+        !reveal_commit_is_open(cx, &view),
+        "the matching answer must complete the submitted jump without another Enter"
+    );
+    wait_until("delayed reveal carries the full id", || {
+        store.snapshot().repos[0]
+            .history_state
+            .reveal_target
+            .as_ref()
+            == Some(&full)
+    });
+}
+
+#[gpui::test]
+fn editing_a_submitted_reveal_cancels_automatic_jump_for_old_and_new_answers(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, view, cx) = open_delayed_reveal_fixture(cx);
+    cx.simulate_input("dead");
+    wait_for_commit_lookup(&store, RepoId(1), "dead");
+    let old_request = commit_lookup(&store).request;
+    publish_delayed_reveal_lookup(cx, &view, &store, "dead", old_request, None);
+    let before = store.snapshot().repos[0].history_state.clone();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(reveal_commit_is_open(cx, &view));
+    cx.simulate_input("e");
+    wait_for_commit_lookup(&store, RepoId(1), "deade");
+    let new_request = commit_lookup(&store).request;
+    assert!(new_request > old_request);
+    publish_delayed_reveal_lookup(cx, &view, &store, "deade", new_request, None);
+    let old_full = CommitId(format!("dead{}", "0".repeat(36)).into());
+    let new_full = CommitId(format!("deade{}", "1".repeat(35)).into());
+    for (reference, request, full) in [
+        ("dead", old_request, &old_full),
+        ("deade", new_request, &new_full),
+    ] {
+        publish_delayed_reveal_lookup(cx, &view, &store, reference, request, Some(full));
+        assert!(
+            reveal_commit_is_open(cx, &view),
+            "editing must cancel the pending Enter even when an answer arrives"
+        );
+        assert_eq!(
+            store.snapshot().repos[0].history_state.reveal_target,
+            before.reveal_target
+        );
+        assert_eq!(
+            store.snapshot().repos[0].history_state.selected_commit,
+            before.selected_commit
+        );
+    }
+    assert!(cx.debug_bounds("reveal_commit_match").is_some());
+    cx.update(|window, app| {
+        let dialog = view.read(app).reveal_commit_dialog.read(app);
+        let input = dialog.query_input.read(app);
+        assert_eq!(input.text(), "deade");
+        assert!(input.focus_handle().is_focused(window));
+    });
+}
+
 fn open_palette_on_ready_repo(
     cx: &mut gpui::TestAppContext,
     merging: bool,

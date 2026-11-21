@@ -1085,12 +1085,13 @@ fn history_refs_hover_lists_refs_and_opens_item_menus_in_mode(
     cx.run_until_parked();
     redraw(cx);
     cx.update(|_window, app| {
-        assert_eq!(
+        assert!(
             view.read(app)
                 .active_context_menu_invoker
                 .as_ref()
-                .map(|invoker| invoker.as_ref()),
-            Some("history_commit_menu_1_tip"),
+                .is_some_and(|invoker| crate::view::rows::history_row_menu_is_open(
+                    invoker, repo_id, "tip",
+                )),
             "the clicked row keeps its active menu styling"
         );
         assert_eq!(
@@ -3796,4 +3797,269 @@ fn graph_ref_menu_targets_the_clicked_branch_and_node_double_click_only_browses(
             })
         );
     });
+}
+
+struct ReorderingGraphFixture {
+    view: Entity<GitCometView>,
+    store: AppStore,
+    repo_id: RepoId,
+    mode: HistoryBranchNamesMode,
+}
+
+fn mount_reordering_graph(
+    cx: &mut gpui::TestAppContext,
+) -> (ReorderingGraphFixture, &mut gpui::VisualTestContext) {
+    let page = Arc::new(log_page(
+        vec![
+            commit("tip", &["base"], "shared tip"),
+            commit("base", &[], "main"),
+        ],
+        None,
+    ));
+    let (view, cx, mut state, store) = refresh::mount(cx, page);
+    let repo_id = RepoId(1);
+    let mode = HistoryBranchNamesMode::SeparateColumn;
+    let repo = &mut state.repos[0];
+    repo.head_branch = Loadable::Ready("main".into());
+    repo.head_branch_rev += 1;
+    repo.branches = Loadable::Ready(Arc::new(vec![
+        branch("main", "base"),
+        branch("aa", "tip"),
+        branch("bb", "tip"),
+    ]));
+    repo.branches_rev += 1;
+    repo.worktrees = Loadable::Ready(Arc::new(
+        ["aa", "bb"]
+            .map(|name| gitcomet_core::domain::Worktree {
+                path: std::env::temp_dir()
+                    .join("graph-branch-double-click")
+                    .join(name),
+                head: Some(CommitId("tip".into())),
+                branch: Some(name.into()),
+                bare: false,
+                detached: false,
+            })
+            .into(),
+    ));
+    repo.worktrees_rev += 1;
+    cx.simulate_resize(size(px(1600.0), px(900.0)));
+    cx.update(|_, app| {
+        view.update(app, |view, cx| view.set_history_branch_names(mode, cx));
+        let history = view.read(app).main_pane.read(app).history_view.clone();
+        history.update(app, |history, cx| {
+            history.history_col_branch = px(320.0);
+            cx.notify();
+        });
+    });
+    store.replace_snapshot_for_test(Arc::new(state.clone()));
+    ensure_history_cache_for_tests(cx, &view, Arc::new(state.clone()));
+    (
+        ReorderingGraphFixture {
+            view,
+            store,
+            repo_id,
+            mode,
+        },
+        cx,
+    )
+}
+
+impl ReorderingGraphFixture {
+    fn bounds(&self, name: &str) -> Bounds<Pixels> {
+        HistoryView::painted_ref_bounds_for_test(
+            self.repo_id,
+            "tip",
+            self.mode,
+            &crate::view::panels::HistoryMenuRef::Branch(BranchMenuTarget::local(name)),
+        )
+        .expect("both fixture branches fit in the graph")
+    }
+
+    fn original_position(&self) -> Point<Pixels> {
+        let pressed = self.bounds("aa").center();
+        assert!(self.bounds("aa").contains(&pressed));
+        assert!(!self.bounds("bb").contains(&pressed));
+        pressed
+    }
+
+    fn complete_first_click(&self, cx: &mut gpui::VisualTestContext, pressed: Point<Pixels>) {
+        cx.simulate_mouse_move(pressed, None, gpui::Modifiers::default());
+        cx.simulate_event(gpui::MouseDownEvent {
+            position: pressed,
+            button: gpui::MouseButton::Left,
+            click_count: 1,
+            ..Default::default()
+        });
+        cx.simulate_event(gpui::MouseUpEvent {
+            position: pressed,
+            button: gpui::MouseButton::Left,
+            click_count: 1,
+            ..Default::default()
+        });
+        self.assert_no_branch_activation(cx);
+        assert_eq!(
+            self.store.snapshot().repos[0].history_state.selected_commit,
+            Some(CommitId("tip".into())),
+            "the first complete click must select tip through the real event path"
+        );
+        assert!(self.bounds("aa").contains(&pressed));
+    }
+
+    fn move_bb_to_original_position(
+        &self,
+        cx: &mut gpui::VisualTestContext,
+        pressed: Point<Pixels>,
+    ) {
+        // Preserve the first click's real reducer state, rather than resetting
+        // selection from the snapshot used to mount the fixture.
+        let mut state = self.store.snapshot().as_ref().clone();
+        let repo = &mut state.repos[0];
+        repo.branches =
+            Loadable::Ready(Arc::new(vec![branch("main", "base"), branch("bb", "tip")]));
+        repo.branches_rev += 1;
+        repo.worktrees = Loadable::Ready(Arc::new(
+            repo.worktrees
+                .ready()
+                .unwrap()
+                .iter()
+                .filter(|worktree| worktree.branch.as_deref() == Some("bb"))
+                .cloned()
+                .collect(),
+        ));
+        repo.worktrees_rev += 1;
+        self.store
+            .replace_snapshot_for_test(Arc::new(state.clone()));
+        ensure_history_cache_for_tests(cx, &self.view, Arc::new(state));
+        assert!(
+            self.bounds("bb").contains(&pressed),
+            "the replacement bb must occupy the exact aa press point"
+        );
+    }
+
+    fn assert_no_branch_activation(&self, cx: &mut gpui::VisualTestContext) {
+        cx.run_until_parked();
+        self.store
+            .barrier_for_test()
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap();
+        let snapshot = self.store.snapshot();
+        assert_eq!(
+            snapshot.repos.len(),
+            1,
+            "a replacement branch must not inherit the click gesture"
+        );
+        assert_eq!(snapshot.active_repo, Some(self.repo_id));
+        assert_eq!(snapshot.repos[0].head_branch.ready().unwrap(), "main");
+        assert_eq!(
+            snapshot.repos[0].ops_rev, 0,
+            "the gesture must not dispatch CheckoutBranch"
+        );
+    }
+}
+
+#[gpui::test]
+fn graph_branch_double_click_cancels_when_another_ref_takes_its_place(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (fixture, cx) = mount_reordering_graph(cx);
+    let pressed = fixture.original_position();
+    fixture.complete_first_click(cx, pressed);
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: pressed,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+
+    fixture.move_bb_to_original_position(cx, pressed);
+
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: pressed,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    fixture.assert_no_branch_activation(cx);
+}
+
+#[gpui::test]
+fn graph_branch_right_click_cancels_when_another_ref_takes_its_place(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (fixture, cx) = mount_reordering_graph(cx);
+    let pressed = fixture.original_position();
+    cx.simulate_mouse_move(pressed, None, gpui::Modifiers::default());
+    cx.simulate_mouse_down(
+        pressed,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    fixture.move_bb_to_original_position(cx, pressed);
+    cx.simulate_mouse_up(
+        pressed,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|_, app| {
+        assert_eq!(
+            crate::view::test_support::popover_kind(fixture.view.read(app), app),
+            None,
+            "cancel this right click rather than opening a replacement ref or commit menu"
+        );
+    });
+    fixture.assert_no_branch_activation(cx);
+
+    // Positive control: a complete, stable right click still targets bb.
+    assert!(fixture.bounds("bb").contains(&pressed));
+    cx.simulate_mouse_down(
+        pressed,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_up(
+        pressed,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|_, app| {
+        assert_eq!(
+            crate::view::test_support::popover_kind(fixture.view.read(app), app),
+            Some(PopoverKind::BranchMenu {
+                repo_id: fixture.repo_id,
+                target: BranchMenuTarget::local("bb"),
+            })
+        );
+    });
+    fixture.assert_no_branch_activation(cx);
+}
+
+#[gpui::test]
+fn graph_branch_double_click_cancels_when_refs_change_between_complete_clicks(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (fixture, cx) = mount_reordering_graph(cx);
+    let pressed = fixture.original_position();
+    fixture.complete_first_click(cx, pressed);
+    fixture.move_bb_to_original_position(cx, pressed);
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: pressed,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: pressed,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    fixture.assert_no_branch_activation(cx);
+    assert_eq!(
+        fixture.store.snapshot().repos[0]
+            .history_state
+            .selected_commit,
+        Some(CommitId("tip".into()))
+    );
 }

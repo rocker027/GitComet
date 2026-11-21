@@ -417,9 +417,9 @@ impl PopoverHost {
                     // The prompts that branch from a ref accept a typed name that
                     // matched nothing, so Enter can create one.
                     if ref_rows_spec(this).offers_source_refs() {
-                        let name = match payload {
-                            Some(branch_picker::BranchPickerNavTarget::Ref(name)) => name,
-                            _ => query,
+                        let (name, picked_row) = match payload {
+                            Some(branch_picker::BranchPickerNavTarget::Ref(name)) => (name, true),
+                            _ => (query, false),
                         };
                         if !name.is_empty() {
                             if matches!(
@@ -430,8 +430,19 @@ impl PopoverHost {
                                 })
                             ) {
                                 this.suppress_worktree_submit_after_ref_enter = true;
+                                // Accepting the unchanged prefill keeps its exact
+                                // remote identity. A picked local or tag row is a
+                                // new choice even when its label is identical.
+                                let upstream = (!picked_row
+                                    && name == this.worktree_ref_source_target)
+                                    .then(|| this.worktree_ref_source_upstream.clone())
+                                    .flatten();
+                                this.handle_inline_worktree_source_select(
+                                    name, upstream, window, cx,
+                                );
+                            } else {
+                                this.handle_inline_branch_picker_select(name, repo_id, window, cx);
                             }
-                            this.handle_inline_branch_picker_select(name, repo_id, window, cx);
                         }
                     } else if let Some(branch_picker::BranchPickerNavTarget::Ref(name)) = payload {
                         this.handle_inline_branch_picker_select(name, repo_id, window, cx);

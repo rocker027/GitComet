@@ -43,6 +43,7 @@ impl DiffRenderer {
         };
         let transfer = StageFileTransfer {
             repo_id: repo.id,
+            repo_lifetime: repo.lifetime(),
             path: path.clone(),
             from: *area,
             ops_rev: repo.ops_rev,
@@ -78,6 +79,53 @@ impl DiffRenderer {
         if consumes_selection {
             self.clear_status_selection_for_shortcut(transfer.repo_id, cx);
         }
+        self.begin_stage_file_transfer(transfer);
+        true
+    }
+
+    /// Row actions have already resolved selection and confirmed conflicts.
+    /// Follow only the exact open working-tree diff, without querying the
+    /// details pane again while its row callback is running.
+    pub(in crate::view) fn stage_open_file_from_status(
+        &mut self,
+        repo_id: RepoId,
+        path: &std::path::Path,
+        area: DiffArea,
+    ) -> bool {
+        let Some(repo) = self.active_repo().filter(|repo| repo.id == repo_id) else {
+            return false;
+        };
+        if self.hosted_decor.is_some()
+            || self.shows_linked_worktree()
+            || self.is_inline_submodule_diff_active()
+            || repo.local_actions_in_flight > 0
+            || self.stage_file_transfer.is_some()
+        {
+            return false;
+        }
+        let diff = self.bound_diff_state(repo);
+        if diff.content_preview
+            || !matches!(diff.diff_target.as_ref(), Some(DiffTarget::WorkingTree { path: shown, area: shown_area, .. })
+                if shown == path && *shown_area == area)
+        {
+            return false;
+        }
+        let transfer = StageFileTransfer {
+            repo_id,
+            repo_lifetime: repo.lifetime(),
+            path: path.to_path_buf(),
+            from: area,
+            ops_rev: repo.ops_rev,
+            canvas_requests: repo.navigation.canvas_requests,
+            opened: false,
+            scroll_offsets: [&self.diff_scroll, &self.diff_split_right_scroll]
+                .map(|scroll| scroll.0.borrow().base_handle.offset()),
+        };
+        self.begin_stage_file_transfer(transfer);
+        true
+    }
+
+    fn begin_stage_file_transfer(&mut self, transfer: StageFileTransfer) {
         let msg = match transfer.from {
             DiffArea::Unstaged => Msg::StagePath {
                 repo_id: transfer.repo_id,
@@ -91,17 +139,15 @@ impl DiffRenderer {
         self.next_file_advance = None;
         self.stage_file_transfer = Some(transfer);
         self.store.dispatch(msg);
-        true
     }
 
     pub(in crate::view) fn resolve_stage_file_transfer(&mut self, cx: &mut gpui::Context<Self>) {
         let Some(mut transfer) = self.stage_file_transfer.take() else {
             return;
         };
-        let Some(repo) = self
-            .active_repo()
-            .filter(|repo| repo.id == transfer.repo_id)
-        else {
+        let Some(repo) = self.active_repo().filter(|repo| {
+            repo.id == transfer.repo_id && repo.lifetime() == transfer.repo_lifetime
+        }) else {
             return;
         };
         let to = match transfer.from {
@@ -145,6 +191,23 @@ impl DiffRenderer {
                 scroll.0.borrow().base_handle.set_offset(offset);
             }
             self.diff_autoscroll_pending = false;
+            // The root or details pane may still be updating this renderer.
+            // Defer both projection lookup and reveal until their borrows end.
+            self.commands.defer(
+                crate::view::panes::diff::services::DiffCommand::RevealStatus {
+                    section: match to {
+                        DiffArea::Staged => StatusSection::Staged,
+                        DiffArea::Unstaged => StatusSection::CombinedUnstaged,
+                    },
+                    path: transfer.path,
+                    after_transfer: Some((
+                        transfer.repo_id,
+                        transfer.repo_lifetime,
+                        expected_canvas_requests,
+                    )),
+                },
+                cx,
+            );
             return;
         }
         // A new file selection wins. `None` is expected when the reducer
@@ -164,6 +227,7 @@ impl DiffRenderer {
             return;
         }
         let repo_id = transfer.repo_id;
+        let repo_lifetime = transfer.repo_lifetime;
         let path = transfer.path.clone();
         let canvas_requests = transfer.canvas_requests;
         transfer.opened = true;
@@ -175,11 +239,11 @@ impl DiffRenderer {
                     pane.stage_file_transfer = None;
                     return;
                 };
-                let Some(repo) = current
-                    .repos
-                    .iter()
-                    .find(|repo| repo.id == repo_id && current.active_repo == Some(repo_id))
-                else {
+                let Some(repo) = current.repos.iter().find(|repo| {
+                    repo.id == repo_id
+                        && repo.lifetime() == repo_lifetime
+                        && current.active_repo == Some(repo_id)
+                }) else {
                     pane.stage_file_transfer = None;
                     return;
                 };

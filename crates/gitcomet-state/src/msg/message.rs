@@ -2,8 +2,8 @@ use crate::model::GitLogTagFetchMode;
 use crate::model::{
     BranchExistsPromptState, CommitRequest, ConflictFileLoadMode, DefaultTagType,
     FileBrowserSettings, ForceDeleteBranchPrompt, ForceRemoveWorktreePrompt,
-    GitOperationOuterOutcome, MaintenanceSettings, RemoteSettings, RepoId, SidebarDataRequest,
-    SidebarMode,
+    GitOperationOuterOutcome, MaintenanceSettings, RangeSelection, RemoteSettings, RepoId,
+    SidebarDataRequest, SidebarMode,
 };
 use gitcomet_core::auth::StagedGitAuth;
 use gitcomet_core::conflict_session::ConflictSession;
@@ -551,12 +551,25 @@ pub enum Msg {
         from_label: String,
         to_label: String,
     },
+    /// Switch between the cumulative and direct diff of two adjacent selected
+    /// commits. The endpoints identify the comparison the user acted on.
+    ToggleAdjacentComparison {
+        repo_id: RepoId,
+        from: CommitId,
+        to: CommitId,
+    },
     /// Compare a commit/branch/tag (resolved to `from`) against the live working
     /// tree. Loads the changed-file list; the tip tracks uncommitted changes.
     CompareWithWorkingTree {
         repo_id: RepoId,
         from: CommitId,
         from_label: String,
+    },
+    /// Toggle untracked files only if this exact working-tree comparison is
+    /// still current. The asynchronously resolved base is not its identity.
+    ToggleWorkingTreeComparisonUntracked {
+        repo_id: RepoId,
+        expected: RangeSelection,
     },
     /// A comparison with explicit options (a merge-base comparison, or one
     /// that lists untracked files). `to: None` is the working tree.

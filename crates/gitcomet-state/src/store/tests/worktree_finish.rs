@@ -3300,6 +3300,10 @@ fn f10_third_linked_worktree_blocks_protected_ref_mutations_allows_unrelated_and
         "F10: third worktree in same common_dir must see active finish run"
     );
     assert!(
+        snap.worktree_finish_protects_worktree(view_id, &main),
+        "F10: the paused MergeInto run protects the target main worktree path"
+    );
+    assert!(
         !snap.worktree_finish_protects_branch(indep_id, "main"),
         "F10: independent repo with same branch name 'main' must NOT be blocked"
     );
@@ -3364,6 +3368,29 @@ fn f10_third_linked_worktree_blocks_protected_ref_mutations_allows_unrelated_and
             path: extra_wt.clone(),
             checkout: WorktreeCheckout::Existing {
                 reference: "main".to_string(),
+            },
+            open_after: false,
+        },
+        Msg::AddWorktree {
+            repo_id: view_id,
+            path: dir.path().join("new-remote-wt"),
+            checkout: WorktreeCheckout::NewBranchFromRemote {
+                name: "main".to_string(),
+                upstream: gitcomet_core::domain::Upstream {
+                    remote: "origin".to_string(),
+                    branch: "main".to_string(),
+                },
+            },
+            open_after: false,
+        },
+        Msg::AddWorktree {
+            repo_id: view_id,
+            path: main.clone(),
+            checkout: WorktreeCheckout::ExistingRemote {
+                upstream: gitcomet_core::domain::Upstream {
+                    remote: "origin".to_string(),
+                    branch: "main".to_string(),
+                },
             },
             open_after: false,
         },

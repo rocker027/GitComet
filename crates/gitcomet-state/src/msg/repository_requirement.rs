@@ -26,6 +26,7 @@ impl Msg {
             | Self::CherryPickCommit { repo_id, .. }
             | Self::Commit { repo_id, .. }
             | Self::CompareWithWorkingTree { repo_id, .. }
+            | Self::ToggleWorkingTreeComparisonUntracked { repo_id, .. }
             | Self::ConflictAddManualAlignment { repo_id, .. }
             | Self::ConflictApplyAutosolve { repo_id, .. }
             | Self::ConflictApplyBulkChoice { repo_id, .. }
@@ -113,6 +114,7 @@ impl Msg {
             | Self::ClearCommitSelection { repo_id, .. }
             | Self::ReviewWorkingTree { repo_id, .. }
             | Self::CompareCommitRange { repo_id, .. }
+            | Self::ToggleAdjacentComparison { repo_id, .. }
             | Self::ClearComparison { repo_id, .. }
             | Self::MarkForComparison { repo_id, .. }
             | Self::CompareWithMarked { repo_id, .. }

@@ -347,14 +347,16 @@ impl DetailsPaneView {
         let theme = self.theme;
         let ui_scale = self.ui_scale();
         let secondary = theme.colors.foreground.secondary;
-        let (icon, label_color) = match &pill.kind {
-            RefPillKind::Branch(BranchMenuTarget::Local { .. }) => {
-                ("icons/git_branch.svg", theme.colors.foreground.primary)
-            }
+        let (icon, label_color, ref_kind) = match &pill.kind {
+            RefPillKind::Branch(BranchMenuTarget::Local { .. }) => (
+                "icons/git_branch.svg",
+                theme.colors.foreground.primary,
+                "local",
+            ),
             RefPillKind::Branch(BranchMenuTarget::Remote { .. }) => {
-                ("icons/git_branch.svg", secondary)
+                ("icons/cloud.svg", secondary, "remote")
             }
-            RefPillKind::Tag(_) => ("icons/tag.svg", secondary),
+            RefPillKind::Tag(_) => ("icons/tag.svg", secondary, "tag"),
         };
         let icon_color = if pill.is_head {
             theme.colors.accent.foreground
@@ -370,6 +372,7 @@ impl DetailsPaneView {
             RefPillKind::Tag(name) => name.clone(),
         }
         .into();
+        let ref_key = format!("{ref_kind}_{name}");
         // `TruncatedText` shapes its line in a layout-time closure, outside
         // the label's text style, so the UI font is named on it and the
         // natural width is measured with that same font.
@@ -424,7 +427,9 @@ impl DetailsPaneView {
                 components::TruncatedText::new(name.clone(), text_size)
                     .profile(components::TextTruncationProfile::RefLeaf)
                     .font_family(font_family)
-                    .id(SharedString::from(format!("commit_card_ref_label_{name}")))
+                    .id(SharedString::from(format!(
+                        "commit_card_ref_label_{ref_key}"
+                    )))
                     // Explicit: the line is shaped in a deferred closure that
                     // never sees the label's `.text_color`.
                     .text_color(label_color)
@@ -439,7 +444,7 @@ impl DetailsPaneView {
                 .when(pill.is_head, |d| d.bg(head_tint));
         };
         let menu = ChipMenu {
-            invoker: format!("commit_card_ref_menu_{}", target.display_name()).into(),
+            invoker: format!("commit_card_ref_menu_{ref_key}").into(),
             kind: PopoverKind::BranchMenu { repo_id, target },
             tooltip: "Branch actions",
             enabled: current,
@@ -453,6 +458,60 @@ impl DetailsPaneView {
         // its label gives way and the chevron stays whole.
         let natural = label_width + self.commit_card_chip_chrome_width(window);
         sized(self.commit_card_chip(label, bg, menu, cx), natural)
+    }
+
+    fn commit_card_ref_overflow(
+        &self,
+        repo_id: RepoId,
+        commit_id: CommitId,
+        hidden: usize,
+        current: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = self.theme;
+        let invoker: SharedString = format!(
+            "commit_card_ref_overflow_{}_{}",
+            repo_id.0,
+            commit_id.as_ref()
+        )
+        .into();
+        let open = self.active_context_menu_invoker.as_ref() == Some(&invoker);
+        components::Button::new(invoker.clone(), format!("+{hidden}"))
+            .style(components::ButtonStyle::Solid)
+            .end_slot(svg_icon(
+                "icons/chevron_down.svg",
+                theme.colors.foreground.secondary,
+                self.ui_scale().px(CHIP_CHEVRON_ICON_PX),
+            ))
+            .open(open)
+            .disabled(!current)
+            .on_click_with_bounds(theme, cx, move |this, event, bounds, window, cx| {
+                if !event.standard_click()
+                    || !this.active_repo().is_some_and(|repo| {
+                        repo.id == repo_id
+                            && repo.history_state.selected_commit.as_ref() == Some(&commit_id)
+                    })
+                {
+                    return;
+                }
+                this.open_popover_for_bounds(
+                    PopoverKind::CommitMenu {
+                        repo_id,
+                        commit_id: commit_id.clone(),
+                        refs: CommitMenuRefs::DetailsChooser,
+                    }
+                    .invoked_by(invoker.clone()),
+                    bounds,
+                    window,
+                    cx,
+                );
+            })
+            .flex_none()
+            .debug_selector(|| "commit_card_ref_overflow".to_string())
+            .gitcomet_tooltip(
+                theme,
+                text(cx, "Show all branches and tags", "顯示所有分支與標籤").into(),
+            )
     }
 
     pub(super) fn commit_details_card(
@@ -593,12 +652,13 @@ impl DetailsPaneView {
                     bottom.child(self.commit_card_ref_pill(pill, repo_id, current, window, cx));
             }
             if hidden > 0 {
-                bottom = bottom.child(
-                    div()
-                        .text_size(theme.ui_text(12.0))
-                        .text_color(theme.colors.foreground.secondary)
-                        .child(format!("+{hidden}")),
-                );
+                bottom = bottom.child(self.commit_card_ref_overflow(
+                    repo_id,
+                    details.id.clone(),
+                    hidden,
+                    current,
+                    cx,
+                ));
             }
         }
 

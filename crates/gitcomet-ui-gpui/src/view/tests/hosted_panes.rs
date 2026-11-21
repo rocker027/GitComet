@@ -206,6 +206,221 @@ fn settle(
     }
 }
 
+#[gpui::test]
+fn go_to_enter_resolves_single_character_refs_with_the_real_git_backend(
+    cx: &mut gpui::TestAppContext,
+) {
+    let dir = repository_with_edits();
+    let branch_commit = CommitId(head(dir.path()).into());
+    git(dir.path(), &["branch", "a"]);
+    git(
+        dir.path(),
+        &["commit", "-q", "--allow-empty", "-m", "second"],
+    );
+    let tag_commit = CommitId(head(dir.path()).into());
+    assert_ne!(branch_commit, tag_commit);
+    git(dir.path(), &["tag", "v"]);
+    git(dir.path(), &["add", "a.rs"]);
+    let backend: Arc<dyn GitBackend> = Arc::new(gitcomet_git_gix::GixBackend);
+    let (dir, store, view, cx) = open_repository_in(cx, backend.clone(), dir);
+    install_app_shortcuts_for_test(cx, backend);
+    let prior_focus = cx.update(|window, app| {
+        app.bind_keys([gpui::KeyBinding::new(
+            "enter",
+            crate::kit::Enter,
+            Some("TextInput"),
+        )]);
+        let focus = app.focus_handle();
+        window.focus(&focus, app);
+        let _ = window.draw(app);
+        focus
+    });
+    let baseline_head = head(dir.path());
+    let baseline_branch = crate::test_support::git(dir.path(), &["symbolic-ref", "HEAD"]);
+    let baseline_index = std::fs::read(dir.path().join(".git/index")).unwrap();
+    let baseline_worktree =
+        ["a.rs", "b.rs"].map(|path| std::fs::read(dir.path().join(path)).unwrap());
+    let open = |cx: &mut gpui::VisualTestContext| {
+        cx.simulate_keystrokes("secondary-g");
+        crate::test_support::refresh_and_draw(cx);
+        assert!(reveal_commit_is_open(cx, &view));
+    };
+
+    open(cx);
+    let old_selection = store.snapshot().repos[0]
+        .history_state
+        .selected_commit
+        .clone();
+    let old_lookup_request = store.snapshot().repos[0]
+        .history_state
+        .commit_lookup
+        .request;
+    cx.simulate_input("   ");
+    cx.simulate_keystrokes("enter");
+    publish(cx, &view, store.snapshot());
+    assert!(
+        reveal_commit_is_open(cx, &view),
+        "whitespace Enter must keep Go To open"
+    );
+    assert_eq!(
+        store.snapshot().repos[0].history_state.selected_commit,
+        old_selection
+    );
+    assert_eq!(
+        store.snapshot().repos[0]
+            .history_state
+            .commit_lookup
+            .request,
+        old_lookup_request
+    );
+    cx.update(|window, app| {
+        let input = view
+            .read(app)
+            .reveal_commit_dialog
+            .read(app)
+            .query_input
+            .read(app)
+            .focus_handle();
+        assert!(
+            input.is_focused(window),
+            "empty submission must retain query focus"
+        );
+    });
+    cx.simulate_keystrokes("secondary-g");
+    crate::test_support::refresh_and_draw(cx);
+    assert!(!reveal_commit_is_open(cx, &view));
+
+    for (reference, expected) in [("a", branch_commit), ("v", tag_commit)] {
+        open(cx);
+        let lookup_before = store.snapshot().repos[0]
+            .history_state
+            .commit_lookup
+            .clone();
+        cx.simulate_input(reference);
+        publish(cx, &view, store.snapshot());
+        let lookup = store.snapshot().repos[0]
+            .history_state
+            .commit_lookup
+            .clone();
+        assert_eq!(
+            lookup.request, lookup_before.request,
+            "one character must not start a preview lookup"
+        );
+        assert_eq!(lookup.reference, lookup_before.reference);
+        assert!(cx.debug_bounds("reveal_commit_examples").is_some());
+        assert!(cx.debug_bounds("reveal_commit_match").is_none());
+        cx.simulate_keystrokes("enter");
+        settle(
+            cx,
+            &view,
+            &store,
+            "short ref resolved to its full commit ID",
+            |cx| {
+                let state = store.snapshot();
+                let history = &state.repos[0].history_state;
+                let dialog_open = reveal_commit_is_open(cx, &view);
+                if matches!(&history.commit_lookup.result, Loadable::Loading)
+                    && history
+                        .commit_lookup
+                        .reference
+                        .as_ref()
+                        .is_some_and(|id| id.as_ref() == reference)
+                {
+                    assert!(
+                        dialog_open,
+                        "a submitted lookup must keep its overlay while resolving"
+                    );
+                }
+                assert!(
+                    history
+                        .reveal_target
+                        .as_ref()
+                        .is_none_or(|id| id.as_ref().len() == 40),
+                    "only resolved full IDs may reach history reveal"
+                );
+                history.selected_commit.as_ref() == Some(&expected)
+                    && matches!(&history.commit_details, Loadable::Ready(details) if details.id == expected)
+                    && !dialog_open
+            },
+        );
+        cx.update(|window, _| {
+            assert!(
+                prior_focus.is_focused(window),
+                "Go To must restore its invoker after resolving"
+            );
+        });
+        assert_eq!(
+            store.snapshot().repos[0]
+                .history_state
+                .selected_commit
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .len(),
+            40
+        );
+        assert_eq!(head(dir.path()), baseline_head);
+        assert_eq!(
+            crate::test_support::git(dir.path(), &["symbolic-ref", "HEAD"]),
+            baseline_branch
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join(".git/index")).unwrap(),
+            baseline_index
+        );
+    }
+
+    // An absent non-hex short ref stays inline without disturbing the history
+    // or the diff that was visible when the dialog opened.
+    let diff_before_error = DiffTarget::working_tree("b.rs".into(), DiffArea::Unstaged);
+    let repo_id = store.snapshot().repos[0].id;
+    store.dispatch(Msg::SelectDiff {
+        repo_id,
+        target: diff_before_error.clone(),
+    });
+    settle(cx, &view, &store, "open working-tree diff", |_| {
+        store.snapshot().repos[0].diff_state.diff_target.as_ref() == Some(&diff_before_error)
+    });
+    let selected_before_error = store.snapshot().repos[0]
+        .history_state
+        .selected_commit
+        .clone();
+    open(cx);
+    cx.simulate_input("x");
+    cx.simulate_keystrokes("enter");
+    settle(cx, &view, &store, "missing short ref inline result", |cx| {
+        cx.debug_bounds("reveal_commit_no_match").is_some()
+    });
+    assert!(reveal_commit_is_open(cx, &view));
+    assert_eq!(
+        store.snapshot().repos[0].history_state.selected_commit,
+        selected_before_error
+    );
+    assert_eq!(
+        store.snapshot().repos[0].diff_state.diff_target.as_ref(),
+        Some(&diff_before_error)
+    );
+    cx.update(|window, app| {
+        let dialog = view.read(app).reveal_commit_dialog.read(app);
+        let input = dialog.query_input.read(app);
+        assert_eq!(input.text(), "x");
+        assert!(input.focus_handle().is_focused(window));
+    });
+    assert_eq!(head(dir.path()), baseline_head);
+    assert_eq!(
+        crate::test_support::git(dir.path(), &["symbolic-ref", "HEAD"]),
+        baseline_branch
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join(".git/index")).unwrap(),
+        baseline_index
+    );
+    assert_eq!(
+        ["a.rs", "b.rs"].map(|path| std::fs::read(dir.path().join(path)).unwrap()),
+        baseline_worktree
+    );
+}
+
 fn rows_with(cx: &mut gpui::VisualTestContext, pane: &DiffPane, needle: &str) -> usize {
     let needle = needle.to_string();
     cx.update(|_window, app| {
@@ -4763,6 +4978,253 @@ fn click_linked_file(cx: &mut gpui::VisualTestContext, row: usize, button: gpui:
     crate::view::test_support::redraw(cx);
 }
 
+#[gpui::test]
+fn linked_dirty_graph_row_mouse_and_keyboard_open_the_same_worktree_menu(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (dir, linked, store, view, cx) = open_linked_worktree_changes(cx);
+    let signature = |path: &Path| {
+        let git_dir = crate::test_support::git(path, &["rev-parse", "--absolute-git-dir"]);
+        let git_dir = PathBuf::from(String::from_utf8(git_dir).unwrap().trim());
+        (
+            head(path),
+            crate::test_support::git(path, &["symbolic-ref", "HEAD"]),
+            crate::test_support::git(path, &["status", "--porcelain=v1", "--untracked-files=all"]),
+            std::fs::read(git_dir.join("index")).unwrap(),
+            crate::test_support::git(path, &["show-ref"]),
+        )
+    };
+    let main_before = signature(dir.path());
+    let linked_before = signature(&linked);
+    let history = cx.update(|_, app| view.read(app).main_pane.read(app).history_view.clone());
+    let mut row_ix = None;
+    settle(cx, &view, &store, "linked dirty graph row", |cx| {
+        row_ix = cx.update(|_, app| {
+            history.update(app, |history, _| {
+                let worktree_ix = history
+                    .active_repo()?
+                    .worktree_dirty
+                    .ready()?
+                    .iter()
+                    .position(|summary| summary.path == linked)?;
+                history
+                    .ensure_history_list_plan()
+                    .list_ix_for_worktree(worktree_ix)
+            })
+        });
+        row_ix.is_some_and(|ix| {
+            cx.debug_bounds(selector(format!("history_worktree_row_{ix}")))
+                .is_some()
+        })
+    });
+    let row_ix = row_ix.unwrap();
+    let bounds = cx
+        .debug_bounds(selector(format!("history_worktree_row_{row_ix}")))
+        .unwrap();
+    cx.update(|window, app| {
+        app.clear_key_bindings();
+        crate::app::bind_app_keys_for_test(app);
+        crate::app::bind_text_input_keys_for_test(app);
+        window.activate();
+        let focus = history.read(app).history_panel_focus_handle.clone();
+        window.focus(&focus, app);
+    });
+    cx.simulate_mouse_move(bounds.center(), None, gpui::Modifiers::default());
+    cx.simulate_mouse_down(
+        bounds.center(),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_up(
+        bounds.center(),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::default(),
+    );
+    let expected = PopoverKind::worktree(
+        RepoId(1),
+        WorktreePopoverKind::Menu {
+            path: linked.clone(),
+            branch: Some("linked".into()),
+        },
+    );
+    settle(cx, &view, &store, "mouse worktree menu", |cx| {
+        cx.update(|_, app| crate::view::test_support::popover_kind(view.read(app), app))
+            == Some(expected.clone())
+    });
+    cx.simulate_keystrokes("escape");
+    crate::view::test_support::redraw(cx);
+    cx.update(|window, app| {
+        assert_eq!(
+            crate::view::test_support::popover_kind(view.read(app), app),
+            None
+        );
+        assert!(
+            history
+                .read(app)
+                .history_panel_focus_handle
+                .is_focused(window),
+            "Escape returns the worktree menu's keyboard route to History"
+        );
+    });
+    // open_linked_worktree_changes selected this linked row through the
+    // normal message, so the restored History route has an exact target.
+    assert_eq!(
+        store.snapshot().repos[0]
+            .history_state
+            .worktree_selection
+            .as_ref(),
+        Some(&linked)
+    );
+    cx.simulate_keystrokes("shift-f10");
+    settle(cx, &view, &store, "keyboard worktree menu", |cx| {
+        cx.update(|_, app| crate::view::test_support::popover_kind(view.read(app), app))
+            == Some(expected.clone())
+    });
+    cx.simulate_keystrokes("escape");
+    crate::view::test_support::redraw(cx);
+    assert_eq!(store.snapshot().repos[0].local_actions_in_flight, 0);
+    assert_eq!(signature(dir.path()), main_before);
+    assert_eq!(signature(&linked), linked_before);
+}
+
+#[gpui::test]
+fn linked_dirty_graph_row_single_click_previews_and_double_click_opens_its_worktree(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (dir, linked, store, view, cx) = open_linked_worktree_changes(cx);
+    let signature = |path: &Path| {
+        let git_dir = crate::test_support::git(path, &["rev-parse", "--absolute-git-dir"]);
+        let git_dir = PathBuf::from(String::from_utf8(git_dir).unwrap().trim());
+        (
+            head(path),
+            crate::test_support::git(path, &["symbolic-ref", "HEAD"]),
+            crate::test_support::git(path, &["status", "--porcelain=v1", "--untracked-files=all"]),
+            std::fs::read(git_dir.join("index")).unwrap(),
+            crate::test_support::git(path, &["show-ref"]),
+        )
+    };
+    let main_before = signature(dir.path());
+    let linked_before = signature(&linked);
+    store.dispatch(Msg::ReviewWorkingTree { repo_id: RepoId(1) });
+    settle(cx, &view, &store, "return to original working tree", |_| {
+        let snapshot = store.snapshot();
+        snapshot.active_repo == Some(RepoId(1))
+            && snapshot.repos[0].history_state.worktree_selection.is_none()
+    });
+    let history = cx.update(|_, app| view.read(app).main_pane.read(app).history_view.clone());
+    let mut row_ix = None;
+    settle(
+        cx,
+        &view,
+        &store,
+        "linked dirty graph row for double click",
+        |cx| {
+            row_ix = cx.update(|_, app| {
+                history.update(app, |history, _| {
+                    let worktree_ix = history
+                        .active_repo()?
+                        .worktree_dirty
+                        .ready()?
+                        .iter()
+                        .position(|summary| summary.path == linked)?;
+                    history
+                        .ensure_history_list_plan()
+                        .list_ix_for_worktree(worktree_ix)
+                })
+            });
+            row_ix.is_some_and(|ix| {
+                cx.debug_bounds(selector(format!("history_worktree_row_{ix}")))
+                    .is_some()
+            })
+        },
+    );
+    let row_selector = selector(format!("history_worktree_row_{}", row_ix.unwrap()));
+    let bounds = cx.debug_bounds(row_selector).unwrap();
+    // Use the row's trailing area, away from its separately clickable badge.
+    let first = point(bounds.right() - px(12.0), bounds.center().y);
+    cx.simulate_mouse_move(first, None, gpui::Modifiers::default());
+    cx.simulate_click(first, gpui::Modifiers::default());
+    settle(
+        cx,
+        &view,
+        &store,
+        "single click linked changes preview",
+        |cx| {
+            let snapshot = store.snapshot();
+            snapshot.active_repo == Some(RepoId(1))
+                && snapshot.repos.len() == 1
+                && snapshot.repos[0].history_state.worktree_selection.as_ref() == Some(&linked)
+                && cx.update(|_, app| {
+                    view.read(app)
+                        .details_pane
+                        .read(app)
+                        .selected_worktree_summary()
+                        .is_some_and(|summary| {
+                            summary.path == linked
+                                && summary.staged.len() == 1
+                                && summary.unstaged.len() == 3
+                        })
+                })
+                && cx.debug_bounds("worktree_uncommitted_body").is_some()
+        },
+    );
+    // Complete the same row's second click, rather than invoking its handler.
+    let bounds = cx.debug_bounds(row_selector).unwrap();
+    let second = point(bounds.right() - px(12.0), bounds.center().y);
+    cx.simulate_mouse_move(second, None, gpui::Modifiers::default());
+    cx.simulate_event(gpui::MouseDownEvent {
+        position: second,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: second,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    settle(
+        cx,
+        &view,
+        &store,
+        "double click opens existing linked worktree",
+        |cx| {
+            let snapshot = store.snapshot();
+            snapshot
+                .active_repo
+                .and_then(|id| snapshot.repos.iter().find(|repo| repo.id == id))
+                .is_some_and(|repo| {
+                    repo.id != RepoId(1)
+                        && repo.spec.workdir == linked
+                        && matches!(repo.open, Loadable::Ready(()))
+                })
+                && cx.update(|_, app| {
+                    view.read(app)
+                        .active_repo()
+                        .is_some_and(|repo| repo.spec.workdir == linked)
+                })
+        },
+    );
+    let snapshot = store.snapshot();
+    assert_eq!(
+        snapshot
+            .repos
+            .iter()
+            .filter(|repo| repo.spec.workdir == linked)
+            .count(),
+        1
+    );
+    assert!(
+        snapshot
+            .repos
+            .iter()
+            .all(|repo| repo.local_actions_in_flight == 0)
+    );
+    assert_eq!(signature(dir.path()), main_before);
+    assert_eq!(signature(&linked), linked_before);
+}
+
 fn main_diff_contains(pane: &DiffRenderer, target: &DiffTarget, needle: &str) -> bool {
     pane.rendered_patch_diff_loadable()
         .and_then(Loadable::ready)
@@ -5456,5 +5918,301 @@ fn a_focused_pane_steps_through_changes_into_the_next_file(cx: &mut gpui::TestAp
         steps.borrow().first(),
         Some(&"previous"),
         "back past the first"
+    );
+}
+
+#[gpui::test]
+fn working_tree_comparison_toggle_loads_real_untracked_content_and_preserves_index(
+    cx: &mut gpui::TestAppContext,
+) {
+    let dir = repository_with_edits();
+    std::fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+    git(dir.path(), &["add", ".gitignore"]);
+    git(dir.path(), &["commit", "-q", "-m", "comparison source"]);
+    git(dir.path(), &["branch", "comparison-source"]);
+    let source = CommitId(head(dir.path()).into());
+    git(dir.path(), &["add", "b.rs"]);
+    let untracked = PathBuf::from("new-untracked.txt");
+    let text = "untracked comparison content sentinel\n";
+    std::fs::write(dir.path().join(&untracked), text).unwrap();
+    std::fs::write(dir.path().join("ignored.txt"), "ignored sentinel\n").unwrap();
+    let status_before = crate::test_support::git(
+        dir.path(),
+        &[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored",
+        ],
+    );
+    let index_before = crate::test_support::git(dir.path(), &["ls-files", "--stage"]);
+    let head_ref_before = crate::test_support::git(dir.path(), &["symbolic-ref", "HEAD"]);
+    let staged_before = crate::test_support::git(dir.path(), &["diff", "--cached", "--binary"]);
+    let index_bytes_before = std::fs::read(dir.path().join(".git/index")).unwrap();
+    assert!(
+        !staged_before.is_empty(),
+        "fixture keeps an unrelated staged edit"
+    );
+    let (dir, store, view, cx) =
+        open_repository_in(cx, Arc::new(gitcomet_git_gix::GixBackend), dir);
+    cx.simulate_resize(gpui::size(px(1500.0), px(1000.0)));
+    cx.update(|_, app| {
+        view.read(app).details_pane.clone().update(app, |pane, cx| {
+            pane.set_file_list_layout(crate::view::FileListLayout::Flat, cx);
+            pane.set_file_list_sort(
+                crate::view::rows::FileListId::RangeFiles,
+                crate::view::rows::CommitFileSort::PathAscending,
+                cx,
+            );
+        });
+    });
+    store.dispatch(Msg::SelectCommit {
+        request_id: None,
+        repo_id: RepoId(1),
+        commit_id: source.clone(),
+    });
+    settle(cx, &view, &store, "source commit selected", |_| {
+        store.snapshot().repos[0]
+            .history_state
+            .selected_commit
+            .as_ref()
+            == Some(&source)
+    });
+    store.dispatch(Msg::CompareWithWorkingTree {
+        repo_id: RepoId(1),
+        from: source.clone(),
+        from_label: "comparison-source".into(),
+    });
+    settle(cx, &view, &store, "tracked comparison loaded", |cx| {
+        let snapshot = store.snapshot();
+        let repo = &snapshot.repos[0];
+        repo.history_state.range_files.ready().is_some_and(|files| {
+            files.len() == 2
+                && files
+                    .iter()
+                    .all(|file| file.path == Path::new("a.rs") || file.path == Path::new("b.rs"))
+        }) && cx
+            .debug_bounds("range_comparison_toggle_untracked")
+            .is_some()
+    });
+    click_with(
+        cx,
+        "range_comparison_toggle_untracked",
+        gpui::Modifiers::default(),
+    );
+    settle(
+        cx,
+        &view,
+        &store,
+        "comparison includes a visible row for the real untracked file",
+        |cx| {
+            let snapshot = store.snapshot();
+            let history = &snapshot.repos[0].history_state;
+            history
+                .range_selection
+                .as_ref()
+                .is_some_and(|range| range.options.include_untracked)
+                && history.range_files.ready().is_some_and(|files| {
+                    files.len() == 3
+                        && files.iter().any(|file| {
+                            file.path == untracked
+                                && file.kind == gitcomet_core::domain::FileStatusKind::Untracked
+                        })
+                        && files
+                            .iter()
+                            .all(|file| file.path != Path::new("ignored.txt"))
+                })
+                && cx.debug_bounds("range_file_1_2").is_some()
+        },
+    );
+    // Flat, ascending paths: a.rs, b.rs, new-untracked.txt. Exercise the real
+    // range row click, including its source commit and live-tree endpoint.
+    click_with(cx, "range_file_1_2", gpui::Modifiers::default());
+    let target = DiffTarget::commit_range(source.clone(), None, Some(untracked.clone()));
+    let target_deadline = Instant::now() + Duration::from_secs(9);
+    settle(cx, &view, &store, "clicked untracked range target", |cx| {
+        let snapshot = store.snapshot();
+        let actual = &snapshot.repos[0].diff_state.diff_target;
+        cx.update(|_, app| {
+            let pane = view.read(app).diff_renderer.read(app);
+            let ready =
+                actual.as_ref() == Some(&target) && pane.rendered_diff_target() == Some(&target);
+            assert!(
+                ready || Instant::now() < target_deadline,
+                "clicked range target: expected={target:?}, store={actual:?}, rendered={:?}",
+                pane.rendered_diff_target(),
+            );
+            ready
+        })
+    });
+    let preview_path = store.snapshot().repos[0].spec.workdir.join(&untracked);
+    let preview_deadline = Instant::now() + Duration::from_secs(9);
+    settle(cx, &view, &store, "untracked range diff content", |cx| {
+        cx.update(|_, app| {
+            let pane = view.read(app).diff_renderer.read(app);
+            // Added/untracked range files render the New side as a whole-file
+            // preview, rather than loading a patch or a split file diff.
+            let ready = pane.rendered_diff_target() == Some(&target)
+                && pane.one_sided_change_side()
+                    == Some(gitcomet_core::domain::DiffPreviewTextSide::New)
+                && pane.diff_surface().body
+                    == crate::view::panes::diff::DiffBody::FilePreview
+                && pane.worktree_preview_path.as_ref() == Some(&preview_path)
+                && matches!(pane.worktree_preview, Loadable::Ready(_))
+                && pane.worktree_preview_text.as_ref() == text;
+            assert!(
+                ready || Instant::now() < preview_deadline,
+                "untracked preview: expected_target={target:?}, actual_target={:?}, side={:?}, body={:?}, expected_path={preview_path:?}, preview_path={:?}, preview={:?}, text={:?}",
+                pane.rendered_diff_target(),
+                pane.one_sided_change_side(),
+                pane.diff_surface().body,
+                pane.worktree_preview_path,
+                pane.worktree_preview,
+                pane.worktree_preview_text,
+            );
+            ready
+        })
+    });
+    // Watchers are disabled here. Exercise the normal refresh event without
+    // toggling the comparison or reselecting after deleting the selected file.
+    let range_before_delete = store.snapshot().repos[0]
+        .history_state
+        .range_selection
+        .clone()
+        .unwrap();
+    std::fs::remove_file(dir.path().join(&untracked)).unwrap();
+    store.dispatch(Msg::RepoExternallyChanged {
+        repo_id: RepoId(1),
+        change: gitcomet_state::msg::RepoExternalChange::worktree(),
+    });
+    settle(
+        cx,
+        &view,
+        &store,
+        "deleted comparison file returns to the summary",
+        |cx| {
+            let snapshot = store.snapshot();
+            let repo = &snapshot.repos[0];
+            let history = &repo.history_state;
+            assert_eq!(
+                history.range_selection.as_ref(),
+                Some(&range_before_delete),
+                "an external deletion must preserve the mode and endpoints"
+            );
+            history.range_files.ready().is_some_and(|files| {
+                files.len() == 2 && files.iter().all(|file| file.path != untracked)
+            }) && !history.range_files_in_flight
+                && repo.diff_state.diff_target.is_none()
+                && cx.debug_bounds("range_comparison_body").is_some()
+                && cx.update(|_, app| {
+                    view.read(app)
+                        .diff_renderer
+                        .read(app)
+                        .rendered_diff_target()
+                        .is_none()
+                        && view.read(app).main_pane.read(app).active_content(app)
+                            == crate::view::panes::main::MainPaneContent::History
+                })
+        },
+    );
+    assert_eq!(head(dir.path()), source.as_ref());
+    assert_eq!(
+        std::fs::read(dir.path().join(".git/index")).unwrap(),
+        index_bytes_before
+    );
+
+    // The refreshed list remains usable after its old selection disappeared.
+    click_with(cx, "range_file_1_0", gpui::Modifiers::default());
+    let surviving_target = DiffTarget::commit_range(source.clone(), None, Some("a.rs".into()));
+    settle(
+        cx,
+        &view,
+        &store,
+        "surviving comparison file can still be selected",
+        |cx| {
+            let snapshot = store.snapshot();
+            snapshot.repos[0].diff_state.diff_target.as_ref() == Some(&surviving_target)
+                && cx.update(|_, app| {
+                    let pane = view.read(app).diff_renderer.read(app);
+                    pane.rendered_diff_target() == Some(&surviving_target)
+                        && main_diff_contains(pane, &surviving_target, "a edited 3")
+                })
+        },
+    );
+
+    // Restore the fixture before the original toggle and no-side-effects checks.
+    std::fs::write(dir.path().join(&untracked), text).unwrap();
+    store.dispatch(Msg::RepoExternallyChanged {
+        repo_id: RepoId(1),
+        change: gitcomet_state::msg::RepoExternalChange::worktree(),
+    });
+    settle(
+        cx,
+        &view,
+        &store,
+        "restored untracked file returns to the comparison list",
+        |_| {
+            let snapshot = store.snapshot();
+            let history = &snapshot.repos[0].history_state;
+            history.range_selection.as_ref() == Some(&range_before_delete)
+                && history.range_files.ready().is_some_and(|files| {
+                    files.len() == 3 && files.iter().any(|file| file.path == untracked)
+                })
+                && !history.range_files_in_flight
+        },
+    );
+    click_with(
+        cx,
+        "range_comparison_toggle_untracked",
+        gpui::Modifiers::default(),
+    );
+    settle(
+        cx,
+        &view,
+        &store,
+        "comparison returns to tracked files",
+        |_| {
+            let snapshot = store.snapshot();
+            let history = &snapshot.repos[0].history_state;
+            history
+                .range_selection
+                .as_ref()
+                .is_some_and(|range| !range.options.include_untracked)
+                && history.range_files.ready().is_some_and(|files| {
+                    files.len() == 2
+                        && files.iter().all(|file| {
+                            file.path != untracked && file.path != Path::new("ignored.txt")
+                        })
+                })
+        },
+    );
+    assert_eq!(head(dir.path()), source.as_ref());
+    assert_eq!(
+        crate::test_support::git(dir.path(), &["symbolic-ref", "HEAD"]),
+        head_ref_before
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join(".git/index")).unwrap(),
+        index_bytes_before
+    );
+    assert_eq!(
+        crate::test_support::git(dir.path(), &["ls-files", "--stage"]),
+        index_before
+    );
+    assert_eq!(
+        crate::test_support::git(dir.path(), &["diff", "--cached", "--binary"]),
+        staged_before
+    );
+    assert_eq!(
+        crate::test_support::git(
+            dir.path(),
+            &[
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+                "--ignored"
+            ]
+        ),
+        status_before
     );
 }

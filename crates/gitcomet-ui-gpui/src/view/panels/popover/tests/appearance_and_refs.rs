@@ -46,6 +46,286 @@ fn ref_repo() -> RepoState {
 }
 
 #[gpui::test]
+fn history_ref_chooser_keeps_typed_refs_worktrees_and_keyboard_actions(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gitcomet_core::domain::Worktree;
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let mut repo = ref_repo();
+    let commit_id = repo.branches.ready().unwrap()[0].target.clone();
+    let worktree = |path: &str, branch: &str, head: CommitId| Worktree {
+        path: path.into(),
+        bare: false,
+        detached: false,
+        head: Some(head),
+        branch: Some(branch.into()),
+    };
+    repo.worktrees = Loadable::Ready(Arc::new(vec![
+        worktree("/tmp/combined-refs", "main", commit_id.clone()),
+        worktree("/tmp/stale-main", "main", CommitId("other".into())),
+        worktree("/tmp/stale-release", "release", CommitId("other".into())),
+        worktree("/tmp/linked-release", "release", commit_id.clone()),
+        worktree("/tmp/remote-name", "team/alice/release", commit_id.clone()),
+    ]));
+    // The group's shared branch actions must retain their existing disabled state.
+    repo.rebase_in_progress = Loadable::Ready(true);
+    let state = Arc::new(AppState {
+        active_repo: Some(repo.id),
+        repos: vec![repo],
+        ..AppState::test_default()
+    });
+    let release = HistoryMenuRef::Branch(BranchMenuTarget::local("release"));
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            this.state = state.clone();
+            this.ui_model
+                .update(cx, |model, cx| model.set_state(state.clone(), cx));
+            this.popover_host.update(cx, |host, cx| {
+                host.state = state.clone();
+                host.open_popover_at(
+                    PopoverKind::CommitMenu {
+                        repo_id: RepoId(1),
+                        commit_id: commit_id.clone(),
+                        refs: CommitMenuRefs::Chooser,
+                    },
+                    point(px(10.0), px(10.0)),
+                    window,
+                    cx,
+                );
+                let model = host
+                    .context_menu_model(host.popover.as_ref().unwrap(), cx)
+                    .unwrap();
+                assert!(matches!(&model.items[0], ContextMenuItem::Header(text)
+                    if text.as_ref() == "Branches and tags · 01234567"));
+                let groups = model
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ix, item)| match item {
+                        ContextMenuItem::Entry { label, action, .. } => match action.as_ref() {
+                            ContextMenuAction::ToggleHistoryRefGroup { target } => Some((
+                                label.as_ref(),
+                                target.clone(),
+                                model.entry_tooltips[&ix].as_ref(),
+                            )),
+                            _ => panic!("a collapsed chooser must contain only ref groups"),
+                        },
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    groups,
+                    [
+                        (
+                            "main · Local branch",
+                            HistoryMenuRef::Branch(BranchMenuTarget::local("main")),
+                            "main · Local branch"
+                        ),
+                        (
+                            "release · Local branch · Linked worktree",
+                            release.clone(),
+                            "release · Local branch · Linked worktree\n/tmp/linked-release"
+                        ),
+                        (
+                            "team/alice/release · Remote branch",
+                            HistoryMenuRef::Branch(BranchMenuTarget::remote(
+                                "team/alice",
+                                "release"
+                            )),
+                            "team/alice/release · Remote branch"
+                        ),
+                        (
+                            "release · Tag",
+                            HistoryMenuRef::Tag("release".into()),
+                            "release · Tag"
+                        ),
+                    ]
+                );
+                assert_eq!(model.groups.len(), 4);
+                assert!(
+                    !model
+                        .items
+                        .iter()
+                        .any(|item| matches!(item, ContextMenuItem::Label(_)))
+                );
+                assert!(host.expanded_history_ref.is_none());
+                host.context_menu_selected_ix = Some(model.groups[1].start);
+            });
+        });
+        let _ = window.draw(app);
+    });
+    // Commit-menu letter shortcuts must not leak into the refs-only chooser.
+    simulate_key_press(cx, "c");
+    simulate_key_press(cx, "right");
+    cx.update(|_, app| {
+        view.update(app, |this, cx| this.popover_host.update(cx, |host, cx| {
+        assert_eq!(host.expanded_history_ref, Some(release.clone()));
+        let model = host.context_menu_model(host.popover.as_ref().unwrap(), cx).unwrap();
+        let open = model.groups[1].start + 1;
+        assert!(matches!(&model.items[open],
+            ContextMenuItem::Entry { label, action, disabled: false, .. }
+                if label == "Open worktree" && matches!(action.as_ref(),
+                    ContextMenuAction::OpenRepo { path } if path == Path::new("/tmp/linked-release"))));
+        assert_eq!(model.entry_tooltips[&open].as_ref(), "/tmp/linked-release");
+        assert!(!model.items.iter().any(|item| matches!(item,
+            ContextMenuItem::Entry { action, .. } if matches!(action.as_ref(),
+                ContextMenuAction::CheckoutBranch { name, .. } if name == "release"))));
+        assert!(model.items.iter().any(|item| matches!(item,
+            ContextMenuItem::Entry { label, disabled: true, .. } if label == "Rebase main onto release")));
+        for (ix, item) in model.items.iter().enumerate() {
+            if let ContextMenuItem::Entry { action, shortcut, .. } = item {
+                assert!(model.groups.iter().any(|group| group.contains(&ix)));
+                assert!(shortcut.is_none());
+                assert!(!matches!(action.as_ref(), ContextMenuAction::CheckoutCommit { .. }));
+            }
+        }
+        host.expanded_history_ref = Some(HistoryMenuRef::Branch(BranchMenuTarget::local("main")));
+        let current_model = host.context_menu_model(host.popover.as_ref().unwrap(), cx).unwrap();
+        let current = &current_model.groups[0];
+        assert!(matches!(&current_model.items[current.start + 1],
+            ContextMenuItem::Entry { action, .. } if matches!(action.as_ref(),
+                ContextMenuAction::CheckoutBranch { name, .. } if name == "main")));
+        assert!(!current_model.items[current.start..current.end].iter().any(|item|
+            matches!(item, ContextMenuItem::Entry { action, .. }
+                if matches!(action.as_ref(), ContextMenuAction::OpenRepo { .. }))));
+        host.expanded_history_ref = Some(HistoryMenuRef::Tag("release".into()));
+        let tag_model = host.context_menu_model(host.popover.as_ref().unwrap(), cx).unwrap();
+        assert!(tag_model.items.iter().any(|item| matches!(item,
+            ContextMenuItem::Entry { action, .. } if matches!(action.as_ref(),
+                ContextMenuAction::DeleteTag { name, .. } if name == "release"))));
+        assert!(!tag_model.items.iter().any(|item| matches!(item,
+            ContextMenuItem::Entry { action, .. } if matches!(action.as_ref(), ContextMenuAction::CheckoutBranch { .. }))));
+        host.expanded_history_ref = Some(HistoryMenuRef::Branch(BranchMenuTarget::remote("team/alice", "release")));
+        let remote_model = host.context_menu_model(host.popover.as_ref().unwrap(), cx).unwrap();
+        assert!(remote_model.items.iter().any(|item| matches!(item,
+            ContextMenuItem::Entry { action, .. } if matches!(action.as_ref(),
+                ContextMenuAction::OpenPopover { kind: PopoverKind::CheckoutRemoteBranchPrompt { remote, branch, .. } }
+                    if remote == "team/alice" && branch == "release"))));
+        host.expanded_history_ref = Some(release.clone());
+        }));
+    });
+    simulate_key_press(cx, "left");
+    cx.update(|_, app| {
+        assert!(
+            view.read(app)
+                .popover_host
+                .read(app)
+                .expanded_history_ref
+                .is_none()
+        )
+    });
+    simulate_key_press(cx, "space");
+    cx.update(|_, app| {
+        assert_eq!(
+            view.read(app).popover_host.read(app).expanded_history_ref,
+            Some(release)
+        )
+    });
+    simulate_key_press(cx, "escape");
+    cx.update(|_, app| assert!(view.read(app).popover_host.read(app).popover.is_none()));
+}
+
+#[gpui::test]
+fn history_ref_chooser_empty_loading_and_missing_repo_never_fall_back_to_commit_actions(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::localization::Language;
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let mut repo = ref_repo();
+    let commit_id = CommitId("unreferenced".into());
+    let inspect = |repo: Option<RepoState>,
+                   language: Language,
+                   expected: &[&str],
+                   cx: &mut gpui::VisualTestContext| {
+        cx.update(|_, app| {
+            app.set_global(language);
+            view.update(app, |this, cx| {
+                this.popover_host.update(cx, |host, cx| {
+                    host.state = Arc::new(AppState {
+                        repos: repo.into_iter().collect(),
+                        ..AppState::test_default()
+                    });
+                    // A stale expanded target must not produce actions after refs disappear.
+                    host.expanded_history_ref = Some(HistoryMenuRef::Tag("release".into()));
+                    let model = host
+                        .context_menu_model(
+                            &PopoverKind::CommitMenu {
+                                repo_id: RepoId(1),
+                                commit_id: commit_id.clone(),
+                                refs: CommitMenuRefs::Chooser,
+                            },
+                            cx,
+                        )
+                        .unwrap();
+                    assert!(model.groups.is_empty());
+                    assert!(
+                        model
+                            .items
+                            .iter()
+                            .all(|item| !matches!(item, ContextMenuItem::Entry { .. }))
+                    );
+                    let labels = model
+                        .items
+                        .iter()
+                        .filter_map(|item| match item {
+                            ContextMenuItem::Label(text) => Some(text.as_ref()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(labels, expected);
+                    if language == Language::TraditionalChinese {
+                        assert!(matches!(&model.items[0], ContextMenuItem::Header(text)
+                        if text.as_ref() == "分支與標籤 · unrefere"));
+                    }
+                })
+            });
+        });
+    };
+    inspect(
+        Some(repo.clone()),
+        Language::English,
+        &["No branches or tags point to this commit"],
+        cx,
+    );
+    inspect(
+        Some(repo.clone()),
+        Language::TraditionalChinese,
+        &["沒有分支或標籤指向此提交"],
+        cx,
+    );
+    repo.branches = Loadable::Loading;
+    repo.remote_branches = Loadable::NotLoaded;
+    repo.tags = Loadable::Error("offline".into());
+    inspect(
+        Some(repo.clone()),
+        Language::English,
+        &[
+            "Loading branches…",
+            "Loading remote branches…",
+            "Cannot load tags: offline",
+        ],
+        cx,
+    );
+    inspect(
+        Some(repo),
+        Language::TraditionalChinese,
+        &[
+            "正在載入本機分支…",
+            "正在載入遠端分支…",
+            "無法載入標籤：offline",
+        ],
+        cx,
+    );
+    inspect(None, Language::English, &["Repository unavailable"], cx);
+}
+
+#[gpui::test]
 fn combined_history_ref_groups_keep_exact_targets_and_toggle_with_keyboard(
     cx: &mut gpui::TestAppContext,
 ) {

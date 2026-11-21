@@ -15,6 +15,7 @@ const HISTORY_REFS_HOVER_WIDTH_PX: f32 = 240.0;
 const HISTORY_REFS_HOVER_MAX_HEIGHT_PX: f32 = 260.0;
 const HISTORY_REFS_HOVER_POINTER_INSET_PX: f32 = 16.0;
 pub(in crate::view) const HISTORY_REFS_HOVER_MENU_INVOKER_PREFIX: &str = "history_refs_hover_menu_";
+pub(in crate::view) const HISTORY_REFS_PICKER_MENU_INVOKER_PREFIX: &str = "history_refs_picker_";
 
 #[derive(Clone, Debug)]
 struct HistoryRefsHoverState {

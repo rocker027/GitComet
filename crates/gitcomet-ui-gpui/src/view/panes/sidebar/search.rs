@@ -180,6 +180,14 @@ impl SidebarPaneView {
         if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
             return;
         }
+        if cx.active_drag().is_some_and(|drag| {
+            drag.value
+                .is::<crate::view::rows::branch_drag::BranchDrag>()
+        }) {
+            window.cancel_drag(cx);
+            cx.stop_propagation();
+            return;
+        }
         let files = self.search_targets_files();
         let open = if files {
             self.file_search_open

@@ -112,6 +112,7 @@ pub(super) fn action(source: &str) -> Option<&'static str> {
         "Next repository tab" => "下一個儲存庫分頁",
         "Next search match" => "下一筆搜尋結果",
         "Next unresolved conflict" => "下一個未解決的衝突",
+        "Newer / older commit on the first-parent path" => "沿第一父提交路徑前往較新／較舊提交",
         "Open Settings" => "開啟設定",
         "Open a new window" => "開啟新視窗",
         "Open a repository" => "開啟儲存庫",
@@ -440,6 +441,12 @@ pub(super) fn note(source: &str) -> Option<&'static str> {
             "檔案編輯器開啟時，不限焦點位置。編輯器關閉時，相同按鍵會暫存檔案。"
         }
         "While the history list has focus." => "在歷史清單取得焦點時生效。",
+        "While the history list has focus. Without modifiers, K moves up one row and J moves down one row. Plain Up/Down keep their existing row behavior." => {
+            "在歷史清單取得焦點時生效。未按修飾鍵時，K 往上一列，J 往下一列。單獨按上／下方向鍵仍沿用原有的逐列操作。"
+        }
+        "While the graph has focus and the current selection is a visible commit. Shift-Up/Shift-K moves to a newer commit; Shift-Down/Shift-J moves to an older commit along the first-parent path. Reversing at a fork prefers the path just followed. Skips worktree rows and stops at the current graph boundary. Shift-click keeps its existing range-selection behavior." => {
+            "圖譜取得焦點，且目前選取的是可見提交時生效。Shift-Up／Shift-K 沿第一父提交路徑前往較新提交，Shift-Down／Shift-J 前往較舊提交。在分岔處反向移動時，優先沿剛走過的路徑返回。會跳過工作樹列，並在目前圖譜的邊界停止。Shift-click 仍沿用原有的範圍選取操作。"
+        }
         "While the history list has focus. Also with nothing selected." => {
             "在歷史清單取得焦點時生效，即使尚未選取也可使用。"
         }

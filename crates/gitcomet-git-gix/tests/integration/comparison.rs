@@ -65,6 +65,173 @@ fn old_side_text(repo: &dyn GitRepository, target: &DiffTarget) -> Option<String
 }
 
 #[test]
+fn linked_worktree_untracked_patch_and_comparison_leave_common_objects_and_indexes_untouched() {
+    test_git_env::ensure_initialized();
+    let dir = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let repo = dir.path().join("repo:單引號'與雙引號\"");
+    #[cfg(not(unix))]
+    let repo = dir.path().join("repo-unicode-測試");
+    init(&repo);
+    fs::write(repo.join("old.txt"), body(20, "tail\n")).unwrap();
+    fs::write(repo.join("staged.txt"), "tracked seed\n").unwrap();
+    fs::write(repo.join(".gitignore"), "ignored.txt\n").unwrap();
+    let base = commit_all(&repo, "nonempty seed");
+    let linked = dir.path().join("linked-工作樹");
+    git_stdout(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    fs::rename(linked.join("old.txt"), linked.join("moved.txt")).unwrap();
+    fs::write(linked.join("moved.txt"), body(20, "edited tail\n")).unwrap();
+    fs::write(linked.join("staged.txt"), "staged edit\n").unwrap();
+    git_stdout(&linked, &["add", "staged.txt"]);
+    #[cfg(unix)]
+    let scratch = "scratch:新檔'\".txt";
+    #[cfg(not(unix))]
+    let scratch = "scratch-新檔.txt";
+    fs::write(linked.join(scratch), "isolated new-file patch sentinel\n").unwrap();
+    fs::write(linked.join("ignored.txt"), "ignored content\n").unwrap();
+
+    fn object_files(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        fn visit(
+            root: &Path,
+            directory: &Path,
+            files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        ) {
+            for entry in fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    visit(root, &path, files);
+                } else {
+                    files.insert(
+                        path.strip_prefix(root).unwrap().to_path_buf(),
+                        fs::read(path).unwrap(),
+                    );
+                }
+            }
+        }
+        let mut files = std::collections::BTreeMap::new();
+        visit(root, root, &mut files);
+        files
+    }
+    let signature = |path: &Path| {
+        (
+            git_stdout(path, &["rev-parse", "HEAD"]),
+            git_stdout(path, &["symbolic-ref", "HEAD"]),
+            git_stdout(
+                path,
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                    "--ignored",
+                ],
+            ),
+        )
+    };
+    let main_before = signature(&repo);
+    let linked_before = signature(&linked);
+    let refs_before = git_stdout(&repo, &["show-ref"]);
+    let main_index =
+        PathBuf::from(git_stdout(&repo, &["rev-parse", "--absolute-git-dir"])).join("index");
+    let linked_index =
+        PathBuf::from(git_stdout(&linked, &["rev-parse", "--absolute-git-dir"])).join("index");
+    let main_index_before = fs::read(&main_index).unwrap();
+    let linked_index_before = fs::read(&linked_index).unwrap();
+    let objects = repo.join(".git/objects");
+    let objects_before = object_files(&objects);
+    assert!(!objects_before.is_empty(), "fresh fixture has seed objects");
+    let object_list = git_stdout(
+        &repo,
+        &[
+            "cat-file",
+            "--batch-all-objects",
+            "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+        ],
+    );
+    assert!(
+        object_list.lines().all(|line| !line.ends_with(" blob 0")),
+        "fixture must not already contain the empty blob: {object_list}"
+    );
+
+    let opened = open(&linked);
+    // The single-file patch must isolate intent-to-add objects too, before
+    // any comparison has had a chance to create the empty blob for it.
+    let target = DiffTarget::commit_range(base.clone(), None, Some(scratch.into()));
+    let patch = opened
+        .diff_unified(&target)
+        .expect("untracked unified patch");
+    assert!(
+        patch.contains("+isolated new-file patch sentinel"),
+        "{patch}"
+    );
+    assert_eq!(
+        object_files(&objects),
+        objects_before,
+        "single-file patch wrote to the common ODB"
+    );
+
+    let comparison = opened
+        .compare_files(
+            &base,
+            None,
+            &ComparisonOptions::direct().with_untracked(true),
+            &CancellationToken::new(),
+        )
+        .expect("linked comparison");
+    assert_eq!(comparison.files.len(), 3, "{:?}", comparison.files);
+    let new = change(&comparison.files, scratch);
+    assert_eq!(new.kind, FileStatusKind::Untracked);
+    assert_eq!(
+        (new.line_stats.additions, new.line_stats.deletions),
+        (Some(1), Some(0))
+    );
+    let moved = change(&comparison.files, "moved.txt");
+    assert_eq!(moved.kind, FileStatusKind::Renamed);
+    assert_eq!(moved.old_path.as_deref(), Some(Path::new("old.txt")));
+    assert_eq!(
+        change(&comparison.files, "staged.txt").kind,
+        FileStatusKind::Modified
+    );
+    assert!(
+        comparison
+            .files
+            .iter()
+            .all(|file| file.path != Path::new("ignored.txt"))
+    );
+
+    assert_eq!(
+        object_files(&objects),
+        objects_before,
+        "comparison wrote to the common ODB"
+    );
+    assert_eq!(
+        git_stdout(
+            &repo,
+            &[
+                "cat-file",
+                "--batch-all-objects",
+                "--batch-check=%(objectname) %(objecttype) %(objectsize)"
+            ]
+        ),
+        object_list
+    );
+    assert_eq!(fs::read(&main_index).unwrap(), main_index_before);
+    assert_eq!(fs::read(&linked_index).unwrap(), linked_index_before);
+    assert_eq!(git_stdout(&repo, &["show-ref"]), refs_before);
+    assert_eq!(signature(&repo), main_before);
+    assert_eq!(signature(&linked), linked_before);
+}
+
+#[test]
 fn a_renamed_file_lists_its_source_ids_and_modes_and_loads_its_old_side() {
     test_git_env::ensure_initialized();
     let dir = tempfile::tempdir().unwrap();
