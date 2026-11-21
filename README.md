@@ -10,7 +10,7 @@ RevWeave runs on macOS, Windows, and Linux. On Linux it supports Wayland, X11, a
 
 ### Download
 
-Get installers from [RevWeave's GitHub Releases](https://github.com/rocker027/RevWeave/releases). Each release also offers `revweave-v<version>-source.tar.gz`, a free download of that release's source code and build scripts.
+Installers and their corresponding source will be published on [RevWeave's GitHub Releases](https://github.com/rocker027/RevWeave/releases) when a release is available.
 
 RevWeave keeps its own settings and session directories and never reads or writes GitComet's settings. The command line and the Git diff/merge tool use the `revweave` command.
 
@@ -206,6 +206,6 @@ RevWeave is released under the [GNU Affero General Public License v3.0 only](LIC
 
 RevWeave is based on [GitComet](https://github.com/Auto-Explore/GitComet) by AutoExplore Oy. Upstream code is Copyright (C) 2026 AutoExplore Oy; RevWeave's modifications are copyright rocker027. See [NOTICE](NOTICE) for the changes and their dates.
 
-Each release's corresponding source (`revweave-v<version>-source.tar.gz`) is on the same [Release](https://github.com/rocker027/RevWeave/releases) page as its installers. In the app, the **Links** section of the settings window lists the source code, the upstream project, the license, and the third-party open source licenses.
+Each release must provide its corresponding source alongside its installers. The app's **Links** section lists dependency names and license identifiers; it is not a complete collection of third-party copyright and license notices. Release preparation must also verify the notices included in each package.
 
 Under AGPL-3.0 section 7(e), the AGPL grants no rights to the RevWeave name or logo. The AGPL also grants no trademark rights in the GitComet or AutoExplore Oy names and logos. RevWeave is an independently maintained fork and is not endorsed by AutoExplore Oy.

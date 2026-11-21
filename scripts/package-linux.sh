@@ -17,10 +17,10 @@ Usage:
 
 `stage` lays out the shared payload: the binary, desktop entry, hicolor icons,
 licence files and README. The .deb, .rpm and AppImage include the full payload.
-The tarball holds only the binary, README, LICENSE-AGPL-3.0 and NOTICE. Each packaging command writes one file in --out.
+The tarball holds the binary, README, LICENSE-AGPL-3.0, NOTICE and bundled licence notices. Each packaging command writes one file in --out.
 
 --source is the release source checkout that holds assets/, README.md,
-LICENSE-AGPL-3.0 and NOTICE. VERSION is the release version (1.2.3 or
+LICENSE-AGPL-3.0, NOTICE and BUNDLED-LICENSE-NOTICES.txt. VERSION is the release version (1.2.3 or
 1.2.3-rc.1). Package versions use `~rc.N` so a pre-release sorts before the
 final release; file names replace `~` with `.` because GitHub renames it on
 upload, and checksums must match the published names.
@@ -85,6 +85,7 @@ cmd_stage() {
   done
   install -Dm644 "$source/LICENSE-AGPL-3.0" "$out/usr/share/licenses/revweave/LICENSE-AGPL-3.0"
   install -Dm644 "$source/NOTICE" "$out/usr/share/licenses/revweave/NOTICE"
+  install -Dm644 "$source/BUNDLED-LICENSE-NOTICES.txt" "$out/usr/share/licenses/revweave/BUNDLED-LICENSE-NOTICES.txt"
   install -Dm644 "$source/README.md" "$out/usr/share/doc/revweave/README.md"
   echo "Staged payload in $out"
 }
@@ -100,6 +101,7 @@ cmd_tarball() {
   install -m644 "$payload/usr/share/doc/revweave/README.md" "$work/$root/README.md"
   install -m644 "$payload/usr/share/licenses/revweave/LICENSE-AGPL-3.0" "$work/$root/LICENSE-AGPL-3.0"
   install -m644 "$payload/usr/share/licenses/revweave/NOTICE" "$work/$root/NOTICE"
+  install -m644 "$payload/usr/share/licenses/revweave/BUNDLED-LICENSE-NOTICES.txt" "$work/$root/BUNDLED-LICENSE-NOTICES.txt"
   tar -C "$work" -czf "$out/${root}.tar.gz" "$root"
   echo "Wrote $out/${root}.tar.gz"
 }
@@ -123,6 +125,8 @@ cmd_deb() {
     cat "$pkg_root/usr/share/licenses/revweave/NOTICE"
     echo
     cat "$pkg_root/usr/share/licenses/revweave/LICENSE-AGPL-3.0"
+    echo
+    cat "$pkg_root/usr/share/licenses/revweave/BUNDLED-LICENSE-NOTICES.txt"
   } > "$pkg_root/usr/share/doc/revweave/copyright"
   rm -rf "$pkg_root/usr/share/licenses"
 

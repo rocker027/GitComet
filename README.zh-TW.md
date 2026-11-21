@@ -10,7 +10,7 @@ RevWeave 以提交歷史、分支與差異檢視為核心，由 rocker027 維護
 
 ### 下載
 
-在 [RevWeave 的 GitHub Releases](https://github.com/rocker027/RevWeave/releases) 取得安裝包。每一版的 `revweave-v<版本>-source.tar.gz` 包含該版對應的原始碼與建置腳本，可在同一頁免費下載。
+有發行版本時，安裝包及其對應原始碼會放在 [RevWeave 的 GitHub Releases](https://github.com/rocker027/RevWeave/releases)。
 
 RevWeave 使用獨立的設定與工作階段目錄，不會讀寫原 GitComet 的設定。命令列與 Git diff／merge 工具使用 `revweave` 指令。
 
@@ -206,6 +206,6 @@ RevWeave 依 [GNU Affero General Public License v3.0 only](LICENSE-AGPL-3.0)（A
 
 RevWeave 基於 AutoExplore Oy 開發的 [GitComet](https://github.com/Auto-Explore/GitComet)。上游著作權為 Copyright (C) 2026 AutoExplore Oy，RevWeave 的修改著作權屬 rocker027，修改內容與日期見 [NOTICE](NOTICE)。
 
-每個版本的對應原始碼（`revweave-v<版本>-source.tar.gz`）與安裝包放在同一個 [Release](https://github.com/rocker027/RevWeave/releases) 頁面。App 的設定視窗「連結」區塊列出原始碼、上游、授權條款與第三方開放原始碼授權。
+每個發行版本都須隨安裝包提供對應原始碼。App 設定視窗的「連結」區塊列出依賴名稱與授權代號，並非完整的第三方著作權及授權聲明。準備發行時仍須核對各安裝包內的聲明。
 
 RevWeave 的名稱與圖示依 AGPL-3.0 第 7(e) 條不在授權範圍內。AGPL 也不授予 GitComet 或 AutoExplore Oy 名稱與圖示的商標權。RevWeave 是獨立維護的分支，未經 AutoExplore Oy 背書。

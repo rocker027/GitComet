@@ -279,6 +279,8 @@ fn status_bar_links_open_after_the_click(cx: &mut gpui::TestAppContext) {
     take_recorded_launches();
     click_debug_selector(cx, "bottom_status_bar_version");
     cx.run_until_parked();
+    cx.simulate_prompt_answer("View Releases");
+    cx.run_until_parked();
     let launches = take_recorded_launches();
     assert!(
         matches!(launches.as_slice(), [Launch::Url(url)] if url.starts_with("https://")),

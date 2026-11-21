@@ -12,8 +12,8 @@ Builds a macOS app bundle and release artifacts:
   - revweave-v<VERSION>-macos-<ARCH>.dmg
 
 Defaults:
-  --version from [workspace.package] in Cargo.toml, --release, build if needed,
-  output to ./dist
+  --version from [workspace.package] in Cargo.toml, --release, build (cargo
+  rebuilds what changed), output to ./dist
 
 With --symbols-out, Breakpad symbols are written to that directory as a symbol
 store. This happens here rather than in the release workflow because this script
@@ -21,6 +21,8 @@ owns the macOS build, and symbols must be extracted after linking but before the
 binary is copied into the bundle and codesigned.
 
 Environment:
+  REVWEAVE_BUILD_TIMESTAMP="yyyy-mm-dd hh:mm:ss"
+    Build time shown in the About prompt. Default: now, in local time.
   GITCOMET_MACOS_X86_RELEASE_LTO=thin|fat|false|off|inherit
     Overrides release LTO for Intel macOS builds. Default: thin.
   GITCOMET_MACOS_PACKAGE_CLEAN_TARGET=1
@@ -133,7 +135,10 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bin_src="${repo_root}/target/${mode}/revweave"
 
-if [[ $build -eq 1 && ! -x "$bin_src" ]]; then
+# Every packaging build recompiles the UI crate, which reads this stamp: the
+# About prompt has to name when *this* package was built.
+if [[ $build -eq 1 ]]; then
+  export REVWEAVE_BUILD_TIMESTAMP="${REVWEAVE_BUILD_TIMESTAMP:-$(date '+%Y-%m-%d %H:%M:%S')}"
   cargo_config_output=""
   cargo_config_output="$("${repo_root}/scripts/macos-cargo-config.sh" "$arch" "$mode")"
   (
@@ -255,6 +260,7 @@ install -m755 "$bin_src" "${macos_dir}/revweave"
 install -m644 "${repo_root}/README.md" "${resources_dir}/README.md"
 install -m644 "${repo_root}/LICENSE-AGPL-3.0" "${resources_dir}/LICENSE-AGPL-3.0"
 install -m644 "${repo_root}/NOTICE" "${resources_dir}/NOTICE"
+install -m644 "${repo_root}/BUNDLED-LICENSE-NOTICES.txt" "${resources_dir}/BUNDLED-LICENSE-NOTICES.txt"
 
 icon_png="${repo_root}/assets/revweave-512.png"
 icon_icns="${resources_dir}/RevWeave.icns"

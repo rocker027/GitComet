@@ -40,4 +40,5 @@ cp -a %{gc_payload}/. %{buildroot}/
 %{_datadir}/icons/hicolor/*/apps/revweave.png
 %license %{_datadir}/licenses/revweave/LICENSE-AGPL-3.0
 %license %{_datadir}/licenses/revweave/NOTICE
+%license %{_datadir}/licenses/revweave/BUNDLED-LICENSE-NOTICES.txt
 %doc %{_datadir}/doc/revweave/README.md

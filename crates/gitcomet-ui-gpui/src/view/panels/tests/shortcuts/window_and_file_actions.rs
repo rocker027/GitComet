@@ -307,6 +307,9 @@ fn bottom_status_bar_branding_opens_discord_and_release_notes(cx: &mut gpui::Tes
         .expect("expected bottom status bar version bounds");
     cx.simulate_click(version_bounds.center(), Modifiers::default());
     draw_and_drain_test_window(cx);
+    assert!(cx.has_pending_prompt(), "expected the version to open the About prompt");
+    cx.simulate_prompt_answer("View Releases");
+    draw_and_drain_test_window(cx);
     assert_eq!(
         cx.opened_url(),
         Some(crate::view::releases_url().unwrap().to_string())

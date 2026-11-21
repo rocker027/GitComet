@@ -626,24 +626,22 @@ impl BarItemOwner for BottomStatusBarView {
             .text_color(theme.colors.foreground.secondary)
             .tab_index(0)
             .control_interaction(InteractionStyle::link(theme), InteractionState::default())
-            .when_some(crate::view::releases_url(), |link, url| {
-                link.on_activate(
-                    false,
-                    controls::ControlActivation::Action,
-                    cx.listener(move |_this, _e: &ClickEvent, _window, cx| {
-                        cx.stop_propagation();
-                        crate::view::platform_open::open_url_later(url, cx);
-                    }),
-                )
-                .gitcomet_tooltip(
-                    theme,
-                    match language {
-                        Language::English => format!("View {name} releases"),
-                        Language::TraditionalChinese => format!("查看 {name} 的發行版本"),
-                    }
-                    .into(),
-                )
-            })
+            .on_activate(
+                false,
+                controls::ControlActivation::Action,
+                cx.listener(move |_this, _e: &ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    show_about_prompt(language, window, cx);
+                }),
+            )
+            .gitcomet_tooltip(
+                theme,
+                match language {
+                    Language::English => format!("About {name}"),
+                    Language::TraditionalChinese => format!("關於 {name}"),
+                }
+                .into(),
+            )
             .child(version_label);
 
         let mut items = BarItems::new(cx);
@@ -853,9 +851,69 @@ fn brand_mark(size: Pixels) -> AnyElement {
     }
 }
 
+fn about_details(language: Language) -> String {
+    let version = gitcomet_core::identity::current().version();
+    let built = crate::view::build_timestamp();
+    match language {
+        Language::English => format!(
+            "Version {version}\nBuilt {}",
+            built.unwrap_or("not recorded (development build)")
+        ),
+        Language::TraditionalChinese => format!(
+            "版本 {version}\n打包時間 {}",
+            built.unwrap_or("未記錄（開發建置）")
+        ),
+    }
+}
+
+fn show_about_prompt(
+    language: Language,
+    window: &mut Window,
+    cx: &mut gpui::Context<BottomStatusBarView>,
+) {
+    let name = crate::view::product_name();
+    let title = match language {
+        Language::English => format!("About {name}"),
+        Language::TraditionalChinese => format!("關於 {name}"),
+    };
+    let details = about_details(language);
+    let releases = crate::view::releases_url();
+    let mut buttons = vec![gpui::PromptButton::ok(language.text("OK", "確定"))];
+    if releases.is_some() {
+        buttons.push(gpui::PromptButton::new(
+            language.text("View Releases", "查看發行版本"),
+        ));
+    }
+    let answer = window.prompt(
+        gpui::PromptLevel::Info,
+        &title,
+        Some(&details),
+        &buttons,
+        cx,
+    );
+    cx.spawn_in(window, async move |view, cx| {
+        if let (Ok(1), Some(url)) = (answer.await, releases) {
+            let _ = view.update(cx, |_, cx| {
+                crate::view::platform_open::open_url_later(url, cx);
+            });
+        }
+    })
+    .detach();
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{details_toggle_icon_path, sidebar_toggle_icon_path};
+    use super::{about_details, details_toggle_icon_path, sidebar_toggle_icon_path};
+    use crate::localization::Language;
+
+    #[test]
+    fn about_details_name_the_version_and_the_build_time() {
+        let version = gitcomet_core::identity::current().version();
+        let english = about_details(Language::English);
+        assert!(english.starts_with(&format!("Version {version}\nBuilt ")), "{english}");
+        let chinese = about_details(Language::TraditionalChinese);
+        assert!(chinese.starts_with(&format!("版本 {version}\n打包時間 ")), "{chinese}");
+    }
 
     #[test]
     fn pane_toggle_arrows_only_appear_when_the_panel_is_collapsed() {

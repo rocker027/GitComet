@@ -154,9 +154,11 @@ cargo clippy --locked -p gitcomet-ui-kit -p gitcomet-extension-api -p gitcomet-e
 python3 scripts/ci/boundaries.py
 python3 scripts/ci/grammar_symbols.py
 bash scripts/generate-open-source-licenses.sh --check
+python3 scripts/generate-bundled-license-notices.py --check
 ```
 
 After a dependency change, run `scripts/generate-open-source-licenses.sh` to refresh the open-source licence list the app shows.
+After changing a checked-in font or vendored license or notice, run `python3 scripts/generate-bundled-license-notices.py` to refresh the file included in packages. This file covers checked-in fonts and vendor notices only; it does not establish that every dependency or asset notice has been collected.
 
 Coverage:
 
@@ -184,19 +186,21 @@ Use `--skip-dmg` when running in restricted/sandboxed environments where `hdiuti
 
 Release artifacts are named `revweave-v<version>-<os>-<arch>.<ext>`. Build them locally with `scripts/package-macos.sh` and `scripts/package-linux.sh`. RevWeave has no release workflow, Homebrew tap, AUR or APT deployment.
 
-Every GitHub release must also carry the Corresponding Source that AGPL-3.0 requires. Tag the release commit, then create the source archive from that tag and upload it with the binaries:
+Every GitHub release must also carry the Corresponding Source that AGPL-3.0 requires. Create the source archive from the exact commit used to build the binaries, then verify and publish it alongside them:
 
 ```bash
-git archive --format=tar.gz --prefix="revweave-v${VERSION}-source/" \
-  --output="dist/revweave-v${VERSION}-source.tar.gz" "v${VERSION}^{commit}"
+scripts/package-source.sh --commit "v${VERSION}^{commit}" --version "$VERSION" --out dist
 scripts/generate-open-source-licenses.sh --check
+python3 scripts/generate-bundled-license-notices.py --check
 ```
 
-The second command confirms that the third-party license list shown in the app matches `Cargo.lock`.
+The source archive command needs Git, Cargo and network access to fetch the pinned fixture and any missing dependencies. It does not include uncommitted changes. Its extracted fixture is already present; do not run `git submodule update` inside the archive.
+
+The app's list contains license identifiers, not full notices. The bundled notice file covers the checked-in fonts and vendored component license files; review the remaining Cargo dependencies, other assets, and their applicable notices before releasing. Verify every binary's source commit and the contents of the actual platform packages. A source archive or a passing list check alone does not establish release compliance.
 
 ### Linux packages
 
-`scripts/package-linux.sh` builds the release artifacts from one staged payload. The `.deb`, `.rpm` and AppImage include the binary, desktop entry, all five icon sizes, licence files and README. The tarball holds only the `revweave` binary, README, `LICENSE-AGPL-3.0` and `NOTICE` under a `revweave-v<version>-linux-<arch>/` directory. Package metadata lives in `packaging/linux/`: `debian-control.in` for the `.deb` and `revweave.spec` for the `.rpm`.
+`scripts/package-linux.sh` builds the release artifacts from one staged payload. The `.deb`, `.rpm` and AppImage include the binary, desktop entry, all five icon sizes, licence files and README. The tarball includes the binary, README, `LICENSE-AGPL-3.0`, `NOTICE` and `BUNDLED-LICENSE-NOTICES.txt` under a `revweave-v<version>-linux-<arch>/` directory. Package metadata lives in `packaging/linux/`: `debian-control.in` for the `.deb` and `revweave.spec` for the `.rpm`.
 
 Linked libraries are declared automatically by `dpkg-shlibdeps` and rpm AutoReq, and explicitly in the package templates. Libraries the app loads at runtime (Vulkan, EGL, Wayland) are declared by hand. `scripts/check-linux-runtime-deps.sh` fails when the binary's libraries or its glibc baseline drift from those declarations. Update both package templates when the runtime dependencies change.
 

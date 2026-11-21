@@ -52,6 +52,9 @@
                     <Component Id='Notice' Guid='*'>
                         <File Id='NoticeFile' Name='NOTICE' DiskId='1' Source='NOTICE' KeyPath='yes'/>
                     </Component>
+                    <Component Id='BundledLicenseNotices' Guid='*'>
+                        <File Id='BundledLicenseNoticesFile' Name='BUNDLED-LICENSE-NOTICES.txt' DiskId='1' Source='BUNDLED-LICENSE-NOTICES.txt' KeyPath='yes'/>
+                    </Component>
 
                     <Directory Id='Bin' Name='bin'>
                         <Component Id='Path' Guid='{614EABCD-BF08-4EB6-A45A-D3A46D154D78}' KeyPath='yes'>
@@ -114,6 +117,7 @@
             Absent='disallow'>
             <ComponentRef Id='License'/>
             <ComponentRef Id='Notice'/>
+            <ComponentRef Id='BundledLicenseNotices'/>
             <ComponentRef Id='MainBinary'/>
             <ComponentRef Id='StartMenuShortcut'/>
 

@@ -544,6 +544,12 @@ pub(crate) fn releases_url() -> Option<&'static str> {
         .as_deref()
 }
 
+/// When the packaging script built this binary (`yyyy-mm-dd hh:mm:ss`, the
+/// packager's local time); `None` for a plain `cargo build`.
+pub(crate) fn build_timestamp() -> Option<&'static str> {
+    option_env!("REVWEAVE_BUILD_TIMESTAMP").filter(|stamp| !stamp.is_empty())
+}
+
 pub(crate) fn community_url() -> Option<&'static str> {
     gitcomet_core::identity::current()
         .links()
