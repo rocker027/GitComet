@@ -1,18 +1,20 @@
-# <img alt="RevWeave 圖示" src="assets/revweave.svg" width="32" /> RevWeave
+# <img alt="RevWeave icon" src="assets/revweave.svg" width="32" /> RevWeave
 
-**開源桌面 Git 客戶端**
+**English** | [繁體中文](README.zh-TW.md)
 
-RevWeave 以提交歷史、分支與差異檢視為核心，由 rocker027 維護，基於 AutoExplore Oy 開發的 [GitComet](https://github.com/Auto-Explore/GitComet)。修改內容與日期記錄於 [NOTICE](NOTICE)。
+**Open-source desktop Git client**
 
-支援 macOS、Windows 與 Linux。Linux 可使用 Wayland、X11 或 WSLg。
+RevWeave is built around commit history, branches, and diffs. It is maintained by rocker027 and is based on [GitComet](https://github.com/Auto-Explore/GitComet) by AutoExplore Oy. Changes and their dates are recorded in [NOTICE](NOTICE).
+
+RevWeave runs on macOS, Windows, and Linux. On Linux it supports Wayland, X11, and WSLg.
 
 ### Download
 
-在 [RevWeave 的 GitHub Releases](https://github.com/rocker027/RevWeave/releases) 取得安裝包。每一版的 `revweave-v<版本>-source.tar.gz` 包含該版對應的原始碼與建置腳本，可在同一頁免費下載。
+Get installers from [RevWeave's GitHub Releases](https://github.com/rocker027/RevWeave/releases). Each release also offers `revweave-v<version>-source.tar.gz`, a free download of that release's source code and build scripts.
 
-RevWeave 使用獨立的設定與工作階段目錄，不會讀寫原 GitComet 的設定。命令列與 Git diff／merge 工具使用 `revweave` 指令。
+RevWeave keeps its own settings and session directories and never reads or writes GitComet's settings. The command line and the Git diff/merge tool use the `revweave` command.
 
-從舊版升級：舊版的指令名稱是 `gitcomet`。若曾執行 `gitcomet setup`，升級前先用舊版執行 `gitcomet uninstall`。如果已經升級、舊指令不在了，改用下列指令手動清除舊設定，再執行 `revweave setup`：
+Upgrading from an older build: older builds used the `gitcomet` command. If you ran `gitcomet setup`, run `gitcomet uninstall` with the old build before upgrading. If you have already upgraded and the old command is gone, remove the old settings by hand, then run `revweave setup`:
 
 ```bash
 git config --global --remove-section mergetool.gitcomet
@@ -20,15 +22,15 @@ git config --global --remove-section mergetool.gitcomet-gui
 git config --global --remove-section difftool.gitcomet
 git config --global --remove-section difftool.gitcomet-gui
 git config --global --remove-section gitcomet.backup
-# 若 merge.tool／diff.tool／merge.guitool／diff.guitool 仍指向 gitcomet，一併移除
+# If merge.tool, diff.tool, merge.guitool or diff.guitool still name gitcomet, unset them too
 git config --global --get-regexp '^(merge|diff)\.(gui)?tool$'
 ```
 
-不存在的區段會回報錯誤，可以忽略。若使用 `--local` 設定過，請在該 repository 內把 `--global` 換成 `--local` 再執行一次。
+Git reports an error for a section that does not exist; you can ignore it. If you used `--local`, run the commands again inside that repository with `--local` instead of `--global`.
 
 ### Requirements
 
-Git 2.53 以上可使用完整功能。使用較舊的 Git 時，依賴新版 Git 的功能會停用。
+Git 2.53 or newer enables every feature. With an older Git, features that need newer Git are turned off.
 
 ### Features
 
@@ -53,6 +55,8 @@ On Linux, install Clang and mold first; see [developer setup](CONTRIBUTING.md#ge
 cargo build -p gitcomet --features ui-gpui,gix
 cargo run -p gitcomet --features ui-gpui,gix -- /path/to/repo
 ```
+
+The Cargo package keeps its upstream name `gitcomet`; the binary it builds is `revweave`.
 
 ### Contributing
 
@@ -170,7 +174,7 @@ To install GnuPG, trust GitHub's signing key, and configure SSH allowed signers,
 
 ### Difftastic
 
-Choose **Settings → Diff → Diff Engine** to make Difftastic the default, or use the diff viewer's cog for a temporary override. Both Split and Inline layouts support it. See [Difftastic](docs/difftastic.md) for partial staging and fallbacks.
+Choose **Settings → Diff → Diff engine** to make Difftastic the default, or use the diff viewer's cog for a temporary override. Both Split and Inline layouts support it. See [Difftastic](docs/difftastic.md) for partial staging and fallbacks.
 
 ### Themes
 
@@ -178,17 +182,17 @@ RevWeave supports built-in themes and user-provided custom themes.
 
 Built-in themes are embedded in the RevWeave binary. Custom themes are loaded from JSON bundle files in your per-user themes directory, which RevWeave creates on startup.
 
-The full theme guide, including file locations, schema details, example bundles, and override behavior, now lives in [THEMES.md](docs/themes.md).
+The full theme guide, including file locations, schema details, example bundles, and override behavior, lives in [THEMES.md](docs/themes.md).
 
 ### Crash logs
 
-RevWeave 將當機紀錄寫在以下路徑：
+RevWeave writes crash logs to:
 
-- Linux: `$XDG_STATE_HOME/revweave/crashes/`（預設 `~/.local/state/revweave/crashes/`）
+- Linux: `$XDG_STATE_HOME/revweave/crashes/` (default `~/.local/state/revweave/crashes/`)
 - macOS: `~/Library/Logs/revweave/crashes/`
-- Windows: `%LOCALAPPDATA%\revweave\crashes`（備用 `%APPDATA%\revweave\crashes`）
+- Windows: `%LOCALAPPDATA%\revweave\crashes` (fallback `%APPDATA%\revweave\crashes`)
 
-發生異常結束時，RevWeave 會在下次啟動顯示復原報告，並在終端機印出記錄路徑。報告包含 App 版本、平台、錯誤資訊及精簡的堆疊追蹤。
+After an abnormal exit, RevWeave shows a recovery report on the next launch and prints the log path in the terminal. The report includes the app version, platform, error details, and a trimmed stack trace.
 
 ### Prior work and ideas inspired by:
 
@@ -198,10 +202,10 @@ This project has been created with the help of AI tools, including OpenAI Codex 
 
 ### License
 
-RevWeave 依 [GNU Affero General Public License v3.0 only](LICENSE-AGPL-3.0)（AGPL-3.0-only）發行，可自由使用、修改與再散布，散布修改版時須同樣以 AGPL-3.0-only 提供對應原始碼。
+RevWeave is released under the [GNU Affero General Public License v3.0 only](LICENSE-AGPL-3.0) (AGPL-3.0-only). You may use, modify, and redistribute it freely. If you distribute a modified version, you must also provide its corresponding source under AGPL-3.0-only.
 
-RevWeave 基於 AutoExplore Oy 開發的 [GitComet](https://github.com/Auto-Explore/GitComet)。上游著作權為 Copyright (C) 2026 AutoExplore Oy，RevWeave 的修改著作權屬 rocker027，修改內容與日期見 [NOTICE](NOTICE)。
+RevWeave is based on [GitComet](https://github.com/Auto-Explore/GitComet) by AutoExplore Oy. Upstream code is Copyright (C) 2026 AutoExplore Oy; RevWeave's modifications are copyright rocker027. See [NOTICE](NOTICE) for the changes and their dates.
 
-每個版本的對應原始碼（`revweave-v<版本>-source.tar.gz`）與安裝包放在同一個 [Release](https://github.com/rocker027/RevWeave/releases) 頁面。App 的設定視窗「連結」區塊列出原始碼、上游、授權條款與第三方開放原始碼授權。
+Each release's corresponding source (`revweave-v<version>-source.tar.gz`) is on the same [Release](https://github.com/rocker027/RevWeave/releases) page as its installers. In the app, the **Links** section of the settings window lists the source code, the upstream project, the license, and the third-party open source licenses.
 
-RevWeave 的名稱與圖示依 AGPL-3.0 第 7(e) 條不在授權範圍內。AGPL 也不授予 GitComet 或 AutoExplore Oy 名稱與圖示的商標權。RevWeave 是獨立維護的分支，未經 AutoExplore Oy 背書。
+Under AGPL-3.0 section 7(e), the AGPL grants no rights to the RevWeave name or logo. The AGPL also grants no trademark rights in the GitComet or AutoExplore Oy names and logos. RevWeave is an independently maintained fork and is not endorsed by AutoExplore Oy.
