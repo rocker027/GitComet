@@ -30,14 +30,14 @@ pub(in crate::view) use cache_build::build_history_page_graph;
 use cache_build::*;
 pub(in crate::view) use columns::*;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(in crate::view) struct HistoryPointerClick {
     pub repo_id: RepoId,
     pub lifetime: u64,
     pub target: HistoryClickTarget,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(in crate::view) enum HistoryClickTarget {
     Branch {
         commit_id: CommitId,

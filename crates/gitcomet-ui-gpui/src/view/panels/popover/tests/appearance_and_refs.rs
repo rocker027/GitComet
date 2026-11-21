@@ -127,7 +127,7 @@ fn history_ref_chooser_keeps_typed_refs_worktrees_and_keyboard_actions(
                         (
                             "release · Local branch · Linked worktree",
                             release.clone(),
-                            "release · Local branch · Linked worktree\n/tmp/linked-release"
+                            "release · Local branch · Linked worktree\n/tmp/linked-release\nDouble-click to open worktree"
                         ),
                         (
                             "team/alice/release · Remote branch",
@@ -135,7 +135,7 @@ fn history_ref_chooser_keeps_typed_refs_worktrees_and_keyboard_actions(
                                 "team/alice",
                                 "release"
                             )),
-                            "team/alice/release · Remote branch"
+                            "team/alice/release · Remote branch\nDouble-click to check out branch"
                         ),
                         (
                             "release · Tag",

@@ -293,6 +293,8 @@ pub(in super::super) struct PopoverHost {
     /// scrolls into view.
     context_menu_row_extents: context_menu::RowExtents,
     expanded_history_ref: Option<HistoryMenuRef>,
+    first_history_ref_click: Option<crate::view::panes::history::HistoryPointerClick>,
+    history_ref_expansion_task: Option<gpui::Task<()>>,
     repo_picker_selected_index: Option<usize>,
     /// Last trimmed query handled by the repository picker. Kept separately
     /// from the input so text edits can reset keyboard selection without

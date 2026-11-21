@@ -949,6 +949,8 @@ impl PopoverHost {
             pin_menu_scroll: UniformListScrollHandle::default(),
             context_menu_row_extents: Default::default(),
             expanded_history_ref: None,
+            first_history_ref_click: None,
+            history_ref_expansion_task: None,
             repo_picker_selected_index: None,
             repo_picker_search_query: String::new(),
             cached_recent_repos: Vec::new(),
@@ -1464,6 +1466,8 @@ impl PopoverHost {
         self.pin_menu_entries = None;
         self.context_menu_selected_ix = None;
         self.expanded_history_ref = None;
+        self.first_history_ref_click = None;
+        self.history_ref_expansion_task = None;
         self.picker_row_menu = None;
         self.menu_invoker_focus = None;
         self.focus_return = None;
@@ -2032,6 +2036,8 @@ impl PopoverHost {
         self.context_menu_arrows.reset();
         self.pin_menu_entries = None;
         self.context_menu_selected_ix = None;
+        self.first_history_ref_click = None;
+        self.history_ref_expansion_task = None;
         // A ref picked from the row's ref list opens with its actions showing.
         self.expanded_history_ref = match &kind {
             PopoverKind::CommitMenu {

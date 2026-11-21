@@ -393,6 +393,9 @@ fn remote_only_same_short_name_overflow_preserves_both_exact_remote_targets(
         let bounds = cx.debug_bounds(group(remote)).unwrap();
         cx.simulate_mouse_move(bounds.center(), None, gpui::Modifiers::default());
         cx.simulate_click(bounds.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(510));
+        cx.run_until_parked();
         crate::view::test_support::redraw(cx);
         assert!(cx.debug_bounds(action).is_none());
     }
@@ -409,4 +412,211 @@ fn remote_only_same_short_name_overflow_preserves_both_exact_remote_targets(
     );
     assert_eq!(snapshot.repos[0].local_actions_in_flight, 0);
     assert!(snapshot.repos[0].navigation.comparison_mark.is_none());
+}
+
+#[gpui::test]
+fn overflow_branch_double_click_checks_out_only_the_exact_same_tip_branch(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::view::panels::ContextMenuAction;
+
+    cx.update(|app| {
+        crate::appearance::pin_compact_for_test(app);
+        app.set_global(crate::localization::Language::English);
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let output = gitcomet_core::test_support::git_fixture::git_command()
+            .arg("-C")
+            .arg(dir.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let branches = ["same-tip-branch-a", "same-tip-branch-b"];
+    git(&["init", "-q", "-b", "main"]);
+    git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "fixture",
+    ]);
+    for name in branches {
+        git(&["branch", name]);
+    }
+    let sha = git(&["rev-parse", "HEAD"]);
+    let refs_before = git(&["show-ref", "--heads"]);
+    let repository = gitcomet_git_gix::GixBackend.open(dir.path()).unwrap();
+    let workdir = repository.spec().workdir.clone();
+    let (view, cx, mut state, store) = refresh::mount(
+        cx,
+        Arc::new(log_page(vec![commit(&sha, &[], "fixture")], None)),
+    );
+    let repo = &mut state.repos[0];
+    let repo_id = repo.id;
+    repo.spec = repository.spec().clone();
+    repo.head_branch = Loadable::Ready("main".into());
+    repo.head_branch_rev += 1;
+    repo.branches = Loadable::Ready(Arc::new(
+        std::iter::once("main")
+            .chain(branches)
+            .map(|name| branch(name, &sha))
+            .collect(),
+    ));
+    repo.branches_rev += 1;
+    store.replace_snapshot_for_test(Arc::new(state.clone()));
+    store.insert_repo_for_test(repo_id, repository);
+    ensure_history_cache_for_tests(cx, &view, Arc::new(state));
+    cx.simulate_resize(size(px(1500.0), px(900.0)));
+    let mode = HistoryBranchNamesMode::SeparateColumn;
+    cx.update(|window, app| {
+        let history = view.read(app).main_pane.read(app).history_view.clone();
+        history.update(app, |history, cx| {
+            history.history_branch_names = mode;
+            history.history_col_branch = px(60.0);
+            window.activate();
+            window.focus(&history.history_panel_focus_handle, cx);
+            cx.notify();
+        });
+    });
+    crate::view::test_support::redraw(cx);
+    let badge = HistoryView::painted_overflow_bounds_for_test(repo_id, &sha, mode)
+        .expect("the same-tip branches must overflow into the chooser");
+    let groups = branches.map(|name| -> &'static str {
+        let target = HistoryMenuRef::Branch(BranchMenuTarget::local(name));
+        assert!(HistoryView::painted_ref_bounds_for_test(repo_id, &sha, mode, &target).is_none());
+        format!("history_ref_group_{target:?}").leak()
+    });
+    let chooser = PopoverKind::CommitMenu {
+        repo_id,
+        commit_id: CommitId(sha.as_str().into()),
+        refs: CommitMenuRefs::Chooser,
+    };
+    let open_chooser = |cx: &mut gpui::VisualTestContext| {
+        cx.simulate_mouse_move(badge.center(), None, gpui::Modifiers::default());
+        cx.simulate_click(badge.center(), gpui::Modifiers::default());
+        crate::view::test_support::redraw(cx);
+        cx.update(|_, app| {
+            assert_eq!(
+                crate::view::test_support::popover_kind(view.read(app), app),
+                Some(chooser.clone())
+            );
+        });
+    };
+    let group_position = |cx: &mut gpui::VisualTestContext, group: &'static str| {
+        cx.debug_bounds(group).expect(group).center()
+    };
+    let click_at = |cx: &mut gpui::VisualTestContext, position, click_count| {
+        cx.simulate_mouse_move(position, None, gpui::Modifiers::default());
+        cx.simulate_event(gpui::MouseDownEvent {
+            position,
+            button: gpui::MouseButton::Left,
+            click_count,
+            ..Default::default()
+        });
+        cx.simulate_event(gpui::MouseUpEvent {
+            position,
+            button: gpui::MouseButton::Left,
+            click_count,
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        crate::view::test_support::redraw(cx);
+    };
+    let click_group = |cx: &mut gpui::VisualTestContext, group, click_count| {
+        let position = group_position(cx, group);
+        click_at(cx, position, click_count);
+    };
+    let assert_expanded = |cx: &mut gpui::VisualTestContext, expected: &str| {
+        let checkouts = cx.update(|_, app| {
+            let host = view.read(app).popover_host.clone();
+            host.update(app, |host, cx| {
+                host.context_menu_actions_for_test(&chooser, cx)
+                    .into_iter()
+                    .filter_map(|action| match action {
+                        ContextMenuAction::CheckoutBranch { name, .. } => Some(name),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+        assert_eq!(checkouts, [expected]);
+    };
+    let settle_single_click = |cx: &mut gpui::VisualTestContext| {
+        cx.executor().advance_clock(Duration::from_millis(510));
+        cx.run_until_parked();
+        crate::view::test_support::redraw(cx);
+    };
+    let assert_still_main = || {
+        store
+            .barrier_for_test()
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap();
+        assert_eq!(git(&["symbolic-ref", "HEAD"]), "refs/heads/main");
+        assert_eq!(git(&["show-ref", "--heads"]), refs_before);
+    };
+    open_chooser(cx);
+    click_group(cx, groups[0], 1);
+    assert_still_main();
+    assert_expanded(cx, branches[0]);
+    // The same SHA does not complete a gesture that started on another ref.
+    click_group(cx, groups[1], 2);
+    assert_still_main();
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    open_chooser(cx);
+    click_group(cx, groups[0], 1);
+    assert_expanded(cx, branches[0]);
+    click_group(cx, groups[1], 1);
+    assert_expanded(cx, branches[0]);
+    settle_single_click(cx);
+    assert_expanded(cx, branches[1]);
+    assert_still_main();
+    click_group(cx, groups[0], 1);
+    settle_single_click(cx);
+    assert_expanded(cx, branches[0]);
+
+    // Both clicks stay where the pointer landed before the first click. A
+    // repaint in between must not move B by collapsing the section above it.
+    let position = group_position(cx, groups[1]);
+    click_at(cx, position, 1);
+    assert_expanded(cx, branches[0]);
+    assert_eq!(group_position(cx, groups[1]), position);
+    assert_still_main();
+    cx.simulate_event(gpui::MouseDownEvent {
+        position,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    settle_single_click(cx);
+    assert_expanded(cx, branches[0]);
+    assert_eq!(group_position(cx, groups[1]), position);
+    cx.simulate_event(gpui::MouseUpEvent {
+        position,
+        button: gpui::MouseButton::Left,
+        click_count: 2,
+        ..Default::default()
+    });
+    wait_until(cx, "the chooser double click checks out branch b", |_| {
+        git(&["symbolic-ref", "HEAD"]) == format!("refs/heads/{}", branches[1])
+    });
+    assert_eq!(git(&["rev-parse", "HEAD"]), sha);
+    assert_eq!(git(&["show-ref", "--heads"]), refs_before);
+    let snapshot = store.snapshot();
+    assert_eq!(snapshot.repos.len(), 1);
+    assert_eq!(snapshot.repos[0].spec.workdir, workdir);
 }

@@ -1532,6 +1532,26 @@ impl PopoverHost {
             .max_w(width.max_px(ui_scale))
             .track_focus(&focus)
             .key_context("ContextMenu")
+            .when(
+                matches!(
+                    &kind,
+                    PopoverKind::CommitMenu {
+                        refs: CommitMenuRefs::Chooser,
+                        ..
+                    }
+                ),
+                |menu| {
+                    menu.capture_any_mouse_down(cx.listener(
+                        |this, event: &gpui::MouseDownEvent, _, _| {
+                            // Stop layout changes before the entry's bubble
+                            // handler claims the second press.
+                            if event.button == MouseButton::Left && event.click_count > 1 {
+                                this.history_ref_expansion_task = None;
+                            }
+                        },
+                    ))
+                },
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _e: &MouseDownEvent, window, cx| {
@@ -1544,6 +1564,8 @@ impl PopoverHost {
             .on_key_down(
                 cx.listener(move |this, e: &gpui::KeyDownEvent, window, cx| {
                     this.latch_context_menu_placement();
+                    this.first_history_ref_click = None;
+                    this.history_ref_expansion_task = None;
                     let key = e.keystroke.key.as_str();
                     let mods = e.keystroke.modifiers;
                     if mods.control || mods.platform || mods.alt || mods.function {
@@ -1808,13 +1830,14 @@ impl PopoverHost {
                             }))
                             .on_menu_activate(
                                 disabled,
-                                cx.listener(move |this, _e: &ClickEvent, window, cx| {
-                                    this.context_menu_activate_model_entry(
-                                        &activate_on_release,
-                                        ix,
-                                        window,
-                                        cx,
-                                    );
+                                cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                    if let Some(action) =
+                                        context_menu_entry_action_at(&activate_on_release, ix)
+                                        && !this
+                                            .handle_history_ref_click(&action, event, window, cx)
+                                    {
+                                        this.context_menu_activate_action(action, window, cx);
+                                    }
                                 }),
                             )
                             .into_any_element()
