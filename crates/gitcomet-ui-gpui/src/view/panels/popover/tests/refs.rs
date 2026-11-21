@@ -1257,7 +1257,7 @@ fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppConte
     repo.head_branch = Loadable::Ready("main".into());
     repo.branches = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Branch {
         name: "main".into(),
-        target: tip.clone(),
+        target: CommitId("fedcba9876543210".into()),
         upstream: None,
         divergence: None,
     }]));
@@ -1297,7 +1297,7 @@ fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppConte
                         vec!["Create branch", "Create tag…"],
                         vec!["Rename branch", "Delete branch"],
                         vec!["Mark main for comparison", "Compare with working tree"],
-                        vec!["Focus", "Pin branch", "Copy branch name"],
+                        vec!["Focus", "Pin branch", "Copy branch name", "Copy commit SHA", "Export patch…"],
                     ]
                 );
                 assert_eq!(local.first_selectable(), Some(2));
@@ -1315,11 +1315,12 @@ fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppConte
                     [
                         vec!["Checkout", "Open in new worktree"],
                         vec!["Pull into current (main)", "Set as tracking upstream"],
-                        vec!["Merge origin/feature/topic into main", "Squash origin/feature/topic into main", "Rebase main onto origin/feature/topic"],
+                        vec!["Merge origin/feature/topic into main", "Squash origin/feature/topic into main", "Rebase main onto origin/feature/topic", "Interactive rebase main onto origin/feature/topic"],
                         vec!["Create branch", "Create tag…"],
+                        vec!["Cherry-pick", "Reset (--soft) to here", "Reset (--mixed) to here", "Reset (--hard) to here", "Revert 01234567…"],
                         vec!["Delete remote branch…"],
                         vec!["Mark origin/feature/topic for comparison", "Compare with working tree"],
-                        vec!["Focus", "Pin branch", "Copy branch name"],
+                        vec!["Focus", "Pin branch", "Copy branch name", "Copy commit SHA", "Export patch…"],
                         vec!["Fetch all", "Prune merged branches", "Prune local tags"],
                     ]
                 );
@@ -1330,14 +1331,40 @@ fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppConte
                     .context_menu_model(
                         &PopoverKind::CommitMenu {
                             repo_id,
-                            commit_id: tip,
+                            commit_id: tip.clone(),
                             refs: CommitMenuRefs::Only(history_ref),
                         },
                         cx,
                     )
                     .expect("expanded history branch menu");
                 let range = &history.groups[0];
-                assert_eq!(branch_menu_groups(&history.items[range.start + 1..range.end]), remote_groups);
+                let mut embedded_groups = remote_groups.clone();
+                assert_eq!(
+                    embedded_groups[2].pop(),
+                    Some("Interactive rebase main onto origin/feature/topic")
+                );
+                embedded_groups.remove(4);
+                embedded_groups[6].truncate(3);
+                assert_eq!(
+                    branch_menu_groups(&history.items[range.start + 1..range.end]),
+                    embedded_groups
+                );
+
+                let chooser = host
+                    .context_menu_model(
+                        &PopoverKind::CommitMenu {
+                            repo_id,
+                            commit_id: tip,
+                            refs: CommitMenuRefs::Chooser,
+                        },
+                        cx,
+                    )
+                    .expect("expanded ref chooser");
+                let range = &chooser.groups[0];
+                assert_eq!(
+                    branch_menu_groups(&chooser.items[range.start + 1..range.end]),
+                    remote_groups
+                );
 
                 for model in [&remote, &history] {
                     let tag_index = model.items.iter().position(|item| matches!(
@@ -1950,7 +1977,148 @@ fn remote_branch_menu_preserves_exact_identity_and_uses_its_loaded_tip(
                 kind: PopoverKind::RebaseOntoConfirm { onto, .. }
             }) if onto == selected_tip
         ));
+        assert!(matches!(
+            action("Interactive rebase feature/local onto team/alice/main"),
+            Some(ContextMenuAction::LoadInteractiveRebaseSetup { repo_id: repo, base })
+                if repo == repo_id && base == selected_tip
+        ));
+        assert!(matches!(
+            action("Cherry-pick"),
+            Some(ContextMenuAction::CherryPickCommit { repo_id: repo, commit_id })
+                if repo == repo_id && commit_id.as_ref() == selected_tip
+        ));
+        assert!(matches!(
+            action("Revert 22222222…"),
+            Some(ContextMenuAction::RevertCommit { repo_id: repo, commit_id })
+                if repo == repo_id && commit_id.as_ref() == selected_tip
+        ));
+        for (label, expected_mode) in [
+            (
+                "Reset (--soft) to here",
+                gitcomet_core::services::ResetMode::Soft,
+            ),
+            (
+                "Reset (--mixed) to here",
+                gitcomet_core::services::ResetMode::Mixed,
+            ),
+            (
+                "Reset (--hard) to here",
+                gitcomet_core::services::ResetMode::Hard,
+            ),
+        ] {
+            assert!(matches!(
+                action(label),
+                Some(ContextMenuAction::OpenPopover {
+                    kind: PopoverKind::ResetPrompt { repo_id: repo, target, mode }
+                }) if repo == repo_id && target == selected_tip && mode == expected_mode
+            ));
+        }
+        assert!(matches!(
+            action("Copy commit SHA"),
+            Some(ContextMenuAction::CopyCommitSha { commit_id })
+                if commit_id.as_ref() == selected_tip
+        ));
+        assert!(matches!(
+            action("Export patch…"),
+            Some(ContextMenuAction::ExportPatch { repo_id: repo, commit_id })
+                if repo == repo_id && commit_id.as_ref() == selected_tip
+        ));
     });
+}
+
+#[gpui::test]
+fn branch_menu_interactive_rebase_uses_the_local_tip_and_respects_head_and_busy_state(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gitcomet_core::domain::Branch;
+    use gitcomet_core::services::SequencerState;
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(77);
+    let head = CommitId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
+    let topic = CommitId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+    let target = BranchMenuTarget::local("origin/topic");
+
+    for (tip, busy, expected_disabled) in [
+        (&topic, false, Some(false)),
+        (&topic, true, Some(true)),
+        (&head, false, None),
+    ] {
+        cx.update(|_window, app| {
+            view.update(app, |this, cx| {
+                let mut repo = RepoState::new_opening(
+                    repo_id,
+                    gitcomet_core::domain::RepoSpec {
+                        workdir: std::path::PathBuf::from("/tmp/branch-menu-interactive-rebase"),
+                    },
+                );
+                repo.head_branch = Loadable::Ready("main".into());
+                repo.branches = Loadable::Ready(Arc::new(vec![
+                    Branch {
+                        name: "main".into(),
+                        target: head.clone(),
+                        upstream: None,
+                        divergence: None,
+                    },
+                    Branch {
+                        name: "origin/topic".into(),
+                        target: tip.clone(),
+                        upstream: None,
+                        divergence: None,
+                    },
+                ]));
+                repo.remote_branches =
+                    Loadable::Ready(Arc::new(vec![gitcomet_core::domain::RemoteBranch {
+                        remote: "origin".into(),
+                        name: "topic".into(),
+                        target: CommitId("cccccccccccccccccccccccccccccccccccccccc".into()),
+                    }]));
+                if busy {
+                    repo.sequencer_state = Loadable::Ready(SequencerState::CherryPick);
+                }
+                push_test_state(this, app_state_with_repo(repo, repo_id), cx);
+            });
+        });
+        cx.update(|_window, app| {
+            let host = view.read(app).popover_host.clone();
+            host.update(app, |host, cx| {
+                let menu = host
+                    .context_menu_model(
+                        &PopoverKind::BranchMenu {
+                            repo_id,
+                            target: target.clone(),
+                        },
+                        cx,
+                    )
+                    .expect("branch menu");
+                let action = menu.items.iter().find_map(|item| {
+                    let ContextMenuItem::Entry {
+                        label,
+                        disabled,
+                        action,
+                        ..
+                    } = item
+                    else {
+                        return None;
+                    };
+                    let ContextMenuAction::LoadInteractiveRebaseSetup {
+                        repo_id: actual_repo,
+                        base,
+                    } = action.as_ref()
+                    else {
+                        return None;
+                    };
+                    assert_eq!(label.as_ref(), "Interactive rebase main onto origin/topic");
+                    assert_eq!(*actual_repo, repo_id);
+                    assert_eq!(base, tip.as_ref());
+                    Some(*disabled)
+                });
+                assert_eq!(action, expected_disabled);
+            });
+        });
+    }
 }
 
 #[gpui::test]

@@ -756,7 +756,7 @@ impl PopoverHost {
                 status_file::conflict_model(self, *repo_id, *area, path, cx, language)
             })),
             PopoverKind::BranchMenu { repo_id, target } => Some(localized_menu(cx, |language| {
-                branch::model(self, *repo_id, target, language)
+                branch::model(self, *repo_id, target, true, language)
             })),
             PopoverKind::BranchDropMenu {
                 repo_id,

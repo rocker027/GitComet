@@ -335,6 +335,83 @@ pub(super) fn action_items(
     )
 }
 
+pub(super) fn cherry_pick_entry(
+    repo_id: RepoId,
+    commit_id: &CommitId,
+    disabled: bool,
+    shortcut: Option<&'static str>,
+    language: Language,
+) -> ContextMenuItem {
+    ContextMenuItem::Entry {
+        label: language
+            .text("Cherry-pick", "摘取提交（Cherry-pick）")
+            .into(),
+        icon: Some("icons/arrow_up.svg".into()),
+        shortcut: shortcut.map(Into::into),
+        disabled,
+        action: Box::new(ContextMenuAction::CherryPickCommit {
+            repo_id,
+            commit_id: commit_id.clone(),
+        }),
+    }
+}
+
+pub(super) fn revert_entry(
+    repo_id: RepoId,
+    commit_id: &CommitId,
+    disabled: bool,
+    shortcut: Option<&'static str>,
+    language: Language,
+) -> ContextMenuItem {
+    let sha = commit_id.as_ref();
+    let short = sha.get(..8).unwrap_or(sha);
+    ContextMenuItem::Entry {
+        label: format!("{} {short}…", language.text("Revert", "還原")).into(),
+        icon: Some("icons/undo.svg".into()),
+        shortcut: shortcut.map(Into::into),
+        disabled,
+        action: Box::new(ContextMenuAction::RevertCommit {
+            repo_id,
+            commit_id: commit_id.clone(),
+        }),
+    }
+}
+
+pub(super) fn reset_entries(
+    repo_id: RepoId,
+    commit_id: &CommitId,
+    disabled: bool,
+    language: Language,
+) -> [ContextMenuItem; 3] {
+    [
+        (
+            language.text("Reset (--soft) to here", "軟重設（--soft）至此提交"),
+            ResetMode::Soft,
+        ),
+        (
+            language.text("Reset (--mixed) to here", "混合重設（--mixed）至此提交"),
+            ResetMode::Mixed,
+        ),
+        (
+            language.text("Reset (--hard) to here", "硬重設（--hard）至此提交"),
+            ResetMode::Hard,
+        ),
+    ]
+    .map(|(label, mode)| ContextMenuItem::Entry {
+        label: label.into(),
+        icon: Some("icons/refresh.svg".into()),
+        shortcut: None,
+        disabled,
+        action: Box::new(ContextMenuAction::OpenPopover {
+            kind: PopoverKind::ResetPrompt {
+                repo_id,
+                target: commit_id.as_ref().to_string(),
+                mode,
+            },
+        }),
+    })
+}
+
 fn model_with_header(
     this: &PopoverHost,
     repo_id: RepoId,
@@ -657,6 +734,24 @@ fn model_with_header(
     });
     items.push(ContextMenuItem::Entry {
         label: language
+            .text("Create worktree from this commit…", "從此提交建立工作樹…")
+            .into(),
+        icon: Some("icons/git_worktree.svg".into()),
+        shortcut: None,
+        disabled: false,
+        action: Box::new(ContextMenuAction::OpenWorktreeAddPrompt {
+            repo_id,
+            prefill: WorktreeAddPrefill {
+                source: sha.clone(),
+                source_upstream: None,
+                create_branch: true,
+                new_branch: String::new(),
+                open_after: true,
+            },
+        }),
+    });
+    items.push(ContextMenuItem::Entry {
+        label: language
             .text("Create branch from this commit", "從此提交建立分支")
             .into(),
         icon: Some("icons/git_branch.svg".into()),
@@ -672,18 +767,13 @@ fn model_with_header(
         }),
     });
     if !has_multi_cherry_pick && !is_head_commit {
-        items.push(ContextMenuItem::Entry {
-            label: language
-                .text("Cherry-pick", "摘取提交（Cherry-pick）")
-                .into(),
-            icon: Some("icons/arrow_up.svg".into()),
-            shortcut: Some("P".into()),
-            disabled: history_rewrite_disabled,
-            action: Box::new(ContextMenuAction::CherryPickCommit {
-                repo_id,
-                commit_id: commit_id.clone(),
-            }),
-        });
+        items.push(cherry_pick_entry(
+            repo_id,
+            commit_id,
+            history_rewrite_disabled,
+            Some("P"),
+            language,
+        ));
     }
     // The commit-details pencil, offered here too. Its rules decide: HEAD
     // amends; an older commit must be on HEAD's linear first-parent history.
@@ -725,16 +815,13 @@ fn model_with_header(
             commit_id: commit_id.clone(),
         }),
     });
-    items.push(ContextMenuItem::Entry {
-        label: format!("{} {short}…", language.text("Revert", "還原")).into(),
-        icon: Some("icons/undo.svg".into()),
-        shortcut: Some("R".into()),
-        disabled: history_rewrite_disabled,
-        action: Box::new(ContextMenuAction::RevertCommit {
-            repo_id,
-            commit_id: commit_id.clone(),
-        }),
-    });
+    items.push(revert_entry(
+        repo_id,
+        commit_id,
+        history_rewrite_disabled,
+        Some("R"),
+        language,
+    ));
     let current_branch: SharedString = this
         .active_repo()
         .and_then(|r| match &r.head_branch {
@@ -896,37 +983,12 @@ fn model_with_header(
             });
         }
     }
-    for (label, icon, mode) in [
-        (
-            language.text("Reset (--soft) to here", "軟重設（--soft）至此提交"),
-            "icons/refresh.svg",
-            ResetMode::Soft,
-        ),
-        (
-            language.text("Reset (--mixed) to here", "混合重設（--mixed）至此提交"),
-            "icons/refresh.svg",
-            ResetMode::Mixed,
-        ),
-        (
-            language.text("Reset (--hard) to here", "硬重設（--hard）至此提交"),
-            "icons/refresh.svg",
-            ResetMode::Hard,
-        ),
-    ] {
-        items.push(ContextMenuItem::Entry {
-            label: label.into(),
-            icon: Some(icon.into()),
-            shortcut: None,
-            disabled: worktree_finish_busy,
-            action: Box::new(ContextMenuAction::OpenPopover {
-                kind: PopoverKind::ResetPrompt {
-                    repo_id,
-                    target: sha.clone(),
-                    mode,
-                },
-            }),
-        });
-    }
+    items.extend(reset_entries(
+        repo_id,
+        commit_id,
+        worktree_finish_busy,
+        language,
+    ));
 
     ContextMenuModel::new(items).with_entry_tooltips(entry_tooltips)
 }

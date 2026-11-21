@@ -151,7 +151,10 @@ pub(super) fn model(
         });
         if expanded {
             let actions = match &target {
-                HistoryMenuRef::Branch(target) => branch::model(this, repo_id, target, language),
+                // Commit context menus already list the actions for this tip.
+                HistoryMenuRef::Branch(target) => {
+                    branch::model(this, repo_id, target, chooser, language)
+                }
                 HistoryMenuRef::Tag(name) => {
                     tag::model_for_tag(this, repo_id, commit_id, name, language)
                 }

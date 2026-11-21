@@ -388,6 +388,17 @@ fn hash_repo_for_popover<H: Hasher>(
 ) {
     view_fingerprint::hash_loadable_kind(&repo.open, hasher);
 
+    if matches!(
+        popover,
+        PopoverKind::BranchMenu { .. } | PopoverKind::CommitMenu { .. }
+    ) {
+        // Starting a sequencer operation or moving a detached HEAD can change
+        // which actions are available without refreshing the branch lists.
+        repo.history_rewrite_busy().hash(hasher);
+        repo.detached_head_commit.hash(hasher);
+        repo.head_commit.hash(hasher);
+    }
+
     match popover {
         PopoverKind::BranchPicker { .. }
         | PopoverKind::UpstreamPicker { .. }
@@ -1678,6 +1689,42 @@ mod tests {
             PopoverKind::worktree(repo_id, WorktreePopoverKind::AddPrompt),
             bump_branches,
         ));
+    }
+
+    #[test]
+    fn graph_context_menus_repaint_after_sequencer_and_detached_head_changes() {
+        let repo_id = RepoId(9);
+        let mut state = AppState {
+            active_repo: Some(repo_id),
+            ..AppState::test_default()
+        };
+        state.repos.push(RepoState::new_opening(
+            repo_id,
+            gitcomet_core::domain::RepoSpec {
+                workdir: std::env::temp_dir().join("gitcomet_graph_context_menu_fingerprint"),
+            },
+        ));
+        for popover in [
+            PopoverKind::BranchMenu {
+                repo_id,
+                target: crate::view::BranchMenuTarget::local("topic"),
+            },
+            PopoverKind::CommitMenu {
+                repo_id,
+                commit_id: CommitId("deadbeef".into()),
+                refs: CommitMenuRefs::All,
+            },
+        ] {
+            let before = notify_fingerprint(&state, &popover, None);
+            let mut busy = state.clone();
+            busy.repos[0].sequencer_state =
+                Loadable::Ready(gitcomet_core::services::SequencerState::CherryPick);
+            assert_ne!(before, notify_fingerprint(&busy, &popover, None));
+
+            let mut moved = state.clone();
+            moved.repos[0].detached_head_commit = Some(CommitId("deadbeef".into()));
+            assert_ne!(before, notify_fingerprint(&moved, &popover, None));
+        }
     }
 
     #[test]

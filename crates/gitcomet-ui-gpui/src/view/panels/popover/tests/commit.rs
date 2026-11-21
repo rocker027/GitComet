@@ -15,6 +15,86 @@ fn open_repo(repo_id: RepoId, workdir: &str) -> RepoState {
 }
 
 #[gpui::test]
+fn graph_commit_worktree_prompt_uses_the_full_sha(cx: &mut gpui::TestAppContext) {
+    use gitcomet_core::domain::RepositoryMode;
+    use gitcomet_core::services::WorktreeCheckout;
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let repo_id = RepoId(1);
+    let mut repo = open_repo(repo_id, "/tmp/commit-worktree-source");
+    repo.repository_mode = Some(RepositoryMode::Bare);
+    repo.head_branch = Loadable::Ready("main".into());
+    repo.branches = Loadable::Ready(Arc::new(vec![Branch {
+        name: "main".into(),
+        target: CommitId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+        upstream: None,
+        divergence: None,
+    }]));
+    store.replace_snapshot_for_test(Arc::new(AppState {
+        repos: vec![repo],
+        active_repo: Some(repo_id),
+        ..AppState::test_default()
+    }));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let commit_id = CommitId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+    cx.update(|window, app| {
+        view.read(app).popover_host.clone().update(app, |host, cx| {
+            let action = host
+                .context_menu_model(
+                    &PopoverKind::CommitMenu {
+                        repo_id,
+                        commit_id: commit_id.clone(),
+                        refs: CommitMenuRefs::All,
+                    },
+                    cx,
+                )
+                .expect("commit context menu")
+                .items
+                .into_iter()
+                .find_map(|item| match item {
+                    ContextMenuItem::Entry {
+                        disabled: false,
+                        action,
+                        ..
+                    } if matches!(
+                        action.as_ref(),
+                        ContextMenuAction::OpenWorktreeAddPrompt { .. }
+                    ) =>
+                    {
+                        Some(*action)
+                    }
+                    _ => None,
+                })
+                .expect("enabled worktree action");
+            host.context_menu_activate_action(action, window, cx);
+            assert!(matches!(
+                host.popover,
+                Some(PopoverKind::Repo {
+                    repo_id: owner,
+                    kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt)
+                }) if owner == repo_id
+            ));
+            assert!(!host.can_submit_worktree_add(cx));
+            assert!(host.worktree_add_open_after);
+            let destination = "/tmp/commit-worktree-target";
+            host.worktree_path_input
+                .update(cx, |input, cx| input.set_text(destination, cx));
+            assert_eq!(
+                host.worktree_add_request(repo_id, cx).unwrap(),
+                (
+                    destination.into(),
+                    WorktreeCheckout::NewBranch {
+                        name: "commit-worktree-target".into(),
+                        start: Some(commit_id.as_ref().to_string()),
+                    },
+                )
+            );
+        });
+    });
+}
+
+#[gpui::test]
 fn commit_prompt_field_aligns_with_its_footer_and_scrolls_inside_the_border(
     cx: &mut gpui::TestAppContext,
 ) {

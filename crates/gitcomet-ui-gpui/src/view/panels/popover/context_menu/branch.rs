@@ -7,6 +7,7 @@ pub(super) fn model(
     this: &PopoverHost,
     repo_id: RepoId,
     target: &BranchMenuTarget,
+    include_tip_actions: bool,
     language: Language,
 ) -> ContextMenuModel {
     let section = target.section();
@@ -79,6 +80,7 @@ pub(super) fn model(
                 .map(|candidate| candidate.target.clone())
         }),
     };
+    let branch_tip_is_head = repo.and_then(|repo| repo.head_commit_id()) == branch_commit_id;
     // Local Git actions operate on the exact loaded tip. This is independent
     // of the remote-tracking ref's destination, which can be renamed by a
     // custom fetch refspec.
@@ -261,6 +263,29 @@ pub(super) fn model(
                 },
             }),
         });
+        if include_tip_actions
+            && let Some(base) = branch_commit_id.as_ref()
+            && !branch_tip_is_head
+        {
+            items.push(ContextMenuItem::Entry {
+                label: match language {
+                    Language::English => {
+                        format!("Interactive rebase {current_branch_label} onto {name}")
+                    }
+                    Language::TraditionalChinese => {
+                        format!("將 {current_branch_label} 互動式變基至 {name}")
+                    }
+                }
+                .into(),
+                icon: Some("icons/refresh.svg".into()),
+                shortcut: None,
+                disabled: history_rewrite_disabled,
+                action: Box::new(ContextMenuAction::LoadInteractiveRebaseSetup {
+                    repo_id,
+                    base: base.as_ref().to_owned(),
+                }),
+            });
+        }
     }
 
     items.push(ContextMenuItem::Separator);
@@ -304,6 +329,34 @@ pub(super) fn model(
                 },
             }),
         });
+    }
+
+    if include_tip_actions
+        && let Some(tip) = branch_commit_id.as_ref()
+        && !is_current_branch
+        && !branch_tip_is_head
+    {
+        items.push(ContextMenuItem::Separator);
+        items.push(commit::cherry_pick_entry(
+            repo_id,
+            tip,
+            history_rewrite_disabled,
+            None,
+            language,
+        ));
+        items.extend(commit::reset_entries(
+            repo_id,
+            tip,
+            history_rewrite_disabled,
+            language,
+        ));
+        items.push(commit::revert_entry(
+            repo_id,
+            tip,
+            history_rewrite_disabled,
+            None,
+            language,
+        ));
     }
 
     items.push(ContextMenuItem::Separator);
@@ -354,7 +407,7 @@ pub(super) fn model(
     }
 
     // Comparison: mark this branch's tip, or compare it against a mark.
-    if let Some(commit_id) = branch_commit_id {
+    if let Some(commit_id) = branch_commit_id.as_ref() {
         items.push(ContextMenuItem::Separator);
         let comparison_mark = repo.and_then(|r| r.navigation.comparison_mark.clone());
         items.push(ContextMenuItem::Entry {
@@ -387,7 +440,7 @@ pub(super) fn model(
         });
         items.extend(super::marked_comparison_entries(
             repo_id,
-            &commit_id,
+            commit_id,
             &name,
             comparison_mark
                 .as_ref()
@@ -450,6 +503,27 @@ pub(super) fn model(
         disabled: false,
         action: Box::new(ContextMenuAction::CopyText { text: name.clone() }),
     });
+    if include_tip_actions && let Some(tip) = branch_commit_id {
+        items.push(ContextMenuItem::Entry {
+            label: language.text("Copy commit SHA", "複製提交 SHA").into(),
+            icon: Some("icons/copy.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::CopyCommitSha {
+                commit_id: tip.clone(),
+            }),
+        });
+        items.push(ContextMenuItem::Entry {
+            label: language.text("Export patch…", "匯出修補檔…").into(),
+            icon: Some("icons/arrow_down.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::ExportPatch {
+                repo_id,
+                commit_id: tip,
+            }),
+        });
+    }
 
     if section == BranchSection::Remote {
         items.push(ContextMenuItem::Separator);

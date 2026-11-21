@@ -1261,51 +1261,43 @@ impl MainPaneView {
         // git would refuse the start, so hold the button until it can work.
         let history_rewrite_busy = repo.history_rewrite_busy()
             || self.state.worktree_finish_blocks_workdir_mutation(repo_id);
-        let (editor_mode, base, header_title, header_detail, loading_state) =
-            if let Some(setup) = repo.interactive_rebase_setup.as_ref() {
-                let base = setup.base.clone();
-                // Only abbreviate full commit ids; leave branch names intact.
-                let base_short: SharedString =
-                    if base.len() > 16 && base.chars().all(|c| c.is_ascii_hexdigit()) {
-                        base.get(..8).unwrap_or(&base).to_string().into()
-                    } else {
-                        base.clone().into()
-                    };
-                // Prefer a branch name that points at the base commit; fall back to the
-                // abbreviated sha.
-                let base_display: SharedString = match &repo.branches {
-                    Loadable::Ready(branches) => branches
-                        .iter()
-                        .find(|b| b.target.as_ref() == base.as_str())
-                        .map(|b| SharedString::from(b.name.clone()))
-                        .unwrap_or_else(|| base_short.clone()),
-                    _ => base_short.clone(),
-                };
-                (
-                    ICommitEditorMode::Rebase,
-                    Some(base),
-                    SharedString::from("Interactive Rebase"),
-                    SharedString::from(format!("onto {base_display}")),
-                    setup.entries.clone(),
-                )
-            } else if let Some(setup) = repo.interactive_cherry_pick_setup.as_ref() {
-                let count = setup.entries.len();
-                let entries = match &setup.full_messages {
-                    Loadable::NotLoaded => Loadable::NotLoaded,
-                    Loadable::Loading => Loadable::Loading,
-                    Loadable::Ready(()) => Loadable::Ready(setup.entries.clone()),
-                    Loadable::Error(error) => Loadable::Error(error.clone()),
-                };
-                (
-                    ICommitEditorMode::CherryPick,
-                    None,
-                    SharedString::from("Cherry-pick"),
-                    SharedString::from(format!("{count} commits")),
-                    entries,
-                )
+        let (editor_mode, base, header_title, header_detail, loading_state) = if let Some(setup) =
+            repo.interactive_rebase_setup.as_ref()
+        {
+            let base = setup.base.clone();
+            // An exact commit may be shared by several refs. Display its
+            // SHA instead of attributing it to an unrelated branch.
+            let base_display = if base.len() > 16 && base.chars().all(|c| c.is_ascii_hexdigit()) {
+                &base[..8]
             } else {
-                return div().child("No interactive commit setup");
+                &base
             };
+            let header_detail = SharedString::from(format!("onto {base_display}"));
+            (
+                ICommitEditorMode::Rebase,
+                Some(base),
+                SharedString::from("Interactive Rebase"),
+                header_detail,
+                setup.entries.clone(),
+            )
+        } else if let Some(setup) = repo.interactive_cherry_pick_setup.as_ref() {
+            let count = setup.entries.len();
+            let entries = match &setup.full_messages {
+                Loadable::NotLoaded => Loadable::NotLoaded,
+                Loadable::Loading => Loadable::Loading,
+                Loadable::Ready(()) => Loadable::Ready(setup.entries.clone()),
+                Loadable::Error(error) => Loadable::Error(error.clone()),
+            };
+            (
+                ICommitEditorMode::CherryPick,
+                None,
+                SharedString::from("Cherry-pick"),
+                SharedString::from(format!("{count} commits")),
+                entries,
+            )
+        } else {
+            return div().child("No interactive commit setup");
+        };
         let entry_content: gpui::AnyElement = match &loading_state {
             Loadable::NotLoaded => div()
                 .px_2()
