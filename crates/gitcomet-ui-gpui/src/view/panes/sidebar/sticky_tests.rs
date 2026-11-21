@@ -409,6 +409,109 @@ fn sticky_sidebar_headers_scroll_navigate_and_respect_group_collapse(
 }
 
 #[gpui::test]
+fn sidebar_section_headers_hide_and_restore_their_own_rows(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let mut state = fixture(40);
+    let repo = &mut Arc::make_mut(&mut state).repos[0];
+    repo.worktrees = long_list_tests::fixture(1, CollapsedSidebarSection::Worktrees).repos[0]
+        .worktrees
+        .clone();
+    repo.submodules = long_list_tests::fixture(1, CollapsedSidebarSection::Submodules).repos[0]
+        .submodules
+        .clone();
+    repo.stashes = long_list_tests::fixture(1, CollapsedSidebarSection::Stashes).repos[0]
+        .stashes
+        .clone();
+    let pane = cx.update(|_, app| view.read(app).sidebar_pane.clone());
+    cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.store.replace_snapshot_for_test(state.clone());
+            test_support::push_test_state(view, state, cx);
+            view.set_sidebar_collapsed(false, cx);
+        });
+    });
+    test_support::redraw(cx);
+    cx.update(|_, app| {
+        pane.update(app, |pane, cx| {
+            pane.set_collapsed_keys_for_test(&[&branch_sidebar::local_group_storage_key("shared")]);
+            cx.notify();
+        });
+    });
+    test_support::redraw(cx);
+
+    let visible_children = |cx: &mut gpui::VisualTestContext, key: &str| {
+        cx.update(|_, app| {
+            pane.update(app, |pane, _| {
+                let presentation = pane.branch_sidebar_presentation_cached().unwrap();
+                let header = presentation.structure.headers[key];
+                let end = presentation
+                    .structure
+                    .sections
+                    .iter()
+                    .copied()
+                    .find(|&ix| ix > header)
+                    .unwrap_or(presentation.rows.len());
+                let children = presentation.rows[header + 1..end]
+                    .iter()
+                    .filter(|row| !matches!(row, BranchSidebarRow::SectionSpacer))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                (header, children)
+            })
+        })
+    };
+    let local = branch_sidebar::local_section_storage_key();
+    let remote = branch_sidebar::remote_section_storage_key();
+    let (_, remote_rows) = visible_children(cx, remote);
+    let (_, local_rows) = visible_children(cx, local);
+    assert!(
+        matches!(
+            local_rows.as_slice(),
+            [BranchSidebarRow::GroupHeader {
+                collapsed: true,
+                ..
+            }]
+        ),
+        "only the pre-collapsed group should be visible: {local_rows:?}"
+    );
+    for section in [
+        local,
+        remote,
+        branch_sidebar::worktrees_section_storage_key(),
+        branch_sidebar::submodules_section_storage_key(),
+        branch_sidebar::stash_section_storage_key(),
+    ] {
+        let (ix, before) = visible_children(cx, section);
+        assert!(!before.is_empty(), "{section} should start expanded");
+        let arrow: &str = format!("sidebar_header_toggle_{ix}").leak();
+        let target = if section == local {
+            selector(ix)
+        } else {
+            arrow
+        };
+        let bounds = cx.debug_bounds(target).unwrap();
+        cx.simulate_click(bounds.center(), gpui::Modifiers::default());
+        test_support::redraw(cx);
+        assert!(visible_children(cx, section).1.is_empty(), "{section}");
+
+        if section == local {
+            assert_eq!(visible_children(cx, remote).1, remote_rows);
+            cx.simulate_keystrokes("enter");
+            cx.simulate_event(gpui::KeyUpEvent {
+                keystroke: gpui::Keystroke::parse("enter").unwrap(),
+            });
+        } else {
+            let bounds = cx.debug_bounds(arrow).unwrap();
+            cx.simulate_click(bounds.center(), gpui::Modifiers::default());
+        }
+        test_support::redraw(cx);
+        assert_eq!(visible_children(cx, section).1, before, "{section}");
+    }
+}
+
+#[gpui::test]
 fn sticky_sidebar_section_gaps_close_when_headers_stick(cx: &mut gpui::TestAppContext) {
     let (store, events) = AppStore::new_test(Arc::new(TestBackend));
     let (view, cx) =
@@ -840,7 +943,7 @@ fn sticky_sidebar_paths_include_both_targets_and_ignore_closed_or_filtered_paths
     let state = fixture(4);
     let repo = &state.repos[0];
     let selected = BranchMenuTarget::remote("origin", "shared/topic-000001");
-    let rows = branch_sidebar::expanded_sidebar_rows(repo, &BTreeSet::new(), "");
+    let rows = branch_sidebar::expanded_sidebar_rows(repo, &BTreeSet::new(), false);
     let structure = crate::view::sidebar_sticky::SidebarStructure::new(&rows);
     assert_eq!(
         structure
@@ -872,7 +975,7 @@ fn sticky_sidebar_paths_include_both_targets_and_ignore_closed_or_filtered_paths
             .is_empty()
     );
     let collapsed = BTreeSet::from([branch_sidebar::remote_group_storage_key("origin", "shared")]);
-    let rows = branch_sidebar::expanded_sidebar_rows(repo, &collapsed, "");
+    let rows = branch_sidebar::expanded_sidebar_rows(repo, &collapsed, false);
     let structure = crate::view::sidebar_sticky::SidebarStructure::new(&rows);
     assert!(
         structure
@@ -1637,7 +1740,7 @@ fn sticky_sidebar_ignores_legacy_top_level_collapse_and_requests_visible_data() 
         branch_sidebar::local_section_storage_key().to_string(),
         branch_sidebar::remote_section_storage_key().to_string(),
     ]);
-    let rows = branch_sidebar::expanded_sidebar_rows(repo, &collapsed, "");
+    let rows = branch_sidebar::expanded_sidebar_rows(repo, &collapsed, false);
     assert_eq!(
         rows.iter()
             .filter(|row| matches!(row, BranchSidebarRow::Branch { .. }))
@@ -1853,12 +1956,14 @@ fn sticky_sidebar_surfaces_and_pin_alignment_follow_theme_density_and_scale(
             }
             let pin = cx.debug_bounds("sidebar_pin_marker_0").unwrap();
             let pin_icon = cx.debug_bounds("sidebar_branch_icon_Pins_0").unwrap();
+            let header_toggle = cx
+                .debug_bounds(format!("sidebar_header_toggle_{local}").leak())
+                .unwrap();
             let header_icon = cx
                 .debug_bounds(format!("sidebar_header_icon_{local}").leak())
                 .unwrap();
-            // Section headers sit closer to the left edge than the rows
-            // below them: they have no toggle slot of their own.
-            assert!(header_icon.left() < pin.left());
+            // Section headers sit closer to the left edge than their child rows.
+            assert!(header_toggle.left() < pin.left());
             assert!(header_icon.left() < pin_icon.left());
             assert_eq!(pin_icon.size.width, header_icon.size.width);
             assert!(cx.debug_bounds("sidebar_pinned_heading").is_none());

@@ -7,14 +7,15 @@ use gitcomet_core::domain::{DiffTarget, Upstream};
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::remote_url::RemoteUrlPolicy;
 use gitcomet_core::services::{
-    CommandOutput, ConflictSide, ForcePushLease, GitBackend, GitHooks, GitRepository,
-    InteractiveRebaseEntry, PullMode, RemoteUrlKind, ResetMode, SafePushAfterCommitContext,
-    SafePushAfterCommitTarget, SubmoduleTrustTarget, WorktreeCheckout,
+    CancellationToken, CommandOutput, ConflictSide, ForcePushLease, GitBackend, GitHooks,
+    GitRepository, InteractiveRebaseEntry, PullMode, RemoteUrlKind, ResetMode,
+    SafePushAfterCommitContext, SafePushAfterCommitTarget, SubmoduleTrustTarget, WorktreeCheckout,
 };
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use super::super::fetch_guard::refuse_protected_fetch;
 use super::super::{RepoId, executor::TaskExecutor, worker_channel::StoreWorkerSender};
 use super::util::{
     GitOperationTask, SKIPPING_HOOKS_CONTEXT, message_subject, missing_repo_error,
@@ -133,6 +134,11 @@ fn repo_command_context(command: &RepoCommandKind) -> Option<String> {
         RepoCommandKind::Push | RepoCommandKind::ForcePush => {
             "Current branch → configured upstream".to_string()
         }
+        RepoCommandKind::PushBranch {
+            local_branch,
+            upstream,
+            ..
+        } => format!("{local_branch} → {}/{}", upstream.remote, upstream.branch),
         RepoCommandKind::PushAfterCommit { target, hooks, .. } => {
             let context = format!(
                 "{} → {}/{}",
@@ -1147,6 +1153,7 @@ fn schedule_fetch_all(
     msg_tx: StoreWorkerSender,
     repo_id: RepoId,
     prune: bool,
+    protected: Vec<String>,
     auth: Option<StagedGitAuth>,
 ) {
     schedule_repo_command(
@@ -1155,7 +1162,10 @@ fn schedule_fetch_all(
         msg_tx,
         repo_id,
         RepoCommandKind::FetchAll,
-        move |repo| run_with_git_auth(auth, || repo.fetch_all(prune)),
+        move |repo| {
+            refuse_protected_fetch(repo.as_ref(), &protected, || repo.fetch_all_remote_names())?;
+            run_with_git_auth(auth, || repo.fetch_all(prune))
+        },
     );
 }
 
@@ -1166,12 +1176,14 @@ fn schedule_fetch_remote(
     repo_id: RepoId,
     remote: String,
     prune: bool,
+    protected: Vec<String>,
     auth: Option<StagedGitAuth>,
 ) {
     let command = RepoCommandKind::FetchRemote {
         remote: remote.clone(),
     };
     schedule_repo_command(executor, repos, msg_tx, repo_id, command, move |repo| {
+        refuse_protected_fetch(repo.as_ref(), &protected, || Ok(vec![remote.clone()]))?;
         run_with_git_auth(auth, || repo.fetch_remote(&remote, prune))
     });
 }
@@ -1183,6 +1195,7 @@ fn schedule_fetch_refspecs(
     repo_id: RepoId,
     remote: String,
     refspecs: Vec<String>,
+    protected: Vec<String>,
     auth: Option<StagedGitAuth>,
 ) {
     let command = RepoCommandKind::FetchRefspecs {
@@ -1190,6 +1203,8 @@ fn schedule_fetch_refspecs(
         refspecs: refspecs.clone(),
     };
     schedule_repo_command(executor, repos, msg_tx, repo_id, command, move |repo| {
+        // Git also applies the remote's configured refspecs to what it fetches here.
+        refuse_protected_fetch(repo.as_ref(), &protected, || Ok(vec![remote.clone()]))?;
         run_with_git_auth(auth, || repo.fetch_refspecs_with_output(&remote, &refspecs))
     });
 }
@@ -1299,6 +1314,7 @@ fn schedule_pull(
     repo_id: RepoId,
     mode: PullMode,
     context: Option<String>,
+    protected: Vec<String>,
     auth: Option<StagedGitAuth>,
 ) {
     let command = RepoCommandKind::Pull { mode };
@@ -1313,7 +1329,14 @@ fn schedule_pull(
         repo_id,
         command,
         context,
-        move |repo| run_with_git_auth(auth, || repo.pull(mode)),
+        move |repo| {
+            // The upstream's remote is resolved by Git, so every configured remote is checked.
+            refuse_protected_fetch(repo.as_ref(), &protected, || {
+                repo.list_remotes(&CancellationToken::new())
+                    .map(|remotes| remotes.into_iter().map(|remote| remote.name).collect())
+            })?;
+            run_with_git_auth(auth, || repo.pull(mode))
+        },
     );
 }
 
@@ -1325,6 +1348,7 @@ fn schedule_pull_branch(
     remote: String,
     branch: String,
     local_branch: Option<String>,
+    protected: Vec<String>,
     auth: Option<StagedGitAuth>,
 ) {
     let command_remote = remote.clone();
@@ -1340,7 +1364,10 @@ fn schedule_pull_branch(
             branch: command_branch,
         },
         context,
-        move |repo| run_with_git_auth(auth, || repo.pull_branch_with_output(&remote, &branch)),
+        move |repo| {
+            refuse_protected_fetch(repo.as_ref(), &protected, || Ok(vec![remote.clone()]))?;
+            run_with_git_auth(auth, || repo.pull_branch_with_output(&remote, &branch))
+        },
     );
 }
 
@@ -1697,6 +1724,7 @@ fn schedule_reset(
     mode: ResetMode,
 ) {
     let command_target = target.clone();
+    let observer = msg_tx.clone();
     schedule_repo_command(
         executor,
         repos,
@@ -1706,7 +1734,24 @@ fn schedule_reset(
             mode,
             target: command_target,
         },
-        move |repo| repo.reset_with_output(&target, mode),
+        move |repo| {
+            // A soft reset can be undone: report the commit it moves the
+            // checked-out branch from.
+            if mode == ResetMode::Soft {
+                let branch = repo
+                    .current_branch(&gitcomet_core::services::CancellationToken::new())
+                    .ok();
+                let head = repo.head_commit_id().ok().flatten();
+                super::repo_actions::report_git_undo_ref(
+                    &observer,
+                    repo_id,
+                    crate::model::PendingGitUndoKind::SoftReset,
+                    format!("refs/heads/{}", branch.unwrap_or_default()),
+                    head,
+                );
+            }
+            repo.reset_with_output(&target, mode)
+        },
     );
 }
 
@@ -2357,6 +2402,18 @@ fn tracking_branch_context(
     ))
 }
 
+/// Branches an active Worktree Finish run protects in `repo_id`'s repository, read when a
+/// fetch or pull is scheduled; see [`refuse_protected_fetch`].
+fn worktree_finish_protected_branches(
+    thread_state: &Arc<RwLock<Arc<AppState>>>,
+    repo_id: RepoId,
+) -> Vec<String> {
+    thread_state
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .worktree_finish_protected_branches(repo_id)
+}
+
 pub(super) fn schedule(
     executor: &TaskExecutor,
     filesystem_executor: &TaskExecutor,
@@ -2692,19 +2749,45 @@ pub(super) fn schedule(
             repo_id,
             prune,
             auth,
-        } => schedule_fetch_all(executor, repos, msg_tx, repo_id, prune, auth),
+        } => schedule_fetch_all(
+            executor,
+            repos,
+            msg_tx,
+            repo_id,
+            prune,
+            worktree_finish_protected_branches(thread_state, repo_id),
+            auth,
+        ),
         RepoCommandEffect::FetchRemote {
             repo_id,
             remote,
             prune,
             auth,
-        } => schedule_fetch_remote(executor, repos, msg_tx, repo_id, remote, prune, auth),
+        } => schedule_fetch_remote(
+            executor,
+            repos,
+            msg_tx,
+            repo_id,
+            remote,
+            prune,
+            worktree_finish_protected_branches(thread_state, repo_id),
+            auth,
+        ),
         RepoCommandEffect::FetchRefspecs {
             repo_id,
             remote,
             refspecs,
             auth,
-        } => schedule_fetch_refspecs(executor, repos, msg_tx, repo_id, remote, refspecs, auth),
+        } => schedule_fetch_refspecs(
+            executor,
+            repos,
+            msg_tx,
+            repo_id,
+            remote,
+            refspecs,
+            worktree_finish_protected_branches(thread_state, repo_id),
+            auth,
+        ),
         RepoCommandEffect::PruneMergedBranches { repo_id } => {
             schedule_prune_merged_branches(executor, repos, msg_tx, repo_id)
         }
@@ -2730,6 +2813,7 @@ pub(super) fn schedule(
             tracking_branch_context(thread_state, repo_id)
                 .map(|(local, upstream)| format!("{upstream} → {local}"))
                 .or_else(|| current_branch_context(thread_state, repo_id)),
+            worktree_finish_protected_branches(thread_state, repo_id),
             auth,
         ),
         RepoCommandEffect::PullBranch {
@@ -2745,6 +2829,7 @@ pub(super) fn schedule(
             remote,
             branch,
             current_branch_context(thread_state, repo_id),
+            worktree_finish_protected_branches(thread_state, repo_id),
             auth,
         ),
         RepoCommandEffect::MergeRef { repo_id, reference } => {
@@ -2765,6 +2850,28 @@ pub(super) fn schedule(
             repo_id,
             tracking_branch_context(thread_state, repo_id),
             auth,
+        ),
+        RepoCommandEffect::PushBranch {
+            repo_id,
+            local_branch,
+            upstream,
+            set_upstream,
+            auth,
+        } => schedule_repo_command(
+            executor,
+            repos,
+            msg_tx,
+            repo_id,
+            RepoCommandKind::PushBranch {
+                local_branch: local_branch.clone(),
+                upstream: upstream.clone(),
+                set_upstream,
+            },
+            move |repo| {
+                run_with_git_auth(auth, || {
+                    repo.push_branch_with_output(&local_branch, &upstream, set_upstream)
+                })
+            },
         ),
         RepoCommandEffect::PushAfterCommit {
             repo_id,

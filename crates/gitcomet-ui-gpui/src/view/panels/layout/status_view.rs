@@ -2,6 +2,7 @@
 //! actions and resize handles, and the commit box.
 
 use super::*;
+use crate::localization::{Language, text};
 
 /// One status section's numbers, as its header and body read them.
 #[derive(Clone, Copy)]
@@ -50,9 +51,21 @@ struct StatusSectionNames {
     controls_id_prefix: &'static str,
     spinner_id: &'static str,
     empty_icon: &'static str,
-    empty_title: &'static str,
-    empty_hint: &'static str,
+    title: (&'static str, &'static str),
+    empty_title: (&'static str, &'static str),
+    empty_hint: (&'static str, &'static str),
 }
+
+impl StatusSectionNames {
+    fn is_top_section(self) -> bool {
+        matches!(
+            self.section,
+            StatusSection::CombinedUnstaged | StatusSection::Untracked
+        )
+    }
+}
+
+const STATUS_CLOSE_ICON_PX: f32 = 12.0;
 
 const COMBINED_UNSTAGED_NAMES: StatusSectionNames = StatusSectionNames {
     section: StatusSection::CombinedUnstaged,
@@ -60,8 +73,12 @@ const COMBINED_UNSTAGED_NAMES: StatusSectionNames = StatusSectionNames {
     controls_id_prefix: "status_unstaged",
     spinner_id: "unstaged_actions_spinner",
     empty_icon: "icons/check.svg",
-    empty_title: "No unstaged changes",
-    empty_hint: "Edits to tracked files show up here.",
+    title: ("Unstaged", "未暫存"),
+    empty_title: ("No unstaged changes", "沒有未暫存的變更"),
+    empty_hint: (
+        "Edits to tracked files show up here.",
+        "已追蹤檔案的變更會顯示在這裡。",
+    ),
 };
 
 const UNTRACKED_NAMES: StatusSectionNames = StatusSectionNames {
@@ -70,8 +87,9 @@ const UNTRACKED_NAMES: StatusSectionNames = StatusSectionNames {
     controls_id_prefix: "status_untracked",
     spinner_id: "untracked_actions_spinner",
     empty_icon: "icons/plus.svg",
-    empty_title: "No untracked files",
-    empty_hint: "New files show up here.",
+    title: ("Untracked", "未追蹤"),
+    empty_title: ("No untracked files", "沒有未追蹤的檔案"),
+    empty_hint: ("New files show up here.", "新增的檔案會顯示在這裡。"),
 };
 
 const SPLIT_UNSTAGED_NAMES: StatusSectionNames = StatusSectionNames {
@@ -80,8 +98,7 @@ const SPLIT_UNSTAGED_NAMES: StatusSectionNames = StatusSectionNames {
     controls_id_prefix: "status_split_unstaged",
     spinner_id: "split_unstaged_actions_spinner",
     empty_icon: "icons/check.svg",
-    empty_title: "No unstaged changes",
-    empty_hint: "Edits to tracked files show up here.",
+    ..COMBINED_UNSTAGED_NAMES
 };
 
 const STAGED_NAMES: StatusSectionNames = StatusSectionNames {
@@ -90,8 +107,12 @@ const STAGED_NAMES: StatusSectionNames = StatusSectionNames {
     controls_id_prefix: "status_staged",
     spinner_id: "staged_actions_spinner",
     empty_icon: "icons/check.svg",
-    empty_title: "Nothing staged yet",
-    empty_hint: "Stage files to include them in your commit.",
+    title: ("Staged", "已暫存"),
+    empty_title: ("Nothing staged yet", "尚未暫存任何變更"),
+    empty_hint: (
+        "Stage files to include them in your commit.",
+        "暫存檔案後，就能將變更納入提交。",
+    ),
 };
 
 impl DetailsPaneView {
@@ -99,8 +120,8 @@ impl DetailsPaneView {
         if self.active_repo().is_some_and(RepoState::is_bare) {
             return components::empty_state(
                 self.theme,
-                "No working tree in bare mode",
-                "Select a commit to browse its files and changes. Fetch and push remain available.",
+                text(cx, "No working tree in bare mode", "裸儲存庫沒有工作樹"),
+                text(cx, "Select a commit to browse its files and changes. Fetch and push remain available.", "選取提交即可瀏覽檔案與變更。仍可執行擷取和推送。"),
             )
             .debug_selector(|| "bare_mode_status".to_owned())
             .into_any_element();
@@ -139,8 +160,12 @@ impl DetailsPaneView {
                     )
                     .into_any_element()
             } else {
-                components::empty_state(v.theme, "Changes", "No repository selected.")
-                    .into_any_element()
+                components::empty_state(
+                    v.theme,
+                    text(cx, "Changes", "變更"),
+                    text(cx, "No repository selected.", "未選取儲存庫。"),
+                )
+                .into_any_element()
             })
             .into_any_element()
     }
@@ -216,70 +241,82 @@ impl DetailsPaneView {
             .current_status_sections_bounds()
             .map(|bounds| bounds.size.width)
             .unwrap_or(Pixels::MAX);
-        let labels_for =
-            |title_chars: usize, title_is_dropdown: bool, action_label_chars: &[usize]| {
-                status_action_labels_for_width(
-                    header_width,
-                    title_chars,
-                    title_is_dropdown,
-                    action_label_chars,
-                    local_actions_in_flight,
-                    ui_scale_percent,
-                    theme.metrics,
-                )
+        let char_width = |label: &str| {
+            label
+                .chars()
+                .map(|character| if character.is_ascii() { 1 } else { 2 })
+                .sum::<usize>()
+        };
+        let count_chars = |word: &str, count: usize| char_width(word) + 3 + count.to_string().len();
+        let close_width =
+            (ui_scale.px(STATUS_CLOSE_ICON_PX) + components::icon_pad_x(ui_scale) * 2.0 + px(2.0))
+                .max(components::control_height(ui_scale));
+        let close_gap = ui_scale::design_px_from_percent(STATUS_HEADER_GAP_PX, ui_scale_percent);
+        let labels_for = |names: StatusSectionNames, action_label_chars: &[usize]| {
+            let available_width = if names.is_top_section() {
+                header_width - close_width - close_gap
+            } else {
+                header_width
             };
-        let count_chars =
-            |word: &str, count: usize| word.chars().count() + 3 + count.to_string().len();
+            status_action_labels_for_width(
+                available_width,
+                char_width(text(cx, names.title.0, names.title.1)),
+                names.section != StatusSection::Staged,
+                action_label_chars,
+                local_actions_in_flight,
+                ui_scale_percent,
+                theme.metrics,
+            )
+        };
+        let stage = text(cx, "Stage", "暫存");
+        let discard = text(cx, "Discard", "捨棄");
+        let unstage = text(cx, "Unstage", "取消暫存");
+        let stage_all_changes = char_width(text(cx, "Stage all changes", "全部暫存"));
+        let stage_all = char_width(text(cx, "Stage all", "全部暫存"));
+        let unstage_all = char_width(text(cx, "Unstage all changes", "全部取消暫存"));
         let unstaged_labels = if selected_combined_unstaged > 0 {
             labels_for(
-                "Unstaged".len(),
-                true,
+                COMBINED_UNSTAGED_NAMES,
                 &[
-                    count_chars("Stage", selected_combined_unstaged),
-                    count_chars("Discard", selected_combined_unstaged),
-                    "Stage all changes".len(),
+                    count_chars(stage, selected_combined_unstaged),
+                    count_chars(discard, selected_combined_unstaged),
+                    stage_all_changes,
                 ],
             )
         } else {
-            labels_for("Unstaged".len(), true, &["Stage all changes".len()])
+            labels_for(COMBINED_UNSTAGED_NAMES, &[stage_all_changes])
         };
         let untracked_labels = if selected_untracked > 0 {
             labels_for(
-                "Untracked".len(),
-                true,
+                UNTRACKED_NAMES,
                 &[
-                    count_chars("Stage", selected_untracked),
-                    count_chars("Discard", selected_untracked),
-                    "Stage all".len(),
+                    count_chars(stage, selected_untracked),
+                    count_chars(discard, selected_untracked),
+                    stage_all,
                 ],
             )
         } else {
-            labels_for("Untracked".len(), true, &["Stage all".len()])
+            labels_for(UNTRACKED_NAMES, &[stage_all])
         };
         let split_unstaged_labels = if selected_split_unstaged > 0 {
             labels_for(
-                "Unstaged".len(),
-                true,
+                SPLIT_UNSTAGED_NAMES,
                 &[
-                    count_chars("Stage", selected_split_unstaged),
-                    count_chars("Discard", selected_split_unstaged),
-                    "Stage all".len(),
+                    count_chars(stage, selected_split_unstaged),
+                    count_chars(discard, selected_split_unstaged),
+                    stage_all,
                 ],
             )
         } else {
-            labels_for("Unstaged".len(), true, &["Stage all".len()])
+            labels_for(SPLIT_UNSTAGED_NAMES, &[stage_all])
         };
         let staged_labels = if selected_staged > 0 {
             labels_for(
-                "Staged".len(),
-                false,
-                &[
-                    count_chars("Unstage", selected_staged),
-                    "Unstage all changes".len(),
-                ],
+                STAGED_NAMES,
+                &[count_chars(unstage, selected_staged), unstage_all],
             )
         } else {
-            labels_for("Staged".len(), false, &["Unstage all changes".len()])
+            labels_for(STAGED_NAMES, &[unstage_all])
         };
 
         StatusViewInputs {
@@ -347,7 +384,7 @@ impl DetailsPaneView {
             v,
             "change_tracking_unstaged_header",
             "change_tracking_unstaged_header",
-            "Unstaged",
+            text(cx, names.title.0, names.title.1),
             cx,
         );
         self.status_section_frame(v, names, title, actions, body, cx)
@@ -377,7 +414,7 @@ impl DetailsPaneView {
             v,
             "change_tracking_untracked_header",
             "change_tracking_untracked_header",
-            "Untracked",
+            text(cx, names.title.0, names.title.1),
             cx,
         );
         self.status_section_frame(v, names, title, actions, body, cx)
@@ -412,7 +449,7 @@ impl DetailsPaneView {
             v,
             "change_tracking_unstaged_header",
             "change_tracking_unstaged_header",
-            "Unstaged",
+            text(cx, names.title.0, names.title.1),
             cx,
         );
         self.status_section_frame(v, names, title, actions, body, cx)
@@ -424,7 +461,7 @@ impl DetailsPaneView {
         let unstage_selected = Self::unstage_selected_button(v, cx);
         let actions = self.status_section_actions(v, names, [unstage_selected], unstage_all, cx);
         let body = self.status_section_body(v, names, cx);
-        let title = status_section_title(v.theme, "Staged");
+        let title = status_section_title(v.theme, text(cx, names.title.0, names.title.1));
         self.status_section_frame(v, names, title, actions, body, cx)
     }
 
@@ -479,6 +516,7 @@ impl DetailsPaneView {
         theme: AppTheme,
         ui_scale: crate::ui_scale::UiScale,
         names: StatusSectionNames,
+        cx: &App,
     ) -> Div {
         div().w_full().px_2().py_2().child(
             div()
@@ -504,12 +542,12 @@ impl DetailsPaneView {
                             theme.colors.foreground.secondary,
                             ui_scale.px(14.0),
                         ))
-                        .child(names.empty_title),
+                        .child(text(cx, names.empty_title.0, names.empty_title.1)),
                 )
                 .child(
                     div()
                         .text_color(theme.colors.foreground.secondary)
-                        .child(names.empty_hint),
+                        .child(text(cx, names.empty_hint.0, names.empty_hint.1)),
                 ),
         )
     }
@@ -523,9 +561,10 @@ impl DetailsPaneView {
     ) -> AnyElement {
         let state = v.state(names.section);
         if state.loading {
-            components::empty_state_message(v.theme, "Loading…").into_any_element()
+            components::empty_state_message(v.theme, text(cx, "Loading…", "載入中…"))
+                .into_any_element()
         } else if state.count == 0 {
-            Self::status_empty_card(v.theme, v.ui_scale, names).into_any_element()
+            Self::status_empty_card(v.theme, v.ui_scale, names, cx).into_any_element()
         } else {
             self.status_list(cx, names.section, state.count)
         }
@@ -541,6 +580,9 @@ impl DetailsPaneView {
         body: AnyElement,
         cx: &mut gpui::Context<Self>,
     ) -> Div {
+        let close_button = names
+            .is_top_section()
+            .then(|| Self::status_close_button(v, cx));
         self.status_section_container(names.section, cx)
             .flex()
             .flex_col()
@@ -550,8 +592,8 @@ impl DetailsPaneView {
                 v,
                 names.header_id,
                 title,
-                v.state(names.section).count > 0,
-                actions,
+                (v.state(names.section).count > 0).then_some(actions),
+                close_button,
             ))
             .child(
                 div()
@@ -562,6 +604,26 @@ impl DetailsPaneView {
                     .overflow_hidden()
                     .child(body),
             )
+    }
+
+    fn status_close_button(v: &StatusViewInputs, cx: &mut gpui::Context<Self>) -> Stateful<Div> {
+        components::Button::new("status_details_close", "")
+            .start_slot(svg_icon(
+                "icons/generic_close.svg",
+                v.theme.colors.foreground.secondary,
+                v.ui_scale.px(STATUS_CLOSE_ICON_PX),
+            ))
+            .style(components::ButtonStyle::Transparent)
+            .on_click(v.theme, cx, |this, _event, _window, cx| {
+                let _ = this.root_view.update(cx, |root, cx| {
+                    root.set_details_collapsed(true, cx);
+                });
+            })
+            .gitcomet_tooltip(
+                v.theme,
+                text(cx, "Hide details panel", "隱藏右側面板").into(),
+            )
+            .flex_none()
     }
 
     /// The "Unstaged" / "Untracked" title chip that opens the change-tracking
@@ -632,7 +694,11 @@ impl DetailsPaneView {
         let theme = v.theme;
         components::Button::new(
             "stage_all",
-            status_action_all_label(v.unstaged.labels, "Stage all changes"),
+            status_action_all_label(
+                v.unstaged.labels,
+                text(cx, "Stage all changes", "全部暫存"),
+                text(cx, "All", "全部"),
+            ),
         )
         .style(components::ButtonStyle::Subtle)
         .disabled(v.local_actions_in_flight)
@@ -644,7 +710,7 @@ impl DetailsPaneView {
             this.stage_all_with_conflict_confirmation(repo_id, Vec::new(), _w, cx);
         })
         .debug_selector(|| "stage_all_button".to_string())
-        .gitcomet_tooltip(theme, "Stage all changes".into())
+        .gitcomet_tooltip(theme, text(cx, "Stage all changes", "暫存所有變更").into())
     }
 
     /// Stages the section's selection; shared by the three unstaged sections.
@@ -660,7 +726,7 @@ impl DetailsPaneView {
         let selected = state.selected;
         let button = components::Button::new(
             id,
-            status_action_count_label(state.labels, "Stage", selected),
+            status_action_count_label(state.labels, text(cx, "Stage", "暫存"), selected),
         )
         .style(components::ButtonStyle::Subtle)
         .disabled(v.local_actions_in_flight)
@@ -703,10 +769,13 @@ impl DetailsPaneView {
         };
         button.gitcomet_tooltip(
             theme,
-            format!(
-                "Stage {selected} selected {}",
-                status_action_file_count(selected)
-            )
+            match Language::current(cx) {
+                Language::English => format!(
+                    "Stage {selected} selected {}",
+                    status_action_file_count(selected)
+                ),
+                Language::TraditionalChinese => format!("暫存選取的 {selected} 個檔案"),
+            }
             .into(),
         )
     }
@@ -724,7 +793,7 @@ impl DetailsPaneView {
         let selected = state.selected;
         components::Button::new(
             id,
-            status_action_count_label(state.labels, "Discard", selected),
+            status_action_count_label(state.labels, text(cx, "Discard", "捨棄"), selected),
         )
         .style(components::ButtonStyle::Subtle)
         .disabled(v.local_actions_in_flight)
@@ -750,10 +819,13 @@ impl DetailsPaneView {
         })
         .gitcomet_tooltip(
             theme,
-            format!(
-                "Discard changes in {selected} selected {}",
-                status_action_file_count(selected)
-            )
+            match Language::current(cx) {
+                Language::English => format!(
+                    "Discard changes in {selected} selected {}",
+                    status_action_file_count(selected)
+                ),
+                Language::TraditionalChinese => format!("捨棄選取的 {selected} 個檔案中的變更"),
+            }
             .into(),
         )
     }
@@ -765,7 +837,11 @@ impl DetailsPaneView {
         let theme = v.theme;
         components::Button::new(
             "stage_all_untracked",
-            status_action_all_label(v.untracked.labels, "Stage all"),
+            status_action_all_label(
+                v.untracked.labels,
+                text(cx, "Stage all", "全部暫存"),
+                text(cx, "All", "全部"),
+            ),
         )
         .style(components::ButtonStyle::Subtle)
         .disabled(v.local_actions_in_flight || v.untracked.count == 0)
@@ -789,7 +865,10 @@ impl DetailsPaneView {
             cx.notify();
         })
         .debug_selector(|| "stage_all_untracked_button".to_string())
-        .gitcomet_tooltip(theme, "Stage all untracked files".into())
+        .gitcomet_tooltip(
+            theme,
+            text(cx, "Stage all untracked files", "暫存所有未追蹤的檔案").into(),
+        )
     }
 
     fn stage_all_split_unstaged_button(
@@ -799,7 +878,11 @@ impl DetailsPaneView {
         let theme = v.theme;
         components::Button::new(
             "stage_all_split_unstaged",
-            status_action_all_label(v.split_unstaged.labels, "Stage all"),
+            status_action_all_label(
+                v.split_unstaged.labels,
+                text(cx, "Stage all", "全部暫存"),
+                text(cx, "All", "全部"),
+            ),
         )
         .style(components::ButtonStyle::Subtle)
         .disabled(v.local_actions_in_flight || v.split_unstaged.count == 0)
@@ -823,14 +906,21 @@ impl DetailsPaneView {
             );
         })
         .debug_selector(|| "stage_all_split_unstaged_button".to_string())
-        .gitcomet_tooltip(theme, "Stage all unstaged changes".into())
+        .gitcomet_tooltip(
+            theme,
+            text(cx, "Stage all unstaged changes", "暫存所有未暫存的變更").into(),
+        )
     }
 
     fn unstage_all_button(v: &StatusViewInputs, cx: &mut gpui::Context<Self>) -> Stateful<Div> {
         let theme = v.theme;
         components::Button::new(
             "unstage_all",
-            status_action_all_label(v.staged.labels, "Unstage all changes"),
+            status_action_all_label(
+                v.staged.labels,
+                text(cx, "Unstage all changes", "全部取消暫存"),
+                text(cx, "All", "全部"),
+            ),
         )
         .style(components::ButtonStyle::Subtle)
         .disabled(v.local_actions_in_flight)
@@ -848,7 +938,10 @@ impl DetailsPaneView {
             cx.notify();
         })
         .debug_selector(|| "unstage_all_button".to_string())
-        .gitcomet_tooltip(theme, "Unstage all changes".into())
+        .gitcomet_tooltip(
+            theme,
+            text(cx, "Unstage all changes", "取消暫存所有變更").into(),
+        )
     }
 
     fn unstage_selected_button(
@@ -859,7 +952,11 @@ impl DetailsPaneView {
         let selected_staged = v.staged.selected;
         components::Button::new(
             "unstage_selected",
-            status_action_count_label(v.staged.labels, "Unstage", selected_staged),
+            status_action_count_label(
+                v.staged.labels,
+                text(cx, "Unstage", "取消暫存"),
+                selected_staged,
+            ),
         )
         .style(components::ButtonStyle::Subtle)
         .disabled(v.local_actions_in_flight)
@@ -884,10 +981,13 @@ impl DetailsPaneView {
         .debug_selector(|| "unstage_selected_button".to_string())
         .gitcomet_tooltip(
             theme,
-            format!(
-                "Unstage {selected_staged} selected {}",
-                status_action_file_count(selected_staged)
-            )
+            match Language::current(cx) {
+                Language::English => format!(
+                    "Unstage {selected_staged} selected {}",
+                    status_action_file_count(selected_staged)
+                ),
+                Language::TraditionalChinese => format!("取消暫存選取的 {selected_staged} 個檔案"),
+            }
             .into(),
         )
     }
@@ -1136,14 +1236,13 @@ impl DetailsPaneView {
     }
 }
 
-/// A section header: the title takes the slack and clips, the actions keep
-/// their width.
+/// A section header: the title takes the slack, and the close button keeps its width.
 fn status_section_header(
     v: &StatusViewInputs,
     id: &'static str,
     title: AnyElement,
-    show_action: bool,
-    action: AnyElement,
+    actions: Option<AnyElement>,
+    close_button: Option<Stateful<Div>>,
 ) -> AnyElement {
     div()
         .id(id)
@@ -1157,9 +1256,8 @@ fn status_section_header(
         ))
         .px_2()
         .overflow_hidden()
-        // The labels shrink before this matters, but a UI zoom or a font
-        // wider than the budget assumes can still overrun the header —
-        // and then the title, not the actions, is what gives way.
+        // The title gives up space first. At extreme widths, clip the actions
+        // ahead of the close button so the panel can still be dismissed.
         .child(
             div()
                 .flex()
@@ -1168,7 +1266,15 @@ fn status_section_header(
                 .overflow_hidden()
                 .child(title),
         )
-        .when(show_action, |d| d.child(div().flex_none().child(action)))
+        .children(actions.map(|actions| {
+            div()
+                .flex_none()
+                .when(close_button.is_some(), |d| {
+                    d.flex_shrink(1.0).min_w(px(0.0)).overflow_hidden()
+                })
+                .child(actions)
+        }))
+        .children(close_button)
         .into_any_element()
 }
 

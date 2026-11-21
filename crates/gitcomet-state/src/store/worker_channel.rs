@@ -78,6 +78,8 @@ pub(super) struct StoreWorkerSender {
     pub(super) auto_fetch: Arc<super::auto_fetch::AutoFetchCoordinator>,
     pub(super) auto_fetch_allowed: Arc<AtomicBool>,
     pub(super) filesystem: &'static std::sync::Mutex<gitcomet_core::filesystem::Filesystem>,
+    pub(super) agent_dispatcher: Arc<dyn gitcomet_core::worktree_finish::AgentDispatcher>,
+    pub(super) running_terminal_paths: Arc<std::sync::RwLock<Vec<std::path::PathBuf>>>,
     alive: Arc<AtomicBool>,
     store_id: StoreInstanceId,
     repo_load_guard: Option<RepoLoadGuard>,
@@ -190,6 +192,7 @@ impl StoreWorkerSender {
             StoreWorkerSenderInner::MsgForTest(_) => None,
         }
     }
+    #[cfg(test)]
     pub(super) fn new(
         tx: mpsc::Sender<StoreWorkerCommand>,
         alive: Arc<AtomicBool>,
@@ -197,6 +200,26 @@ impl StoreWorkerSender {
         preferences: Arc<super::repository_preferences::PreferenceHub>,
         auto_fetch: Arc<super::auto_fetch::AutoFetchCoordinator>,
         filesystem: &'static std::sync::Mutex<gitcomet_core::filesystem::Filesystem>,
+    ) -> Self {
+        Self::with_agent_dispatcher(
+            tx,
+            alive,
+            store_id,
+            preferences,
+            auto_fetch,
+            filesystem,
+            Arc::new(super::orca_dispatcher::OrcaCliDispatcher::new()),
+        )
+    }
+
+    pub(super) fn with_agent_dispatcher(
+        tx: mpsc::Sender<StoreWorkerCommand>,
+        alive: Arc<AtomicBool>,
+        store_id: StoreInstanceId,
+        preferences: Arc<super::repository_preferences::PreferenceHub>,
+        auto_fetch: Arc<super::auto_fetch::AutoFetchCoordinator>,
+        filesystem: &'static std::sync::Mutex<gitcomet_core::filesystem::Filesystem>,
+        agent_dispatcher: Arc<dyn gitcomet_core::worktree_finish::AgentDispatcher>,
     ) -> Self {
         super::repository_registry::subscribe(store_id.get(), Arc::downgrade(&alive), tx.clone());
         let subscriber_tx = tx.clone();
@@ -219,6 +242,8 @@ impl StoreWorkerSender {
             auto_fetch,
             auto_fetch_allowed: Arc::new(AtomicBool::new(true)),
             filesystem,
+            agent_dispatcher,
+            running_terminal_paths: Arc::new(std::sync::RwLock::new(Vec::new())),
             inner: StoreWorkerSenderInner::Command(tx),
             alive,
             store_id,
@@ -237,6 +262,8 @@ impl StoreWorkerSender {
             auto_fetch: super::auto_fetch::AutoFetchCoordinator::new(),
             auto_fetch_allowed: Arc::new(AtomicBool::new(true)),
             filesystem: super::isolated_filesystem(),
+            agent_dispatcher: Arc::new(super::orca_dispatcher::OrcaCliDispatcher::new()),
+            running_terminal_paths: Arc::new(std::sync::RwLock::new(Vec::new())),
             alive: Arc::new(AtomicBool::new(true)),
             store_id: StoreInstanceId(0),
             repo_load_guard: None,

@@ -1,6 +1,12 @@
 use super::*;
+use crate::localization::Language;
 
-pub(super) fn model(this: &PopoverHost, repo_id: RepoId, name: &str) -> ContextMenuModel {
+pub(super) fn model(
+    this: &PopoverHost,
+    repo_id: RepoId,
+    name: &str,
+    language: Language,
+) -> ContextMenuModel {
     let repo = this.state.repos.iter().find(|repo| repo.id == repo_id);
     let shown_in_history = !repo.is_some_and(|repo| repo.history_hidden_remotes().contains(name));
     let remote_url = repo
@@ -9,12 +15,22 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, name: &str) -> ContextM
         .and_then(|remote| remote.url.as_deref());
     let web_url = remote_url.and_then(crate::view::permalink::remote_web_url);
 
-    let mut items = vec![ContextMenuItem::Header("Remote".into())];
+    let mut items = vec![ContextMenuItem::Header(
+        language.text("Remote", "遠端").into(),
+    )];
     items.push(ContextMenuItem::Label(name.to_owned().into()));
     items.push(ContextMenuItem::Separator);
     for (label, icon, collapsed) in [
-        ("Expand all", "icons/arrow_down_to_line.svg", false),
-        ("Collapse all", "icons/arrow_up_to_line.svg", true),
+        (
+            language.text("Expand all", "全部展開"),
+            "icons/arrow_down_to_line.svg",
+            false,
+        ),
+        (
+            language.text("Collapse all", "全部收合"),
+            "icons/arrow_up_to_line.svg",
+            true,
+        ),
     ] {
         items.push(ContextMenuItem::Entry {
             label: label.into(),
@@ -31,9 +47,15 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, name: &str) -> ContextM
     }
     items.push(ContextMenuItem::Separator);
     let (history_label, history_icon) = if shown_in_history {
-        ("Hide from history graph", "icons/eye_off.svg")
+        (
+            language.text("Hide from history graph", "在提交圖中隱藏"),
+            "icons/eye_off.svg",
+        )
     } else {
-        ("Show in history graph", "icons/eye.svg")
+        (
+            language.text("Show in history graph", "在提交圖中顯示"),
+            "icons/eye.svg",
+        )
     };
     items.push(ContextMenuItem::Entry {
         label: history_label.into(),
@@ -48,7 +70,7 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, name: &str) -> ContextM
     });
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
-        label: "Fetch".into(),
+        label: language.text("Fetch", "擷取").into(),
         icon: Some("icons/arrow_down.svg".into()),
         shortcut: Some("F".into()),
         disabled: false,
@@ -58,14 +80,16 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, name: &str) -> ContextM
         }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Prune merged branches".into(),
+        label: language
+            .text("Prune merged branches", "清理已合併的分支")
+            .into(),
         icon: Some("icons/broom.svg".into()),
         shortcut: None,
-        disabled: false,
+        disabled: this.state.has_active_worktree_finish_run(repo_id),
         action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Prune local tags".into(),
+        label: language.text("Prune local tags", "清理本機標籤").into(),
         icon: Some("icons/tag.svg".into()),
         shortcut: None,
         disabled: false,
@@ -78,17 +102,27 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, name: &str) -> ContextM
         this,
         repo_id,
         gitcomet_core::domain::HistoryFocus::remote(name),
+        language,
     ));
     items.push(ContextMenuItem::Separator);
 
     let open_in_browser_ix = items.len();
     let open_in_browser_tooltip = match (&web_url, remote_url) {
         (Some(url), _) => url.clone(),
-        (None, Some(_)) => "This remote's URL doesn't point to a web page".to_owned(),
-        (None, None) => "This remote has no URL".to_owned(),
+        (None, Some(_)) => language
+            .text(
+                "This remote's URL doesn't point to a web page",
+                "這個遠端的網址未指向網頁",
+            )
+            .to_owned(),
+        (None, None) => language
+            .text("This remote has no URL", "這個遠端沒有網址")
+            .to_owned(),
     };
     items.push(ContextMenuItem::Entry {
-        label: "Open in web browser".into(),
+        label: language
+            .text("Open in web browser", "在瀏覽器中開啟")
+            .into(),
         icon: Some("icons/link.svg".into()),
         shortcut: None,
         disabled: web_url.is_none(),
@@ -98,8 +132,14 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, name: &str) -> ContextM
     });
 
     for (label, kind) in [
-        ("Edit fetch URL…", RemoteUrlKind::Fetch),
-        ("Edit push URL…", RemoteUrlKind::Push),
+        (
+            language.text("Edit fetch URL…", "編輯擷取網址…"),
+            RemoteUrlKind::Fetch,
+        ),
+        (
+            language.text("Edit push URL…", "編輯推送網址…"),
+            RemoteUrlKind::Push,
+        ),
     ] {
         items.push(ContextMenuItem::Entry {
             label: label.into(),
@@ -120,7 +160,7 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId, name: &str) -> ContextM
 
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
-        label: "Remove remote…".into(),
+        label: language.text("Remove remote…", "移除遠端…").into(),
         icon: Some("icons/trash.svg".into()),
         shortcut: None,
         disabled: false,

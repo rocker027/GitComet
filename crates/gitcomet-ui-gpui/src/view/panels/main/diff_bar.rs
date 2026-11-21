@@ -88,7 +88,7 @@ impl DiffRenderer {
         })
     }
 
-    /// What the bar's Stage button would do, the same as Space: `None` unless
+    /// What the bar's Stage button would do: `None` unless
     /// the window's own pane shows a working-tree file's diff outside the
     /// conflict resolver and staging is allowed.
     pub(in crate::view) fn stage_action(
@@ -142,7 +142,7 @@ impl DiffRenderer {
         components::ActionButton::new("stage", action.label(), move |(), cx| {
             let _ = handle.update(cx, |_, window, cx| {
                 let _ = pane.update(cx, |pane, cx| {
-                    pane.toggle_stage_shown_file(window, cx);
+                    pane.stage_shown_file_preserving_diff(window, cx);
                     window.focus(&pane.diff_panel_focus_handle, cx);
                     cx.notify();
                 });
@@ -150,7 +150,6 @@ impl DiffRenderer {
         })
         .with_icon(icon)
         .enabled(!is_bare)
-        .with_shortcut("space")
         .with_tooltip(if is_bare {
             gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE.into()
         } else {
@@ -269,6 +268,7 @@ impl DiffRenderer {
         .flatten();
         // Owner items first, so the built-in primary action stays rightmost.
         let mut actions = self.hosted_bar_items(theme, scale);
+        actions.extend(self.working_tree_changes_button(theme, scale, window, cx));
         if let Some(action) = repo_id.and_then(|repo_id| self.stage_action(repo_id, cx)) {
             actions.push(self.stage_button(action, theme, scale, window, cx));
         }

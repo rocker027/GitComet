@@ -441,7 +441,7 @@ impl PopoverHost {
         let stash_message_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Stash message".into(),
+                    placeholder: "Stash message (optional)".into(),
                     ..Default::default()
                 },
                 window,
@@ -815,10 +815,46 @@ impl PopoverHost {
         let clone_repo_focus = DialogFocus::new(cx);
         let create_tag_focus = DialogFocus::new(cx);
         let create_tag_annotated_focus_handle = cx.focus_handle().tab_index(0).tab_stop(true);
+        let stash_include_untracked_focus_handle = cx.focus_handle().tab_index(0).tab_stop(true);
         let filesystem_conflict_apply_to_all_focus_handle =
             cx.focus_handle().tab_index(0).tab_stop(true);
         let worktree_remove_delete_branch_focus_handle =
             cx.focus_handle().tab_index(0).tab_stop(true);
+        let worktree_finish_squash_input = cx.new(|cx| {
+            components::TextInput::new(
+                components::TextInputOptions {
+                    placeholder: "Squash commit message".into(),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+        let worktree_finish_target_filter_input = cx.new(|cx| {
+            components::TextInput::new(
+                components::TextInputOptions {
+                    placeholder: "Filter target branches…".into(),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+        // F6: re-render FinishSetup live whenever the user types in the target branch filter.
+        prompt_input_subscriptions.push(cx.observe(
+            &worktree_finish_target_filter_input,
+            |this, _input, cx| {
+                if matches!(
+                    this.popover,
+                    Some(PopoverKind::Repo {
+                        kind: RepoPopoverKind::Worktree(WorktreePopoverKind::FinishSetup { .. }),
+                        ..
+                    })
+                ) {
+                    cx.notify();
+                }
+            },
+        ));
         let worktree_add_create_branch_focus_handle = cx.focus_handle().tab_index(0).tab_stop(true);
         let remote_add_focus = DialogFocus::new(cx);
         let remote_edit_focus = DialogFocus::new(cx);
@@ -913,6 +949,8 @@ impl PopoverHost {
             pin_menu_scroll: UniformListScrollHandle::default(),
             context_menu_row_extents: Default::default(),
             expanded_history_ref: None,
+            first_history_ref_click: None,
+            history_ref_expansion_task: None,
             repo_picker_selected_index: None,
             repo_picker_search_query: String::new(),
             cached_recent_repos: Vec::new(),
@@ -986,16 +1024,22 @@ impl PopoverHost {
             create_branch_checkout_enabled: true,
             create_branch_source_target: String::new(),
             worktree_ref_source_target: String::new(),
+            worktree_ref_source_upstream: None,
             suppress_worktree_submit_after_ref_enter: false,
             suppress_popover_close_after_action: false,
             create_branch_from_ref_checkout_focus_handle,
             create_branch_from_ref_focus,
             create_tag_annotated: false,
             create_tag_annotated_focus_handle,
+            stash_include_untracked: true,
+            stash_include_untracked_focus_handle,
             filesystem_conflict_apply_to_all: false,
             filesystem_conflict_apply_to_all_focus_handle,
             worktree_remove_delete_branch: false,
             worktree_remove_delete_branch_focus_handle,
+            worktree_finish_setup: None,
+            worktree_finish_squash_input,
+            worktree_finish_target_filter_input,
             checkout_remote_branch_focus,
             stash_message_input,
             stash_focus,
@@ -1275,6 +1319,11 @@ impl PopoverHost {
         &self.worktree_ref_source_target
     }
 
+    #[cfg(test)]
+    pub(in crate::view) fn worktree_ref_source_upstream_for_tests(&self) -> Option<&Upstream> {
+        self.worktree_ref_source_upstream.as_ref()
+    }
+
     /// Whether the unsaved-edits confirmation is the popover on screen.
     ///
     /// Asked by the close/quit path instead of a mirrored bool: that dialog
@@ -1355,6 +1404,8 @@ impl PopoverHost {
     }
 
     fn close_popover_with_resolution(&mut self, resolved: bool, cx: &mut gpui::Context<Self>) {
+        self.worktree_ref_source_upstream = None;
+        self.pending_worktree_add_prefill = None;
         if !resolved {
             self.dismiss_open_force_prompt();
         }
@@ -1415,6 +1466,8 @@ impl PopoverHost {
         self.pin_menu_entries = None;
         self.context_menu_selected_ix = None;
         self.expanded_history_ref = None;
+        self.first_history_ref_click = None;
+        self.history_ref_expansion_task = None;
         self.picker_row_menu = None;
         self.menu_invoker_focus = None;
         self.focus_return = None;
@@ -1450,6 +1503,25 @@ impl PopoverHost {
             })
         {
             self.close_popover(cx);
+        }
+    }
+
+    pub(in crate::view) fn dismiss_history_refs_picker(
+        &mut self,
+        invoker: &SharedString,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.active_invoker.as_ref() == Some(invoker)
+            && matches!(
+                self.popover,
+                Some(PopoverKind::CommitMenu {
+                    refs: CommitMenuRefs::Chooser,
+                    ..
+                })
+            )
+        {
+            self.close_popover_and_restore_focus(window, cx);
         }
     }
 
@@ -1727,6 +1799,7 @@ impl PopoverHost {
             PopoverKind::CommitOptionsMenu { repo_id } => Some(*repo_id),
             PopoverKind::BranchPicker { .. } => self.state.active_repo,
             PopoverKind::UpstreamPicker { repo_id, .. } => Some(*repo_id),
+            PopoverKind::StashPickerPrompt { repo_id, .. } => Some(*repo_id),
             _ => None,
         };
         let Some(repo_id) = repo_id else {
@@ -1735,6 +1808,14 @@ impl PopoverHost {
         let Some(repo) = self.state.repos.iter().find(|repo| repo.id == repo_id) else {
             return;
         };
+
+        if matches!(kind, PopoverKind::StashPickerPrompt { .. }) {
+            // Git shares this list across worktrees, so a Ready list can be stale.
+            if !repo.stashes.is_loading() {
+                self.store.dispatch(Msg::LoadStashes { repo_id });
+            }
+            return;
+        }
 
         if matches!(
             kind,
@@ -1794,6 +1875,7 @@ impl PopoverHost {
                 .find(|repo| repo.id == repo_id)
                 .is_some_and(RepoState::is_bare)
         {
+            self.pending_worktree_add_prefill = None;
             self.explain_working_tree_required(cx);
             return;
         }
@@ -1896,7 +1978,11 @@ impl PopoverHost {
         let opened_from_row = !matches!(
             &kind,
             PopoverKind::Repo {
-                kind: RepoPopoverKind::Remote(RemotePopoverKind::OpenInBrowserMenu),
+                kind: RepoPopoverKind::Remote(
+                    RemotePopoverKind::OpenInBrowserMenu
+                        | RemotePopoverKind::EditUrlMenu
+                        | RemotePopoverKind::RemoveMenu
+                ),
                 ..
             }
         );
@@ -1931,6 +2017,16 @@ impl PopoverHost {
         }
         self.publish_active_context_menu_invoker(cx);
 
+        self.worktree_ref_source_upstream = None;
+        if !matches!(
+            &kind,
+            PopoverKind::Repo {
+                kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
+                ..
+            }
+        ) {
+            self.pending_worktree_add_prefill = None;
+        }
         self.popover_anchor = Some(anchor);
         self.cancel_tag_push_previews();
         self.push_upstream_tag_mode = None;
@@ -1940,6 +2036,8 @@ impl PopoverHost {
         self.context_menu_arrows.reset();
         self.pin_menu_entries = None;
         self.context_menu_selected_ix = None;
+        self.first_history_ref_click = None;
+        self.history_ref_expansion_task = None;
         // A ref picked from the row's ref list opens with its actions showing.
         self.expanded_history_ref = match &kind {
             PopoverKind::CommitMenu {
@@ -2039,8 +2137,12 @@ impl PopoverHost {
                 }
                 PopoverKind::UpstreamPicker { repo_id, branch } => {
                     let _ = self.ensure_upstream_picker_search_input(window, cx);
-                    self.upstream_picker_selected_index =
-                        upstream_picker::initial_selected_index(self, *repo_id, branch);
+                    self.upstream_picker_selected_index = upstream_picker::initial_selected_index(
+                        self,
+                        *repo_id,
+                        branch,
+                        crate::localization::Language::current(cx),
+                    );
                 }
                 PopoverKind::CreateBranchFromRefPrompt {
                     repo_id,
@@ -2098,6 +2200,7 @@ impl PopoverHost {
                     window.focus(&focus, cx);
                 }
                 PopoverKind::StashPrompt => {
+                    self.stash_include_untracked = true;
                     self.stash_message_input.update(cx, |input, cx| {
                         input.clear_transient_key_presses();
                         input.set_text("", cx);
@@ -2258,16 +2361,22 @@ impl PopoverHost {
                     let folder = repo
                         .map(|repo| repo.spec.workdir.display().to_string())
                         .unwrap_or_default();
-                    let prefill = self.pending_worktree_add_prefill.take().unwrap_or_else(|| {
-                        WorktreeAddPrefill {
-                            source: repo
+                    let prefill = self
+                        .pending_worktree_add_prefill
+                        .take()
+                        .and_then(|(owner, prefill)| (owner == *repo_id).then_some(prefill))
+                        .unwrap_or_else(|| {
+                            let (source, source_upstream) = repo
                                 .map(worktree_add_prompt::default_worktree_source)
-                                .unwrap_or_default(),
-                            create_branch: true,
-                            new_branch: String::new(),
-                            open_after: false,
-                        }
-                    });
+                                .unwrap_or_default();
+                            WorktreeAddPrefill {
+                                source,
+                                source_upstream,
+                                create_branch: true,
+                                new_branch: String::new(),
+                                open_after: false,
+                            }
+                        });
                     self.worktree_path_input.update(cx, |input, cx| {
                         input.set_text(folder, cx);
                         cx.notify();
@@ -2279,6 +2388,7 @@ impl PopoverHost {
                     self.worktree_add_create_branch = prefill.create_branch;
                     self.worktree_add_open_after = prefill.open_after;
                     self.worktree_ref_source_target = prefill.source.clone();
+                    self.worktree_ref_source_upstream = prefill.source_upstream;
                     self.suppress_worktree_submit_after_ref_enter = false;
                     let ref_input = self.ensure_branch_picker_search_input(window, cx);
                     // `ensure_*` blanks the input, so the prefilled ref has to be
@@ -2397,17 +2507,13 @@ impl PopoverHost {
                         },
                     ));
                 }
-                PopoverKind::PushSetUpstreamPrompt {
-                    repo_id,
-                    configure_only_for,
-                    ..
-                } => {
+                PopoverKind::PushSetUpstreamPrompt { repo_id, mode, .. } => {
                     self.push_upstream_remote_menu_open = false;
                     self.push_upstream_remote_selected_index = None;
                     let current_text = self
                         .push_upstream_branch_input
                         .read_with(cx, |i, _| i.text().to_string());
-                    let text = configure_only_for.clone().unwrap_or_else(|| {
+                    let text = mode.local_branch().map(str::to_owned).unwrap_or_else(|| {
                         self.state
                             .repos
                             .iter()
@@ -2468,6 +2574,33 @@ impl PopoverHost {
                     ..
                 } => {
                     self.worktree_remove_delete_branch = false;
+                    window.focus(&self.prompt_tab_group_focus_handle, cx);
+                }
+                PopoverKind::Repo {
+                    repo_id,
+                    kind:
+                        RepoPopoverKind::Worktree(WorktreePopoverKind::FinishSetup {
+                            preselected,
+                            target,
+                            mode,
+                        }),
+                } => {
+                    let (repo_id, preselected, target, mode) =
+                        (*repo_id, preselected.clone(), target.clone(), *mode);
+                    worktree_finish_setup::prepare_setup_draft(
+                        self,
+                        repo_id,
+                        &preselected,
+                        target,
+                        mode,
+                        cx,
+                    );
+                    window.focus(&self.prompt_tab_group_focus_handle, cx);
+                }
+                PopoverKind::Repo {
+                    kind: RepoPopoverKind::Worktree(WorktreePopoverKind::FinishQueue { .. }),
+                    ..
+                } => {
                     window.focus(&self.prompt_tab_group_focus_handle, cx);
                 }
                 // Must sit above the generic confirm-dialog arm below, which

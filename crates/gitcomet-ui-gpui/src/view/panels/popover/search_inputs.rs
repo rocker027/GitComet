@@ -1,5 +1,6 @@
 use super::picker_nav::{PickerNavKeys, PickerNavOutcome, PickerNavRows, handle_picker_nav};
 use super::*;
+use crate::localization::Language;
 
 impl PopoverHost {
     fn ensure_search_input_entity(
@@ -191,12 +192,18 @@ impl PopoverHost {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Entity<components::TextInput> {
+        let placeholder = repo_picker::search_placeholder(self, Language::current(cx));
         let input = Self::ensure_search_input_entity(
             &mut self.repo_picker_search_input,
-            "Filter repositories",
+            placeholder,
             window,
             cx,
         );
+        input.update(cx, |input, cx| {
+            if input.placeholder() != placeholder {
+                input.set_placeholder(placeholder, cx);
+            }
+        });
         if self._repo_picker_search_input_subscription.is_none() {
             self._repo_picker_search_input_subscription = Some(Self::picker_search_subscription(
                 &input,
@@ -257,7 +264,8 @@ impl PopoverHost {
                     // element to scroll to by child slot: its geometry says
                     // where it would be. Headers are part of that geometry, so
                     // scrolling to a section's first row shows its header too.
-                    let rows = repo_picker::cached(this, &query);
+                    let rows =
+                        repo_picker::cached_for_language(this, &query, Language::current(cx));
                     this.scroll_picker_prompt_to_row(
                         &rows.geometry(super::popover_ui_scale(cx)),
                         sel,
@@ -281,13 +289,17 @@ impl PopoverHost {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Entity<components::TextInput> {
+        let placeholder = Language::current(cx).text("Filter branches", "篩選分支");
         let input = Self::ensure_search_input_entity(
             &mut self.branch_picker_search_input,
-            "Filter branches",
+            placeholder,
             window,
             cx,
         );
         input.update(cx, |input, cx| {
+            if input.placeholder() != placeholder {
+                input.set_placeholder(placeholder, cx);
+            }
             input.set_chromeless(false, cx);
             input.set_leading_icon(None, cx);
         });
@@ -317,7 +329,11 @@ impl PopoverHost {
                     // would make Enter check out a branch other than the
                     // highlighted one.
                     if branch_picker::is_checkout_picker(this) {
-                        return Some(branch_picker::nav_targets(this, query));
+                        return Some(branch_picker::localized_nav_targets(
+                            this,
+                            query,
+                            Language::current(cx),
+                        ));
                     }
 
                     Some(
@@ -349,7 +365,8 @@ impl PopoverHost {
                     // lists are laid out differently, so each scrolls by its own
                     // geometry — and each was built for its own viewport.
                     if branch_picker::is_checkout_picker(this) {
-                        let rows = branch_picker::cached(this, &query);
+                        let rows =
+                            branch_picker::localized_cached(this, &query, Language::current(cx));
                         this.scroll_picker_prompt_to_row(
                             &rows.geometry(super::popover_ui_scale(cx)),
                             sel,
@@ -382,9 +399,13 @@ impl PopoverHost {
                         let target = payload.or_else(|| {
                             (!query.trim().is_empty())
                                 .then(|| {
-                                    branch_picker::nav_targets(this, query.trim())
-                                        .into_iter()
-                                        .next()
+                                    branch_picker::localized_nav_targets(
+                                        this,
+                                        query.trim(),
+                                        Language::current(cx),
+                                    )
+                                    .into_iter()
+                                    .next()
                                 })
                                 .flatten()
                         });
@@ -396,9 +417,9 @@ impl PopoverHost {
                     // The prompts that branch from a ref accept a typed name that
                     // matched nothing, so Enter can create one.
                     if ref_rows_spec(this).offers_source_refs() {
-                        let name = match payload {
-                            Some(branch_picker::BranchPickerNavTarget::Ref(name)) => name,
-                            _ => query,
+                        let (name, picked_row) = match payload {
+                            Some(branch_picker::BranchPickerNavTarget::Ref(name)) => (name, true),
+                            _ => (query, false),
                         };
                         if !name.is_empty() {
                             if matches!(
@@ -409,8 +430,19 @@ impl PopoverHost {
                                 })
                             ) {
                                 this.suppress_worktree_submit_after_ref_enter = true;
+                                // Accepting the unchanged prefill keeps its exact
+                                // remote identity. A picked local or tag row is a
+                                // new choice even when its label is identical.
+                                let upstream = (!picked_row
+                                    && name == this.worktree_ref_source_target)
+                                    .then(|| this.worktree_ref_source_upstream.clone())
+                                    .flatten();
+                                this.handle_inline_worktree_source_select(
+                                    name, upstream, window, cx,
+                                );
+                            } else {
+                                this.handle_inline_branch_picker_select(name, repo_id, window, cx);
                             }
-                            this.handle_inline_branch_picker_select(name, repo_id, window, cx);
                         }
                     } else if let Some(branch_picker::BranchPickerNavTarget::Ref(name)) = payload {
                         this.handle_inline_branch_picker_select(name, repo_id, window, cx);
@@ -441,9 +473,15 @@ impl PopoverHost {
                     cx,
                     |this| upstream_picker_state(this).is_some(),
                     |this| &mut this.upstream_picker_selected_index,
-                    |this, query, _cx| {
+                    |this, query, cx| {
                         let (repo_id, branch) = upstream_picker_state(this)?;
-                        let targets = upstream_picker::nav_targets(this, repo_id, &branch, query);
+                        let targets = upstream_picker::localized_nav_targets(
+                            this,
+                            repo_id,
+                            &branch,
+                            query,
+                            Language::current(cx),
+                        );
                         let leading = upstream_picker::leading_action_count(this, repo_id, &branch);
                         upstream_picker::clear_missing_branch_selection(
                             &mut this.upstream_picker_selected_index,
@@ -462,7 +500,13 @@ impl PopoverHost {
                             .as_ref()
                             .map(|input| input.read(cx).text().trim().to_string())
                             .unwrap_or_default();
-                        let rows = upstream_picker::cached(this, repo_id, &branch, &query);
+                        let rows = upstream_picker::localized_cached(
+                            this,
+                            repo_id,
+                            &branch,
+                            &query,
+                            Language::current(cx),
+                        );
                         // The fixed Create new / unlink action leads the branch
                         // list in the same navigation model and sits outside its
                         // scroll viewport. Translate global navigation indices to
@@ -503,7 +547,7 @@ impl PopoverHost {
     ) -> Entity<components::TextInput> {
         let input = Self::ensure_search_input_entity(
             &mut self.worktree_picker_search_input,
-            "Filter worktrees",
+            worktree_picker::search_placeholder(Language::current(cx)),
             window,
             cx,
         );
@@ -515,10 +559,14 @@ impl PopoverHost {
                     cx,
                     |this| worktree_picker_state(this).is_some(),
                     |this| &mut this.worktree_picker_selected_index,
-                    |this, query, _cx| {
+                    |this, query, cx| {
                         let (repo_id, is_remove) = worktree_picker_state(this)?;
                         Some(worktree_picker::nav_targets(
-                            this, repo_id, is_remove, query,
+                            this,
+                            repo_id,
+                            is_remove,
+                            query,
+                            Language::current(cx),
                         ))
                     },
                     |this, cx| this.close_popover(cx),
@@ -531,7 +579,13 @@ impl PopoverHost {
                             .as_ref()
                             .map(|input| input.read(cx).text().trim().to_string())
                             .unwrap_or_default();
-                        let rows = worktree_picker::cached(this, repo_id, is_remove, &query);
+                        let rows = worktree_picker::cached(
+                            this,
+                            repo_id,
+                            is_remove,
+                            &query,
+                            Language::current(cx),
+                        );
                         this.scroll_picker_prompt_to_row(
                             &rows.geometry(super::popover_ui_scale(cx)),
                             sel,
@@ -561,7 +615,7 @@ impl PopoverHost {
     ) -> Entity<components::TextInput> {
         let input = Self::ensure_search_input_entity(
             &mut self.worktree_badge_picker_search_input,
-            "Select or type to create a worktree",
+            worktree_badge_picker::search_placeholder(Language::current(cx)),
             window,
             cx,
         );
@@ -590,7 +644,12 @@ impl PopoverHost {
                         let repo_id = worktree_badge_picker_state(this)?;
                         // Layout-driven so Enter can never land on a different
                         // row than the highlighted one.
-                        Some(worktree_badge_picker::nav_targets(this, repo_id, query))
+                        Some(worktree_badge_picker::nav_targets(
+                            this,
+                            repo_id,
+                            query,
+                            Language::current(cx),
+                        ))
                     },
                     |this, cx| {
                         // Escape backs out of the menu before it closes the picker.
@@ -613,7 +672,12 @@ impl PopoverHost {
                             .as_ref()
                             .map(|input| input.read(cx).text().trim().to_string())
                             .unwrap_or_default();
-                        let rows = worktree_badge_picker::cached(this, repo_id, &query);
+                        let rows = worktree_badge_picker::cached(
+                            this,
+                            repo_id,
+                            &query,
+                            Language::current(cx),
+                        );
                         this.scroll_picker_prompt_to_row(
                             &rows.geometry(super::popover_ui_scale(cx)),
                             sel,
@@ -639,9 +703,14 @@ impl PopoverHost {
                         let row = payload.or_else(|| {
                             (!query.trim().is_empty())
                                 .then(|| {
-                                    worktree_badge_picker::nav_targets(this, repo_id, query.trim())
-                                        .into_iter()
-                                        .next()
+                                    worktree_badge_picker::nav_targets(
+                                        this,
+                                        repo_id,
+                                        query.trim(),
+                                        Language::current(cx),
+                                    )
+                                    .into_iter()
+                                    .next()
                                 })
                                 .flatten()
                         });
@@ -721,7 +790,7 @@ impl PopoverHost {
     ) -> Entity<components::TextInput> {
         let input = Self::ensure_search_input_entity(
             &mut self.stash_picker_search_input,
-            "Filter stashes",
+            Language::current(cx).text("Filter stashes", "篩選貯藏"),
             window,
             cx,
         );
@@ -732,15 +801,23 @@ impl PopoverHost {
                 cx,
                 |this| matches!(this.popover, Some(PopoverKind::StashPickerPrompt { .. })),
                 |this| &mut this.stash_picker_prompt_selected_index,
-                |this, query, _cx| Some(stash_picker_prompt::nav_targets(this, query)),
+                |this, query, _cx| {
+                    let Some(PopoverKind::StashPickerPrompt { repo_id, .. }) = this.popover else {
+                        return None;
+                    };
+                    Some(stash_picker_prompt::nav_targets(this, repo_id, query))
+                },
                 |this, cx| this.close_popover(cx),
                 |this, sel, cx| {
+                    let Some(PopoverKind::StashPickerPrompt { repo_id, .. }) = this.popover else {
+                        return;
+                    };
                     let query = this
                         .stash_picker_search_input
                         .as_ref()
                         .map(|input| input.read(cx).text().trim().to_string())
                         .unwrap_or_default();
-                    let rows = stash_picker_prompt::cached(this, &query);
+                    let rows = stash_picker_prompt::cached(this, repo_id, &query);
                     this.scroll_picker_prompt_to_row(
                         &rows.geometry(super::popover_ui_scale(cx)),
                         sel,
@@ -905,7 +982,10 @@ fn ref_rows_spec(this: &PopoverHost) -> branch_picker::RefRowsSpec {
             ..
         }) => branch_picker::RefRowsSpec::source_ref(),
         Some(PopoverKind::BranchPicker {
-            purpose: BranchPickerPurpose::Delete | BranchPickerPurpose::RebaseOnto,
+            purpose:
+                BranchPickerPurpose::Delete
+                | BranchPickerPurpose::RebaseOnto
+                | BranchPickerPurpose::Merge,
         }) => branch_picker::RefRowsSpec::branches(true),
         _ => branch_picker::RefRowsSpec::branches(false),
     }

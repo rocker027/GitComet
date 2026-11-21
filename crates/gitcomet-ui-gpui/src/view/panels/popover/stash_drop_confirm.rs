@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::text;
 
 pub(super) fn panel(
     this: &mut PopoverHost,
@@ -15,21 +16,30 @@ pub(super) fn panel(
         format!("{reference} {message}")
     };
 
-    ConfirmDialog::new("Drop stash?", DIALOG_420_WIDTH)
+    ConfirmDialog::new(text(cx, "Drop stash?", "要刪除貯藏嗎？"), DIALOG_420_WIDTH)
         .mono_value(theme, label)
-        .text(theme, "This permanently removes this stash entry.")
+        .text(
+            theme,
+            text(
+                cx,
+                "This permanently removes this stash entry.",
+                "這會永久刪除此貯藏項目。",
+            ),
+        )
         .command(theme, format!("git stash drop {reference}"))
         .render(
             theme,
-            cancel_button("stash_drop_confirm_cancel", "stash_drop_cancel_hint", theme).on_click(
+            cancel_button_labeled(
+                "stash_drop_confirm_cancel",
+                "stash_drop_cancel_hint",
+                text(cx, "Cancel", "取消"),
                 theme,
-                cx,
-                move |this, _e, _w, cx| {
-                    this.store.dispatch(Msg::LoadStashes { repo_id });
-                    this.close_popover(cx);
-                },
-            ),
-            components::Button::new("stash_drop_confirm_go", "Drop")
+            )
+            .on_click(theme, cx, move |this, _e, _w, cx| {
+                this.store.dispatch(Msg::LoadStashes { repo_id });
+                this.close_popover(cx);
+            }),
+            components::Button::new("stash_drop_confirm_go", text(cx, "Drop", "刪除"))
                 .style(components::ButtonStyle::Danger)
                 .on_click(theme, cx, move |this, _e, _w, cx| {
                     this.store.dispatch(Msg::DropStash { repo_id, index });

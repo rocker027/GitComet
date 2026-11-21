@@ -89,6 +89,8 @@ mod submodules;
 mod tags;
 mod text_attributes;
 mod text_decode;
+mod worktree_finish;
+mod worktree_finish_abort;
 mod worktrees;
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
@@ -1530,6 +1532,11 @@ impl GitRepository for GixRepo {
         self.fetch_all_remote_names_impl()
     }
 
+    fn configured_fetch_destinations(&self, remote: &str) -> Result<Vec<String>> {
+        let _operation = self.operation_lease()?;
+        self.configured_fetch_destinations_impl(remote)
+    }
+
     fn tracking_stamp(&self, cancellation: &CancellationToken) -> Result<u64> {
         let _operation = self.operation_lease()?;
         self.tracking_stamp_impl(cancellation)
@@ -1581,6 +1588,16 @@ impl GitRepository for GixRepo {
     fn push_with_output(&self) -> Result<CommandOutput> {
         let _operation = self.operation_lease()?;
         self.push_with_output_impl()
+    }
+
+    fn push_branch_with_output(
+        &self,
+        local_branch: &str,
+        upstream: &Upstream,
+        set_upstream: bool,
+    ) -> Result<CommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.push_branch_with_output_impl(local_branch, upstream, set_upstream)
     }
 
     fn push_force_with_output(&self) -> Result<CommandOutput> {
@@ -1949,6 +1966,118 @@ impl GitRepository for GixRepo {
     fn force_remove_worktree_with_output(&self, path: &Path) -> Result<CommandOutput> {
         let _operation = self.operation_lease()?;
         self.force_remove_worktree_with_output_impl(path)
+    }
+
+    fn integration_preview(
+        &self,
+        target: &CommitId,
+        source: &CommitId,
+        cancellation: &CancellationToken,
+    ) -> Result<gitcomet_core::worktree_finish::IntegrationPreview> {
+        let _operation = self.operation_lease()?;
+        self.integration_preview_impl(target, source, cancellation)
+    }
+
+    fn finish_snapshot(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<gitcomet_core::worktree_finish::FinishSnapshot> {
+        let _operation = self.operation_lease()?;
+        self.finish_snapshot_impl(cancellation)
+    }
+
+    fn merge_commit_at(
+        &self,
+        reference: &CommitId,
+        message: &str,
+    ) -> Result<gitcomet_core::worktree_finish::FinishStepCommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.merge_commit_at_impl(reference, message)
+    }
+
+    fn squash_merge_at(
+        &self,
+        reference: &CommitId,
+    ) -> Result<gitcomet_core::worktree_finish::FinishStepCommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.squash_merge_at_impl(reference)
+    }
+
+    fn rebase_onto_at(
+        &self,
+        target: &CommitId,
+    ) -> Result<gitcomet_core::worktree_finish::FinishStepCommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.rebase_onto_at_impl(target)
+    }
+
+    fn rebase_continue_step(
+        &self,
+    ) -> Result<gitcomet_core::worktree_finish::FinishStepCommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.rebase_continue_step_impl()
+    }
+
+    fn abort_squash_merge(&self) -> Result<CommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.abort_squash_merge_impl()
+    }
+
+    fn abort_squash_merge_paths(&self, owned_paths: &[PathBuf]) -> Result<CommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.abort_squash_merge_paths_impl(owned_paths)
+    }
+
+    fn abort_merge_checked(&self) -> Result<CommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.abort_merge_checked_impl()
+    }
+
+    fn abort_rebase_checked(&self) -> Result<CommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.abort_rebase_checked_impl()
+    }
+
+    fn conclude_merge(&self, message: Option<&str>) -> Result<CommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.require_working_tree()?;
+        self.conclude_merge_impl(message)
+    }
+
+    fn remove_worktree_checked(
+        &self,
+        path: &Path,
+        expected_head: &CommitId,
+    ) -> Result<CommandOutput> {
+        let _operation = self.operation_lease()?;
+        self.remove_worktree_checked_impl(path, expected_head)
+    }
+
+    fn resolve_ref_commit(&self, reference: &str) -> Result<Option<CommitId>> {
+        let _operation = self.operation_lease()?;
+        self.resolve_ref_commit_impl(reference)
+    }
+
+    fn linear_range_after(
+        &self,
+        base: &CommitId,
+        head: &CommitId,
+    ) -> Result<Option<(CommitId, usize)>> {
+        let _operation = self.operation_lease()?;
+        self.linear_range_after_impl(base, head)
+    }
+
+    fn is_commit_ancestor(&self, ancestor: &CommitId, descendant: &CommitId) -> Result<bool> {
+        let _operation = self.operation_lease()?;
+        self.is_commit_ancestor_impl(ancestor, descendant)
     }
 
     fn list_submodules(&self, cancellation: &CancellationToken) -> Result<Vec<Submodule>> {

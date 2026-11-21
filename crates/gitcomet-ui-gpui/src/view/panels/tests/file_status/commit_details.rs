@@ -1993,6 +1993,56 @@ fn commit_reword_availability_reports_published_commits() {
 }
 
 #[gpui::test]
+fn commit_details_copy_button_copies_only_the_title_even_when_editing_is_blocked(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    let repo_id = gitcomet_state::model::RepoId(62);
+    let title = "修正提交詳情 · 保留完整標題";
+    let message = format!("{title}\r\n\r\nA body that stays out of the clipboard.");
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_OLDER_SHA, &message, true),
+    );
+
+    let copy = cx
+        .debug_bounds("commit_details_copy_title")
+        .expect("copy button");
+    let edit = cx
+        .debug_bounds("commit_details_edit_message")
+        .expect("edit button");
+    assert!(edit.bottom() <= copy.top());
+    click_selector(cx, "commit_details_edit_message");
+    assert!(cx.debug_bounds("commit_reword_editor").is_none());
+    click_selector(cx, "commit_details_copy_title");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some(title),
+    );
+
+    let retained_text = "keep existing clipboard text";
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string(retained_text.to_string()));
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_HEAD_SHA, "\nMessage with no title", true),
+    );
+    click_selector(cx, "commit_details_copy_title");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some(retained_text),
+    );
+}
+
+#[gpui::test]
 fn editing_a_commit_message_prefills_it_and_cancel_restores_the_view(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -2440,7 +2490,7 @@ fn commit_card_branch_badges_open_the_sidebar_branch_menu(cx: &mut gpui::TestApp
                 .find(|repo| repo.id == repo_id)
                 .expect("fixture repo");
             repo.branches = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Branch {
-                name: "feature".into(),
+                name: "origin/feature".into(),
                 target: target.clone(),
                 upstream: None,
                 divergence: None,
@@ -2462,11 +2512,11 @@ fn commit_card_branch_badges_open_the_sidebar_branch_menu(cx: &mut gpui::TestApp
 
     for (menu, expected) in [
         (
-            "commit_card_ref_menu_feature",
-            crate::view::branch_sidebar::BranchMenuTarget::local("feature"),
+            "commit_card_ref_menu_local_origin/feature",
+            crate::view::branch_sidebar::BranchMenuTarget::local("origin/feature"),
         ),
         (
-            "commit_card_ref_menu_origin/feature",
+            "commit_card_ref_menu_remote_origin/feature",
             crate::view::branch_sidebar::BranchMenuTarget::remote("origin", "feature"),
         ),
     ] {
@@ -2484,15 +2534,104 @@ fn commit_card_branch_badges_open_the_sidebar_branch_menu(cx: &mut gpui::TestApp
             "{menu}"
         );
         cx.update(|_window, app| {
+            assert_eq!(
+                view.read(app).active_context_menu_invoker.as_deref(),
+                Some(menu)
+            );
             let host = view.read(app).popover_host.clone();
             host.update(app, |host, cx| host.close_popover(cx));
         });
         draw_and_drain_test_window(cx);
     }
     assert!(
-        cx.debug_bounds("commit_card_ref_menu_v1.0").is_none(),
+        cx.debug_bounds("commit_card_ref_menu_tag_v1.0").is_none(),
         "a tag badge has no branch menu"
     );
+}
+
+#[gpui::test]
+fn commit_card_overflow_opens_refs_including_remotes_hidden_from_graph(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::view::branch_sidebar::BranchMenuTarget;
+    use crate::view::{CommitMenuRefs, HistoryMenuRef};
+
+    let (view, cx) = commit_card_chip_fixture(cx);
+    let repo_id = gitcomet_state::model::RepoId(41);
+    let target = gitcomet_core::domain::CommitId(CHIP_COMMIT_SHA.into());
+    show_card_branches(
+        cx,
+        &view,
+        &["origin/feature", "main", "release", "qa"],
+        280.0,
+    );
+    assert!(
+        cx.debug_bounds("commit_card_ref_overflow").is_none(),
+        "four refs fit without an overflow control"
+    );
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            let mut state = (*this.state).clone();
+            let repo = state
+                .repos
+                .iter_mut()
+                .find(|repo| repo.id == repo_id)
+                .unwrap();
+            crate::view::test_support::hide_remotes_in_history(repo, &["origin"]);
+            repo.remote_branches =
+                Loadable::Ready(Arc::new(vec![gitcomet_core::domain::RemoteBranch {
+                    remote: "origin".into(),
+                    name: "feature".into(),
+                    target: target.clone(),
+                }]));
+            repo.tags = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Tag {
+                name: "v1.0".into(),
+                target: target.clone(),
+            }]));
+            push_test_state(this, Arc::new(state), cx);
+        });
+    });
+    draw_and_drain_test_window(cx);
+
+    let overflow = cx.debug_bounds("commit_card_ref_overflow").unwrap();
+    let card = cx.debug_bounds("commit_details_card").unwrap();
+    assert!(overflow.left() >= card.left() && overflow.right() <= card.right());
+    simulate_counted_click(cx, overflow.center(), 1);
+    draw_and_drain_test_window(cx);
+    let expected = PopoverKind::CommitMenu {
+        repo_id,
+        commit_id: target,
+        refs: CommitMenuRefs::DetailsChooser,
+    };
+    cx.update(|_window, app| {
+        let view = view.read(app);
+        assert_eq!(
+            crate::view::test_support::popover_kind(view, app),
+            Some(expected.clone())
+        );
+        let host = view.popover_host.clone();
+        let actions = host.update(app, |host, cx| {
+            host.context_menu_actions_for_test(&expected, cx)
+        });
+        let refs = actions
+            .into_iter()
+            .map(|action| match action {
+                ContextMenuAction::ToggleHistoryRefGroup { target } => target,
+                _ => panic!("the chooser must initially contain only ref groups"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            refs,
+            [
+                HistoryMenuRef::Branch(BranchMenuTarget::local("main")),
+                HistoryMenuRef::Branch(BranchMenuTarget::local("origin/feature")),
+                HistoryMenuRef::Branch(BranchMenuTarget::local("qa")),
+                HistoryMenuRef::Branch(BranchMenuTarget::local("release")),
+                HistoryMenuRef::Branch(BranchMenuTarget::remote("origin", "feature")),
+                HistoryMenuRef::Tag("v1.0".into()),
+            ]
+        );
+    });
 }
 
 /// A branch name wider than the card ends in an ellipsis inside the card,
@@ -2533,9 +2672,10 @@ fn commit_card_long_branch_badges_truncate_inside_the_card(cx: &mut gpui::TestAp
     let card = cx
         .debug_bounds("commit_details_card")
         .expect("expected the commit card");
-    for name in [branch, remote.as_str()] {
+    for (kind, name) in [("local", branch), ("remote", remote.as_str())] {
         let label: &'static str = Box::leak(format!("commit_card_ref_{name}").into_boxed_str());
-        let menu: &'static str = Box::leak(format!("commit_card_ref_menu_{name}").into_boxed_str());
+        let menu: &'static str =
+            Box::leak(format!("commit_card_ref_menu_{kind}_{name}").into_boxed_str());
         let label_bounds = cx.debug_bounds(label).expect(label);
         let menu_bounds = cx.debug_bounds(menu).expect(menu);
         assert!(
@@ -2692,4 +2832,232 @@ fn commit_card_branch_badge_shows_its_whole_name_when_the_line_has_room(
         None,
         "the whole name is on screen, so there is nothing to tooltip"
     );
+}
+
+fn commit_menu_entry(
+    cx: &mut gpui::VisualTestContext,
+    view: &gpui::Entity<crate::view::GitCometView>,
+    repo_id: gitcomet_state::model::RepoId,
+    sha: &str,
+    label: &str,
+) -> (bool, Option<String>) {
+    let commit_id = reword_commit_id(sha);
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                let model = host
+                    .context_menu_model(
+                        &PopoverKind::CommitMenu {
+                            repo_id,
+                            commit_id: commit_id.clone(),
+                            refs: crate::view::CommitMenuRefs::All,
+                        },
+                        cx,
+                    )
+                    .expect("expected the commit menu");
+                let ix = model
+                    .items
+                    .iter()
+                    .position(|item| {
+                        matches!(item, ContextMenuItem::Entry { label: l, .. } if l.as_ref() == label)
+                    })
+                    .unwrap_or_else(|| panic!("expected a {label} entry"));
+                let ContextMenuItem::Entry { disabled, .. } = &model.items[ix] else {
+                    unreachable!()
+                };
+                (
+                    *disabled,
+                    model.entry_tooltips.get(&ix).map(|text| text.to_string()),
+                )
+            })
+        })
+    })
+}
+
+#[gpui::test]
+fn the_commit_menu_offers_edit_message_under_the_pencil_rules(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    let repo_id = gitcomet_state::model::RepoId(64);
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_ROOT_SHA, "Root subject", false),
+    );
+
+    // Unselected rows are judged once their details load.
+    assert_eq!(
+        commit_menu_entry(cx, &view, repo_id, REWORD_OLDER_SHA, "Edit commit message…"),
+        (false, None)
+    );
+    let (disabled, reason) =
+        commit_menu_entry(cx, &view, repo_id, REWORD_ROOT_SHA, "Edit commit message…");
+    assert!(disabled, "the selected root commit is not HEAD");
+    assert_eq!(
+        reason.as_deref(),
+        Some("The root commit's message can only be edited while it is HEAD")
+    );
+}
+
+#[gpui::test]
+fn edit_message_from_the_commit_menu_opens_the_editor(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    let repo_id = gitcomet_state::model::RepoId(65);
+    let message = "Older subject\n\nWith a body.";
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_OLDER_SHA, message, false),
+    );
+
+    // Activated from the host itself, as the menu does: the root view is
+    // not being updated meanwhile.
+    let host = cx.update(|_window, app| view.read(app).popover_host.clone());
+    cx.update(|window, app| {
+        host.update(app, |host, cx| {
+            host.context_menu_activate_action(
+                ContextMenuAction::EditCommitMessage {
+                    repo_id,
+                    commit_id: reword_commit_id(REWORD_OLDER_SHA),
+                },
+                window,
+                cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+    assert_eq!(reword_draft_text(cx, &view).as_deref(), Some(message));
+    cx.update(|window, app| {
+        let pane = view.read(app).details_pane.read(app);
+        assert!(
+            pane.commit_reword_input
+                .read(app)
+                .focus_handle()
+                .is_focused(window),
+            "the editor takes focus"
+        );
+    });
+}
+
+#[gpui::test]
+fn a_requested_edit_waits_for_the_commit_details(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    let repo_id = gitcomet_state::model::RepoId(66);
+    let message = "Older subject";
+    // HEAD's details are shown when the edit of an older commit is asked for.
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_HEAD_SHA, "Head subject", false),
+    );
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            this.details_pane.update(cx, |pane, cx| {
+                pane.request_commit_reword(repo_id, reword_commit_id(REWORD_OLDER_SHA), window, cx);
+            });
+        });
+    });
+    assert_eq!(reword_draft_text(cx, &view), None);
+
+    // A refresh published before the store selects the commit still shows
+    // the old selection; it must not cancel the request.
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_HEAD_SHA, "Head subject", false),
+    );
+    assert_eq!(reword_draft_text(cx, &view), None);
+
+    // The older commit's details arrive: the editor opens on them.
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_OLDER_SHA, message, false),
+    );
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+    assert_eq!(reword_draft_text(cx, &view).as_deref(), Some(message));
+}
+
+#[gpui::test]
+fn undo_commit_soft_resets_head_to_its_parent(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    let repo_id = gitcomet_state::model::RepoId(67);
+    show_rewordable_commit(
+        cx,
+        &view,
+        rewordable_repo(repo_id, REWORD_HEAD_SHA, "Head subject", false),
+    );
+    let (disabled, _) = commit_menu_entry(cx, &view, repo_id, REWORD_HEAD_SHA, "Undo commit…");
+    assert!(!disabled);
+    let action = cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                let model = host
+                    .context_menu_model(
+                        &PopoverKind::CommitMenu {
+                            repo_id,
+                            commit_id: reword_commit_id(REWORD_HEAD_SHA),
+                            refs: crate::view::CommitMenuRefs::All,
+                        },
+                        cx,
+                    )
+                    .expect("expected the commit menu");
+                model.items.iter().find_map(|item| match item {
+                    ContextMenuItem::Entry { label, action, .. }
+                        if label.as_ref() == "Undo commit…" =>
+                    {
+                        Some((**action).clone())
+                    }
+                    _ => None,
+                })
+            })
+        })
+    });
+    assert!(matches!(
+        action,
+        Some(ContextMenuAction::OpenPopover {
+            kind: PopoverKind::ResetPrompt {
+                target,
+                mode: ResetMode::Soft,
+                ..
+            },
+        }) if target == REWORD_OLDER_SHA
+    ));
+
+    // Only HEAD offers it.
+    let older_menu = cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                host.context_menu_model(
+                    &PopoverKind::CommitMenu {
+                        repo_id,
+                        commit_id: reword_commit_id(REWORD_OLDER_SHA),
+                        refs: crate::view::CommitMenuRefs::All,
+                    },
+                    cx,
+                )
+                .expect("expected the commit menu")
+            })
+        })
+    });
+    assert!(!older_menu.items.iter().any(|item| matches!(
+        item,
+        ContextMenuItem::Entry { label, .. } if label.as_ref() == "Undo commit…"
+    )));
 }

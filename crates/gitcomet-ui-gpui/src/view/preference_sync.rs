@@ -478,6 +478,9 @@ impl GitCometView {
             .update(cx, |pane, cx| pane.set_commit_amend_enabled(enabled, cx));
         self.popover_host
             .update(cx, |host, cx| host.sync_commit_amend_enabled(enabled, cx));
+        if self.details_hide_when_clean {
+            gpui::AppContext::notify(cx, self.bottom_status_bar.entity_id());
+        }
         cx.notify();
     }
 

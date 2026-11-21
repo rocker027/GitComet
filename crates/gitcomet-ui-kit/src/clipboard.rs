@@ -16,6 +16,8 @@ pub enum CopySource {
     ContextMenu,
     /// The copy button beside a commit SHA.
     CommitSha,
+    /// The copy button beside the edit control in commit details.
+    CommitTitle,
     EnvironmentDetails,
     /// A copy an extension makes.
     Extension,
@@ -39,6 +41,7 @@ impl CopySource {
             Self::ErrorDetails => "error-details",
             Self::ContextMenu => "context-menu",
             Self::CommitSha => "commit-sha",
+            Self::CommitTitle => "commit-title",
             Self::EnvironmentDetails => "environment-details",
             Self::Extension => "extension",
         }

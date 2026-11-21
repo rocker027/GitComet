@@ -755,9 +755,9 @@ def run_once(binary, repository, name, output, timeout, metadata=True, display="
     if wrap and platform.system() != "Linux":
         raise ValueError("Launch native profilers around a desktop run; --wrap currently requires Linux PID discovery")
     if platform.system() == "Darwin" and ".app/Contents/MacOS/" not in str(binary):
-        # A bare executable copies itself into a GitComet.app, relaunches from
+        # A bare executable copies itself into a RevWeave.app, relaunches from
         # there and exits, so the measured process would be gone in a second.
-        raise ValueError("On macOS pass the executable inside an app bundle (GitComet.app/Contents/MacOS/gitcomet); "
+        raise ValueError("On macOS pass the executable inside an app bundle (RevWeave.app/Contents/MacOS/gitcomet); "
                          "a bare binary relaunches itself from a bundle and exits")
     output.mkdir(parents=True, exist_ok=False)
     run_id = str(uuid.uuid4())

@@ -39,6 +39,56 @@ impl PushRequest {
 /// Why an action waits on repository data that has not loaded.
 pub(in crate::view) const REPOSITORY_LOADING_REASON: &str = "The repository is still loading";
 
+pub(in crate::view) fn localized_action_reason(
+    reason: &'static str,
+    language: crate::localization::Language,
+) -> &'static str {
+    let traditional_chinese = match reason {
+        REPOSITORY_LOADING_REASON => "儲存庫仍在載入",
+        gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE => "這項操作需要工作樹。",
+        "HEAD is detached — check out a branch first" => "HEAD 處於分離狀態，請先切換至分支",
+        "Set an upstream for this branch first" => "請先為此分支設定上游",
+        "Push this branch to its upstream first" => "請先將此分支推送到上游",
+        "Add a remote to push to first" => "請先新增可推送的遠端",
+        _ => reason,
+    };
+    language.text(reason, traditional_chinese)
+}
+
+pub(super) fn git_operation_label(label: &str, language: crate::localization::Language) -> &str {
+    let traditional_chinese = match label {
+        "Checkout" => "切換",
+        "Create branch" => "建立分支",
+        "Create branch and checkout" => "建立並切換分支",
+        "Rename branch" => "重新命名分支",
+        "Delete branch" => "刪除分支",
+        "Merge" => "合併",
+        "Squash" => "壓縮合併",
+        "Abort merge" => "中止合併",
+        "Rebase" => "變基",
+        "Interactive rebase" => "互動式變基",
+        "Stash" => "建立貯藏",
+        "Apply stash" => "套用貯藏",
+        "Pop stash" => "套用並移除貯藏",
+        "Drop stash" => "刪除貯藏",
+        "Fetch" => "擷取",
+        "Pull" => "拉取",
+        "Push" => "推送",
+        "Push tag" => "推送標籤",
+        "Push with annotated tags" => "推送並附帶含註解的標籤",
+        "Push with all tags" => "推送並附帶所有標籤",
+        "Force push" => "強制推送",
+        "Force push with lease" => "附租約強制推送",
+        "Push after commit" => "提交後推送",
+        "Push and set upstream" => "推送並設定上游",
+        "Set as tracking upstream" => "設定追蹤上游",
+        "Unlink upstream branch" => "取消追蹤上游",
+        "Commit" => "提交",
+        _ => label,
+    };
+    language.text(label, traditional_chinese)
+}
+
 /// What opening the repository's remote in a web browser should do.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::view) enum RemoteWebRequest {
@@ -183,6 +233,40 @@ pub(in crate::view) fn amend_allowed(repo: &RepoState) -> bool {
         },
         _ => true,
     }
+}
+
+/// What "Stage All & Commit" stages: every unstaged change, untracked files
+/// included, when nothing is staged and the commit is an ordinary one, as
+/// GitKraken's commit button does. Otherwise why not: an amend, a merge or
+/// rebase in progress, or a conflict needs the user to pick what to stage.
+pub(in crate::view) fn stage_all_commit_paths(
+    repo: &RepoState,
+    amend: bool,
+) -> Result<Vec<std::path::PathBuf>, &'static str> {
+    if repo.is_bare() {
+        return Err(gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE);
+    }
+    if amend {
+        return Err("An amend commits only what is staged");
+    }
+    if merge_in_progress(repo) || matches!(repo.rebase_in_progress, Loadable::Ready(true)) {
+        return Err("Stage what the merge or rebase should record first");
+    }
+    let (Some(staged), Some(unstaged)) =
+        (repo.staged_status_entries(), repo.worktree_status_entries())
+    else {
+        return Err("Wait for the file status to load");
+    };
+    if !staged.is_empty() {
+        return Err("Some changes are already staged: use Commit Changes");
+    }
+    if unstaged.iter().any(|entry| entry.conflict.is_some()) {
+        return Err("Resolve the conflicts first");
+    }
+    if unstaged.is_empty() {
+        return Err("No changes to commit");
+    }
+    Ok(unstaged.iter().map(|entry| entry.path.clone()).collect())
 }
 
 /// The rebase, apply, cherry-pick, or revert the repository is part-way
@@ -1147,6 +1231,7 @@ pub struct GitCometView {
     pub(super) sidebar_collapsed_popover_anim_seq: u64,
     pub(super) sidebar_collapsed_before_merge_view: Option<bool>,
     pub(super) details_collapsed: bool,
+    pub(super) details_hide_when_clean: bool,
     pub(super) sidebar_width_design: f32,
     pub(super) details_width_design: f32,
     pub(super) sidebar_width: Pixels,

@@ -41,6 +41,7 @@ fn straight_connectors_and_node_exits_do_not_tessellate(cx: &mut gpui::TestAppCo
                             px(4.0 * scale),
                             stroke,
                             colour,
+                            false,
                             window,
                         );
                         // Degenerate strokes contribute no geometry.
@@ -142,6 +143,7 @@ fn nearly_collinear_connectors_keep_their_endpoints(cx: &mut gpui::TestAppContex
                         px(4.0),
                         px(1.6),
                         gpui::rgb(0xabcdef),
+                        false,
                         window,
                     );
                 },
@@ -294,6 +296,27 @@ fn indexed_history_coincident_paths_keep_last_winning_color_in_each_pass() {
             assert_eq!(winners.len(), displayed);
             for item in winners {
                 assert_eq!(Some(&item), expected.get(&geometry(item)));
+            }
+        }
+    }
+}
+
+#[test]
+fn stash_stroke_has_short_gaps_at_each_scale() {
+    // Check the tessellated stroke, including the empty interval between dashes.
+    for width in [1.0, 1.5, 2.0, 3.0] {
+        for dashed in [false, true] {
+            let mut path = lane_path(px(width), dashed);
+            path.move_to(point(px(0.0), px(0.0)));
+            path.line_to(point(px(0.0), px(width * 10.0)));
+            let mesh = path.build().unwrap();
+            for (sample, in_dash) in [(1.0, true), (2.75, false), (4.5, true), (6.25, false)] {
+                let y = px(width * sample);
+                let painted = mesh.vertices.chunks_exact(3).any(|triangle| {
+                    triangle.iter().any(|v| v.xy_position.y < y)
+                        && triangle.iter().any(|v| v.xy_position.y > y)
+                });
+                assert_eq!(painted, !dashed || in_dash, "width={width}, y={y:?}");
             }
         }
     }

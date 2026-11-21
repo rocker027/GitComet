@@ -1,6 +1,8 @@
 //! Application menus: the macOS menu bar and recent repositories.
 
 use super::*;
+#[cfg(target_os = "macos")]
+use crate::localization::Language;
 
 #[cfg(target_os = "macos")]
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema, Action)]
@@ -42,6 +44,8 @@ pub(super) fn install_macos_app_menu(cx: &mut App, backend: Arc<dyn GitBackend>)
     });
 
     refresh_macos_app_menus(cx);
+    cx.observe_global::<Language>(refresh_macos_app_menus)
+        .detach();
 }
 
 #[cfg(target_os = "macos")]
@@ -55,13 +59,17 @@ pub(super) fn normal_window_repository_is_bare(cx: &mut App) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn macos_app_menus(cx: &mut App) -> Vec<Menu> {
+fn macos_app_menus(cx: &mut App, external_editor_configured: bool) -> Vec<Menu> {
+    let ui_session = session::load();
+    Language::initialize(ui_session.ui_language.as_deref(), cx);
     let bare = normal_window_repository_is_bare(cx);
     let mut menus = macos_app_menus_with_options(
-        crate::external_editor::configured_setting().is_some(),
+        external_editor_configured,
         find_normal_gitcomet_window(cx).is_some(),
         bare,
         crate::view::extension_host::provides_update_check(cx),
+        Language::current(cx),
+        ui_session.recent_repos,
     );
     let extension_items = crate::view::extension_host::macos_menu_items(bare, cx);
     if !extension_items.is_empty()
@@ -81,7 +89,14 @@ pub(super) fn macos_app_menus(cx: &mut App) -> Vec<Menu> {
 /// about the external-editor item do not have to restate that half.
 #[cfg(all(test, target_os = "macos"))]
 pub(super) fn macos_app_menus_with_external_editor(external_editor_configured: bool) -> Vec<Menu> {
-    macos_app_menus_with_options(external_editor_configured, true, false, false)
+    macos_app_menus_with_options(
+        external_editor_configured,
+        true,
+        false,
+        false,
+        Language::English,
+        Vec::new(),
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -90,24 +105,40 @@ pub(super) fn macos_app_menus_with_options(
     normal_window_available: bool,
     bare: bool,
     extension_update_check: bool,
+    language: Language,
+    recent_repos: Vec<PathBuf>,
 ) -> Vec<Menu> {
     let mut file_items = vec![
-        MenuItem::action("New Window", NewWindow),
+        MenuItem::action(language.text("New Window", "新增視窗"), NewWindow),
         MenuItem::separator(),
-        MenuItem::action(crate::menu_labels::OPEN_REPOSITORY, OpenRepository),
-        MenuItem::action(crate::menu_labels::CLONE_REPOSITORY, CloneRepository),
         MenuItem::action(
-            crate::menu_labels::INITIALIZE_REPOSITORY,
+            language.text(crate::menu_labels::OPEN_REPOSITORY, "開啟儲存庫"),
+            OpenRepository,
+        ),
+        MenuItem::action(
+            language.text(crate::menu_labels::CLONE_REPOSITORY, "複製儲存庫"),
+            CloneRepository,
+        ),
+        MenuItem::action(
+            language.text(crate::menu_labels::INITIALIZE_REPOSITORY, "初始化儲存庫"),
             InitializeRepository,
         ),
-        MenuItem::action("Switch Repository…", SwitchRepository),
-        MenuItem::action("Open Workspace…", OpenWorkspace),
+        MenuItem::action(
+            language.text("Switch Repository…", "切換儲存庫…"),
+            SwitchRepository,
+        ),
+        MenuItem::action(
+            language.text("Open Workspace…", "開啟工作區…"),
+            OpenWorkspace,
+        ),
     ];
 
-    let recent_repo_items = recent_repo_menu_items();
+    let recent_repo_items = recent_repo_menu_items(recent_repos);
     if !recent_repo_items.is_empty() {
         file_items.push(MenuItem::submenu(Menu {
-            name: "Recent Repositories".into(),
+            name: language
+                .text("Recent Repositories", "最近使用的儲存庫")
+                .into(),
             items: recent_repo_items,
             disabled: false,
         }));
@@ -115,88 +146,146 @@ pub(super) fn macos_app_menus_with_options(
     file_items.push(MenuItem::separator());
     if external_editor_configured {
         file_items.push(MenuItem::action(
-            crate::menu_labels::OPEN_IN_CODE_EDITOR,
+            language.text(
+                crate::menu_labels::OPEN_IN_CODE_EDITOR,
+                "在程式碼編輯器中開啟",
+            ),
             OpenInCodeEditor,
         ));
     }
 
     file_items.extend([
         MenuItem::action(
-            crate::menu_labels::OPEN_IN_FILE_EXPLORER,
+            language.text(
+                crate::menu_labels::OPEN_IN_FILE_EXPLORER,
+                "在檔案總管中開啟",
+            ),
             LocateFileInExplorer,
         ),
         MenuItem::action(
-            crate::menu_labels::OPEN_REMOTE_IN_BROWSER,
+            language.text(
+                crate::menu_labels::OPEN_REMOTE_IN_BROWSER,
+                "在瀏覽器中開啟遠端",
+            ),
             OpenRemoteInBrowser,
         ),
-        MenuItem::action(crate::menu_labels::APPLY_PATCH, ApplyPatch).disabled(bare),
-        MenuItem::action(crate::menu_labels::CHECK_FOR_UPDATES, CheckForUpdates).disabled(
-            manual_update_check_menu_disabled(
-                crate::view::manual_update_check_unavailable(extension_update_check),
-                normal_window_available,
-            ),
-        ),
+        MenuItem::action(
+            language.text(crate::menu_labels::APPLY_PATCH, "套用修補檔…"),
+            ApplyPatch,
+        )
+        .disabled(bare),
+        MenuItem::action(
+            language.text(crate::menu_labels::CHECK_FOR_UPDATES, "檢查更新"),
+            CheckForUpdates,
+        )
+        .disabled(manual_update_check_menu_disabled(
+            crate::view::manual_update_check_unavailable(extension_update_check),
+            normal_window_available,
+        )),
         MenuItem::separator(),
-        MenuItem::action("Close", Close),
-        MenuItem::action("Close Window", CloseWindow),
+        MenuItem::action(language.text("Close", "關閉"), Close),
+        MenuItem::action(language.text("Close Window", "關閉視窗"), CloseWindow),
     ]);
 
     let name = identity::current().display_name();
+    let (hide, quit) = match language {
+        Language::English => (format!("Hide {name}"), format!("Quit {name}")),
+        Language::TraditionalChinese => (format!("隱藏 {name}"), format!("結束 {name}")),
+    };
     vec![
         Menu {
             name: name.to_string().into(),
             items: vec![
-                MenuItem::action(crate::menu_labels::COMMAND_PALETTE, ToggleCommandPalette),
-                MenuItem::action(crate::menu_labels::SETTINGS, OpenSettings),
+                MenuItem::action(
+                    language.text(crate::menu_labels::COMMAND_PALETTE, "命令面板"),
+                    ToggleCommandPalette,
+                ),
+                MenuItem::action(
+                    language.text(crate::menu_labels::SETTINGS, "設定…"),
+                    OpenSettings,
+                ),
                 MenuItem::separator(),
-                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::os_submenu(language.text("Services", "服務"), SystemMenuType::Services),
                 MenuItem::separator(),
-                MenuItem::action(format!("Hide {name}"), Hide),
-                MenuItem::action("Hide Others", HideOthers),
-                MenuItem::action("Show All", ShowAll),
+                MenuItem::action(hide, Hide),
+                MenuItem::action(language.text("Hide Others", "隱藏其他項目"), HideOthers),
+                MenuItem::action(language.text("Show All", "顯示全部"), ShowAll),
                 MenuItem::separator(),
-                MenuItem::action(format!("Quit {name}"), Quit),
+                MenuItem::action(quit, Quit),
             ],
             disabled: false,
         },
         Menu {
-            name: "File".into(),
+            name: language.text("File", "檔案").into(),
             items: file_items,
             disabled: false,
         },
         Menu {
-            name: "Edit".into(),
+            name: language.text("Edit", "編輯").into(),
             items: vec![
-                MenuItem::os_action("Undo", crate::kit::Undo, OsAction::Undo),
-                MenuItem::os_action("Redo", crate::kit::Redo, OsAction::Redo),
+                MenuItem::os_action(
+                    language.text("Undo", "復原"),
+                    crate::kit::Undo,
+                    OsAction::Undo,
+                ),
+                MenuItem::os_action(
+                    language.text("Redo", "重做"),
+                    crate::kit::Redo,
+                    OsAction::Redo,
+                ),
                 MenuItem::separator(),
-                MenuItem::os_action("Cut", crate::kit::Cut, OsAction::Cut),
-                MenuItem::os_action("Copy", crate::kit::Copy, OsAction::Copy),
-                MenuItem::os_action("Paste", crate::kit::Paste, OsAction::Paste),
+                MenuItem::os_action(language.text("Cut", "剪下"), crate::kit::Cut, OsAction::Cut),
+                MenuItem::os_action(
+                    language.text("Copy", "拷貝"),
+                    crate::kit::Copy,
+                    OsAction::Copy,
+                ),
+                MenuItem::os_action(
+                    language.text("Paste", "貼上"),
+                    crate::kit::Paste,
+                    OsAction::Paste,
+                ),
                 MenuItem::separator(),
-                MenuItem::os_action("Select All", crate::kit::SelectAll, OsAction::SelectAll),
+                MenuItem::os_action(
+                    language.text("Select All", "全選"),
+                    crate::kit::SelectAll,
+                    OsAction::SelectAll,
+                ),
             ],
             disabled: false,
         },
         Menu {
-            name: "View".into(),
-            items: vec![MenuItem::action("Reflog", ShowReflog)],
+            name: language.text("View", "顯示").into(),
+            items: vec![MenuItem::action(
+                language.text("Reflog", "參照日誌"),
+                ShowReflog,
+            )],
             disabled: false,
         },
         Menu {
+            // gpui_macos registers AppKit's windows menu by the exact title "Window".
             name: "Window".into(),
             items: vec![
-                MenuItem::action("Minimize", MinimizeWindow),
-                MenuItem::action("Zoom", ZoomWindow),
+                MenuItem::action(language.text("Minimize", "最小化"), MinimizeWindow),
+                MenuItem::action(language.text("Zoom", "縮放視窗"), ZoomWindow),
                 MenuItem::separator(),
-                MenuItem::action("Zoom In", IncreaseUiScale),
-                MenuItem::action("Zoom Out", DecreaseUiScale),
-                MenuItem::action("Reset Zoom", ResetUiScale),
+                MenuItem::action(language.text("Zoom In", "放大"), IncreaseUiScale),
+                MenuItem::action(language.text("Zoom Out", "縮小"), DecreaseUiScale),
+                MenuItem::action(language.text("Reset Zoom", "重設縮放"), ResetUiScale),
                 MenuItem::separator(),
-                MenuItem::action("Previous Repository", PreviousRepository),
-                MenuItem::action("Next Repository", NextRepository),
+                MenuItem::action(
+                    language.text("Previous Repository", "上一個儲存庫"),
+                    PreviousRepository,
+                ),
+                MenuItem::action(
+                    language.text("Next Repository", "下一個儲存庫"),
+                    NextRepository,
+                ),
                 MenuItem::separator(),
-                MenuItem::action("Toggle Full Screen", ToggleFullScreen),
+                MenuItem::action(
+                    language.text("Toggle Full Screen", "切換全螢幕"),
+                    ToggleFullScreen,
+                ),
             ],
             disabled: false,
         },
@@ -205,20 +294,16 @@ pub(super) fn macos_app_menus_with_options(
 
 #[cfg(target_os = "macos")]
 pub(crate) fn refresh_macos_app_menus(cx: &mut App) {
-    let menus = macos_app_menus(cx);
-    cx.set_menus(menus);
+    refresh_macos_app_menus_for_external_editor(
+        cx,
+        crate::external_editor::configured_setting().is_some(),
+    );
 }
 
 #[cfg(target_os = "macos")]
 pub(super) fn refresh_macos_app_menus_for_external_editor(cx: &mut App, configured: bool) {
-    let normal_window_available = find_normal_gitcomet_window(cx).is_some();
-    let bare = normal_window_repository_is_bare(cx);
-    cx.set_menus(macos_app_menus_with_options(
-        configured,
-        normal_window_available,
-        bare,
-        crate::view::extension_host::provides_update_check(cx),
-    ));
+    let menus = macos_app_menus(cx, configured);
+    cx.set_menus(menus);
 }
 
 /// How many recent repositories the macOS "Recent Repositories" submenu lists.
@@ -241,8 +326,8 @@ pub(crate) fn recent_repository_menu_paths(
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn recent_repo_menu_items() -> Vec<MenuItem> {
-    recent_repository_menu_paths(session::load().recent_repos)
+fn recent_repo_menu_items(recent_repos: Vec<PathBuf>) -> Vec<MenuItem> {
+    recent_repository_menu_paths(recent_repos)
         .map(|path| {
             MenuItem::action(
                 recent_repository_label(&path),

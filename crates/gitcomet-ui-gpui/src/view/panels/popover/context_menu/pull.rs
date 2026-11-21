@@ -1,15 +1,22 @@
 use super::*;
+use crate::localization::Language;
 use gitcomet_state::model::{AutoFetchStatus, RepoAutoFetchState};
 
-fn auto_fetch_status_text(enabled: bool, state: &RepoAutoFetchState) -> Option<&'static str> {
+fn auto_fetch_status_text(
+    enabled: bool,
+    state: &RepoAutoFetchState,
+    language: Language,
+) -> Option<&'static str> {
     if !enabled {
-        return Some("Automatic fetch: Off");
+        return Some(language.text("Automatic fetch: Off", "自動擷取已關閉"));
     }
     match &state.status {
-        AutoFetchStatus::Idle => Some("Automatic fetch: Waiting"),
-        AutoFetchStatus::Running => Some("Fetching automatically…"),
+        AutoFetchStatus::Idle => Some(language.text("Automatic fetch: Waiting", "等待自動擷取")),
+        AutoFetchStatus::Running => Some(language.text("Fetching automatically…", "正在自動擷取…")),
         AutoFetchStatus::Succeeded { .. } => None,
-        AutoFetchStatus::Failed { .. } => Some("Automatic fetch: Failed"),
+        AutoFetchStatus::Failed { .. } => {
+            Some(language.text("Automatic fetch: Failed", "自動擷取失敗"))
+        }
     }
 }
 
@@ -22,6 +29,13 @@ pub(in super::super) fn auto_fetch_failure_description(
 pub(in super::super) fn auto_fetch_auth_recovery_hint(
     error: &gitcomet_core::error::Error,
 ) -> Option<&'static str> {
+    localized_auto_fetch_auth_recovery_hint(error, Language::English)
+}
+
+fn localized_auto_fetch_auth_recovery_hint(
+    error: &gitcomet_core::error::Error,
+    language: Language,
+) -> Option<&'static str> {
     let gitcomet_core::error::ErrorKind::Git(failure) = error.kind() else {
         return None;
     };
@@ -33,9 +47,14 @@ pub(in super::super) fn auto_fetch_auth_recovery_hint(
         return None;
     };
     Some(match challenge.kind {
-        gitcomet_core::auth::GitAuthKind::HostVerification => "Use Fetch all to review the host.",
+        gitcomet_core::auth::GitAuthKind::HostVerification => language.text(
+            "Use Fetch all to review the host.",
+            "請使用「擷取全部」檢查主機。",
+        ),
         gitcomet_core::auth::GitAuthKind::UsernamePassword
-        | gitcomet_core::auth::GitAuthKind::Passphrase => "Use Fetch all to sign in.",
+        | gitcomet_core::auth::GitAuthKind::Passphrase => {
+            language.text("Use Fetch all to sign in.", "請使用「擷取全部」登入。")
+        }
     })
 }
 
@@ -45,8 +64,9 @@ fn auto_fetch_status_items(
     format: DateTimeFormat,
     timezone: Timezone,
     show_timezone: bool,
+    language: Language,
 ) -> Vec<ContextMenuItem> {
-    let mut items: Vec<_> = auto_fetch_status_text(enabled, state)
+    let mut items: Vec<_> = auto_fetch_status_text(enabled, state, language)
         .into_iter()
         .map(|text| ContextMenuItem::Label(text.into()))
         .collect();
@@ -56,16 +76,19 @@ fn auto_fetch_status_items(
                 .max_lines(1)
                 .tooltip_mode(components::TruncatedTextTooltipMode::FullTextIfTruncated),
         ));
-        if let Some(hint) = auto_fetch_auth_recovery_hint(error) {
+        if let Some(hint) = localized_auto_fetch_auth_recovery_hint(error, language) {
             items.push(ContextMenuItem::Description(hint.into()));
         }
     }
     if enabled && !state.paused_remotes.is_empty() {
+        let remotes = state.paused_remotes.join(", ");
         items.push(ContextMenuItem::Description(
-            format!(
-                "Paused for {} until Fetch all succeeds.",
-                state.paused_remotes.join(", ")
-            )
+            match language {
+                Language::English => format!("Paused for {remotes} until Fetch all succeeds."),
+                Language::TraditionalChinese => {
+                    format!("已暫停擷取 {remotes}，直到「擷取全部」成功。")
+                }
+            }
             .into(),
         ));
     } else if enabled
@@ -75,35 +98,49 @@ fn auto_fetch_status_items(
         let mut timestamp = String::new();
         format_datetime_into(&mut timestamp, at, format, timezone, show_timezone);
         items.push(ContextMenuItem::Label(
-            format!("Next attempt: {timestamp}").into(),
+            format!(
+                "{}{timestamp}",
+                language.text("Next attempt: ", "下次嘗試：")
+            )
+            .into(),
         ));
     }
     if let Some(at) = state.last_success_at {
         let mut timestamp = String::new();
         format_datetime_into(&mut timestamp, at, format, timezone, show_timezone);
         items.push(ContextMenuItem::Label(
-            format!("Last successful fetch: {timestamp}").into(),
+            format!(
+                "{}{timestamp}",
+                language.text("Last successful fetch: ", "上次成功擷取：")
+            )
+            .into(),
         ));
     }
     items
 }
 
-pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
+pub(super) fn model(this: &PopoverHost, language: Language) -> ContextMenuModel {
     let active_repo_id = this.active_repo_id();
     let repo_disabled = active_repo_id.is_none();
+    let finish_busy = active_repo_id
+        .is_some_and(|repo_id| this.state.worktree_finish_blocks_workdir_mutation(repo_id));
+    let active_finish_run =
+        active_repo_id.is_some_and(|repo_id| this.state.has_active_worktree_finish_run(repo_id));
     // Pull's own reason also covers bare repositories; the bare-action guard skips it.
     let pull_unavailable = this
         .active_repo()
         .and_then(|repo| pull_unavailable_reason(repo, &this.state.large_file_settings));
-    let pull_disabled = this.active_repo().is_none() || pull_unavailable.is_some();
+    let pull_disabled = this.active_repo().is_none() || pull_unavailable.is_some() || finish_busy;
     let repo_id = active_repo_id.unwrap_or(RepoId(0));
     let upstream = super::active_branch_tracking_upstream(this);
 
     let mut model = ContextMenuModel::new(vec![
-        ContextMenuItem::Header(super::action_menu_title("Pull", upstream).into()),
+        ContextMenuItem::Header(
+            super::action_menu_title(language.text("Pull", "拉取"), upstream).into(),
+        ),
         ContextMenuItem::Separator,
         ContextMenuItem::Entry {
-            label: "Pull (default)".into(),
+            label: language.text("Pull (default)", "拉取（預設策略）").into(),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: None,
             disabled: pull_disabled,
@@ -113,7 +150,9 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
             }),
         },
         ContextMenuItem::Entry {
-            label: "Pull (fast-forward if possible)".into(),
+            label: language
+                .text("Pull (fast-forward if possible)", "拉取（能快轉則快轉）")
+                .into(),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: Some("F".into()),
             disabled: pull_disabled,
@@ -123,7 +162,9 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
             }),
         },
         ContextMenuItem::Entry {
-            label: "Pull (fast-forward only)".into(),
+            label: language
+                .text("Pull (fast-forward only)", "拉取（僅允許快轉）")
+                .into(),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: Some("O".into()),
             disabled: pull_disabled,
@@ -133,7 +174,7 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
             }),
         },
         ContextMenuItem::Entry {
-            label: "Pull (rebase)".into(),
+            label: language.text("Pull (rebase)", "拉取（變基）").into(),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: Some("R".into()),
             disabled: pull_disabled,
@@ -144,7 +185,7 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
         },
         ContextMenuItem::Separator,
         ContextMenuItem::Entry {
-            label: "Fetch all".into(),
+            label: language.text("Fetch all", "擷取全部").into(),
             icon: Some("icons/arrow_down.svg".into()),
             shortcut: Some("A".into()),
             disabled: repo_disabled,
@@ -158,30 +199,54 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
             this.date_time_format,
             this.timezone,
             this.show_timezone,
+            language,
         ));
     }
     model.items.extend([
         ContextMenuItem::Entry {
-            label: "Prune merged branches".into(),
+            label: language
+                .text("Prune merged branches", "清理已合併分支")
+                .into(),
             icon: Some("icons/broom.svg".into()),
             shortcut: None,
-            disabled: repo_disabled,
+            disabled: repo_disabled || finish_busy || active_finish_run,
             action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
         },
         ContextMenuItem::Entry {
-            label: "Prune local tags".into(),
+            label: language.text("Prune local tags", "清理本機標籤").into(),
             icon: Some("icons/tag.svg".into()),
             shortcut: None,
             disabled: repo_disabled,
             action: Box::new(ContextMenuAction::PruneLocalTags { repo_id }),
         },
     ]);
+    if let Some(repo) = this.active_repo()
+        && let Loadable::Ready(branch) = &repo.head_branch
+        && !branch.is_empty()
+        && branch != "HEAD"
+    {
+        model.items.push(ContextMenuItem::Entry {
+            label: language.text("Manage upstream…", "管理上游分支…").into(),
+            icon: Some("icons/cloud.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::OpenPopover {
+                kind: PopoverKind::UpstreamPicker {
+                    repo_id: repo.id,
+                    branch: branch.clone(),
+                },
+            }),
+        });
+    }
     if let Some(reason) = pull_unavailable {
         for (ix, item) in model.items.iter().enumerate() {
             if let ContextMenuItem::Entry { action, .. } = item
                 && matches!(action.as_ref(), ContextMenuAction::Pull { .. })
             {
-                model.entry_tooltips.insert(ix, reason.into());
+                model.entry_tooltips.insert(
+                    ix,
+                    crate::view::localized_action_reason(reason, language).into(),
+                );
             }
         }
     }
@@ -211,8 +276,14 @@ mod tests {
             },
             ..RepoAutoFetchState::default()
         };
-        let items =
-            auto_fetch_status_items(true, &state, DateTimeFormat::YmdHm, Timezone::Utc, false);
+        let items = auto_fetch_status_items(
+            true,
+            &state,
+            DateTimeFormat::YmdHm,
+            Timezone::Utc,
+            false,
+            Language::English,
+        );
         let ContextMenuItem::Description(reason) = &items[1] else {
             panic!("failure details should be a description");
         };
@@ -235,16 +306,22 @@ mod tests {
             },
             ..RepoAutoFetchState::default()
         };
-        let labels: Vec<_> =
-            auto_fetch_status_items(true, &state, DateTimeFormat::YmdHm, Timezone::Utc, false)
-                .into_iter()
-                .map(|item| match item {
-                    ContextMenuItem::Label(label) | ContextMenuItem::Description(label) => {
-                        label.as_ref().to_owned()
-                    }
-                    _ => panic!("fetch status must be informational"),
-                })
-                .collect();
+        let labels: Vec<_> = auto_fetch_status_items(
+            true,
+            &state,
+            DateTimeFormat::YmdHm,
+            Timezone::Utc,
+            false,
+            Language::English,
+        )
+        .into_iter()
+        .map(|item| match item {
+            ContextMenuItem::Label(label) | ContextMenuItem::Description(label) => {
+                label.as_ref().to_owned()
+            }
+            _ => panic!("fetch status must be informational"),
+        })
+        .collect();
         assert_eq!(
             labels,
             [
@@ -254,7 +331,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            auto_fetch_status_text(false, &state),
+            auto_fetch_status_text(false, &state, Language::English),
             Some("Automatic fetch: Off")
         );
     }
@@ -267,8 +344,14 @@ mod tests {
             status: AutoFetchStatus::Succeeded { at: success },
             ..RepoAutoFetchState::default()
         };
-        let items =
-            auto_fetch_status_items(true, &state, DateTimeFormat::YmdHm, Timezone::Utc, false);
+        let items = auto_fetch_status_items(
+            true,
+            &state,
+            DateTimeFormat::YmdHm,
+            Timezone::Utc,
+            false,
+            Language::English,
+        );
         let [ContextMenuItem::Label(label)] = items.as_slice() else {
             panic!("a succeeded fetch should show one row, got {}", items.len());
         };
@@ -284,15 +367,22 @@ mod tests {
             )),
         };
         let rows = |state: &RepoAutoFetchState| -> Vec<String> {
-            auto_fetch_status_items(true, state, DateTimeFormat::YmdHm, Timezone::Utc, false)
-                .into_iter()
-                .map(|item| match item {
-                    ContextMenuItem::Label(label) | ContextMenuItem::Description(label) => {
-                        label.as_ref().to_owned()
-                    }
-                    _ => panic!("fetch status must be informational"),
-                })
-                .collect()
+            auto_fetch_status_items(
+                true,
+                state,
+                DateTimeFormat::YmdHm,
+                Timezone::Utc,
+                false,
+                Language::English,
+            )
+            .into_iter()
+            .map(|item| match item {
+                ContextMenuItem::Label(label) | ContextMenuItem::Description(label) => {
+                    label.as_ref().to_owned()
+                }
+                _ => panic!("fetch status must be informational"),
+            })
+            .collect()
         };
         let retrying = RepoAutoFetchState {
             status: failed.clone(),
@@ -347,8 +437,14 @@ mod tests {
             },
             ..RepoAutoFetchState::default()
         };
-        let items =
-            auto_fetch_status_items(true, &state, DateTimeFormat::YmdHm, Timezone::Utc, false);
+        let items = auto_fetch_status_items(
+            true,
+            &state,
+            DateTimeFormat::YmdHm,
+            Timezone::Utc,
+            false,
+            Language::English,
+        );
         let [
             ContextMenuItem::Label(status),
             ContextMenuItem::Description(reason),
@@ -365,5 +461,25 @@ mod tests {
                 .tooltip_mode(components::TruncatedTextTooltipMode::FullTextIfTruncated)
         );
         assert_eq!(recovery.as_ref(), "Use Fetch all to sign in.");
+
+        let translated = auto_fetch_status_items(
+            true,
+            &state,
+            DateTimeFormat::YmdHm,
+            Timezone::Utc,
+            false,
+            Language::TraditionalChinese,
+        );
+        let [
+            ContextMenuItem::Label(status),
+            ContextMenuItem::Description(translated_reason),
+            ContextMenuItem::Description(recovery),
+        ] = translated.as_slice()
+        else {
+            panic!("status, reason and authentication recovery should be separate rows");
+        };
+        assert_eq!(status.as_ref(), "自動擷取失敗");
+        assert_eq!(translated_reason, reason);
+        assert_eq!(recovery.as_ref(), "請使用「擷取全部」登入。");
     }
 }

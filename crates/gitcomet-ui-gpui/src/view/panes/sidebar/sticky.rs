@@ -806,7 +806,10 @@ impl StickyRows {
                         .px(content_inset)
                         .text_size(this.theme.ui_text(12.0))
                         .text_color(this.theme.colors.foreground.primary)
-                        .child(format!("More pinned items ({count})"))
+                        .child(match Language::current(cx) {
+                            Language::English => format!("More pinned items ({count})"),
+                            Language::TraditionalChinese => format!("更多固定項目（{count}）"),
+                        })
                         .on_activate(
                             false,
                             controls::ControlActivation::Action,

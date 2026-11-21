@@ -13,9 +13,9 @@
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
     <Product
         Id='*'
-        Name='GitComet'
-        UpgradeCode='{3A9166E5-EB30-45B6-8128-C19FEA3A26DF}'
-        Manufacturer='AutoExplore Oy'
+        Name='RevWeave'
+        UpgradeCode='{33659CF5-A867-405B-AF35-EC7AA51186F8}'
+        Manufacturer='RevWeave'
         Language='1033'
         Codepage='1252'
         Version='$(var.Version)'>
@@ -23,8 +23,8 @@
         <Package
             Id='*'
             Keywords='Installer'
-            Description='GitComet desktop application'
-            Manufacturer='AutoExplore Oy'
+            Description='RevWeave desktop application'
+            Manufacturer='RevWeave'
             InstallerVersion='$(var.PlatformInstallerVersion)'
             Languages='1033'
             Compressed='yes'
@@ -36,11 +36,11 @@
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
-        <Property Id='DiskPrompt' Value='GitComet Installation'/>
+        <Property Id='DiskPrompt' Value='RevWeave Installation'/>
 
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-                <Directory Id='APPLICATIONFOLDER' Name='GitComet'>
+                <Directory Id='APPLICATIONFOLDER' Name='RevWeave'>
                     <Component Id='License' Guid='*'>
                         <File
                             Id='LicenseFile'
@@ -49,9 +49,12 @@
                             Source='LICENSE-AGPL-3.0'
                             KeyPath='yes'/>
                     </Component>
+                    <Component Id='Notice' Guid='*'>
+                        <File Id='NoticeFile' Name='NOTICE' DiskId='1' Source='NOTICE' KeyPath='yes'/>
+                    </Component>
 
                     <Directory Id='Bin' Name='bin'>
-                        <Component Id='Path' Guid='{206A9CFD-BF69-4386-851B-D88EECA93314}' KeyPath='yes'>
+                        <Component Id='Path' Guid='{614EABCD-BF08-4EB6-A45A-D3A46D154D78}' KeyPath='yes'>
                             <Environment
                                 Id='PATH'
                                 Name='PATH'
@@ -75,22 +78,22 @@
             </Directory>
 
             <Directory Id='ProgramMenuFolder'>
-                <Directory Id='GitCometProgramMenuDir' Name='GitComet'>
+                <Directory Id='RevWeaveProgramMenuDir' Name='RevWeave'>
                     <Component Id='StartMenuShortcut' Guid='*'>
                         <Shortcut
-                            Id='GitCometStartMenuShortcut'
-                            Directory='GitCometProgramMenuDir'
-                            Name='GitComet'
+                            Id='RevWeaveStartMenuShortcut'
+                            Directory='RevWeaveProgramMenuDir'
+                            Name='RevWeave'
                             Description='Git GUI built with GPUI'
                             Target='[Bin]gitcomet.exe'
                             WorkingDirectory='APPLICATIONFOLDER'
                             Icon='ProductICO'
                             IconIndex='0'
                             Advertise='no'/>
-                        <RemoveFolder Id='RemoveGitCometProgramMenuDir' Directory='GitCometProgramMenuDir' On='uninstall'/>
+                        <RemoveFolder Id='RemoveRevWeaveProgramMenuDir' Directory='RevWeaveProgramMenuDir' On='uninstall'/>
                         <RegistryValue
                             Root='HKCU'
-                            Key='Software\AutoExplore\GitComet'
+                            Key='Software\RevWeave'
                             Name='StartMenuShortcut'
                             Type='integer'
                             Value='1'
@@ -110,6 +113,7 @@
             Display='expand'
             Absent='disallow'>
             <ComponentRef Id='License'/>
+            <ComponentRef Id='Notice'/>
             <ComponentRef Id='MainBinary'/>
             <ComponentRef Id='StartMenuShortcut'/>
 
@@ -125,9 +129,9 @@
 
         <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
 
-        <Icon Id='ProductICO' SourceFile='assets\\gitcomet.ico'/>
+        <Icon Id='ProductICO' SourceFile='assets\\revweave.ico'/>
         <Property Id='ARPPRODUCTICON' Value='ProductICO'/>
-        <Property Id='ARPHELPLINK' Value='https://github.com/Auto-Explore/GitComet'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/rocker027/GitComet'/>
 
         <UI>
             <UIRef Id='WixUI_FeatureTree'/>

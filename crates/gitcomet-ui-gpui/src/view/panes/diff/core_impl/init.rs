@@ -376,6 +376,7 @@ impl DiffRenderer {
             diff_editor_menu_column: None,
             diff_stage_advance: None,
             next_file_advance: None,
+            stage_file_transfer: None,
             diff_text_selecting: false,
             diff_text_selection_owner: Default::default(),
             diff_text_anchor: None,

@@ -2,12 +2,13 @@
 
 use super::{
     ConflictResolverViewMode, ContextMenuAction, ContextMenuItem, ContextMenuModel, DiffArea,
-    InteractiveRebaseAction, Msg, PopoverHost, PopoverKind, PushRequest, Window, add_repo_menu,
-    app_menu, branch_group, components, context_menu_entry_action_at, push_request, repo_picker,
-    resolve_checkout_file_path, session,
+    InteractiveRebaseAction, Msg, PopoverHost, PopoverKind, PushRequest, PushUpstreamMode, Window,
+    add_repo_menu, app_menu, branch_group, components, context_menu_entry_action_at, push_request,
+    repo_picker, resolve_checkout_file_path, session,
 };
-use crate::view::WorktreePopoverKind;
 use crate::view::gitcomet_view_requests::{RootRequest, RootRequests as _};
+use crate::view::panes::history::HISTORY_WORKTREE_ROW_MENU_PREFIX;
+use crate::view::{PopoverRequest, RepoPopoverKind, WorktreePopoverKind};
 
 impl PopoverHost {
     pub(in crate::view) fn context_menu_activate_action(
@@ -16,6 +17,10 @@ impl PopoverHost {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
+        if self.history_worktree_menu_is_stale() {
+            self.close_popover_and_restore_focus(window, cx);
+            return;
+        }
         if self.bare_action_reason(&action).is_some() {
             self.explain_working_tree_required(cx);
             return;
@@ -654,6 +659,15 @@ impl PopoverHost {
                 );
                 return;
             }
+            ContextMenuAction::EditCommitMessage { repo_id, commit_id } => {
+                let _ = self.root_view.request(
+                    RootRequest::EditCommitMessage { repo_id, commit_id },
+                    Some(window),
+                    cx,
+                );
+                // The editor takes the focus; the invoker must not take it back.
+                restore_invoker_focus_after_action = false;
+            }
             ContextMenuAction::RevertCommit { repo_id, commit_id } => {
                 let anchor = self.popover_anchor_point();
                 self.open_popover_at(
@@ -1118,7 +1132,7 @@ impl PopoverHost {
                             PopoverKind::PushSetUpstreamPrompt {
                                 repo_id,
                                 remote,
-                                configure_only_for: None,
+                                mode: PushUpstreamMode::CurrentBranch,
                             },
                             anchor,
                             window,
@@ -1129,6 +1143,16 @@ impl PopoverHost {
                     PushRequest::NoRemotes | PushRequest::NotReady => {}
                 }
             }
+            ContextMenuAction::PushBranch {
+                repo_id,
+                local_branch,
+                upstream,
+            } => self.store.dispatch(Msg::PushBranch {
+                repo_id,
+                local_branch,
+                upstream,
+                set_upstream: false,
+            }),
             ContextMenuAction::SetUpstreamBranch {
                 repo_id,
                 branch,
@@ -1218,11 +1242,28 @@ impl PopoverHost {
             }
             ContextMenuAction::OpenPopover { kind } => {
                 let anchor = self.popover_anchor_point();
-                self.open_popover_at(kind, anchor, window, cx);
+                let keep_graph_focus =
+                    self.active_invoker.as_ref().is_some_and(|invoker| {
+                        invoker.starts_with(HISTORY_WORKTREE_ROW_MENU_PREFIX)
+                    }) && matches!(
+                        &kind,
+                        PopoverKind::Repo {
+                            kind: RepoPopoverKind::Worktree(
+                                WorktreePopoverKind::FinishSetup { .. }
+                                    | WorktreePopoverKind::RemoveConfirm { .. }
+                            ),
+                            ..
+                        }
+                    );
+                let mut request = PopoverRequest::from(kind);
+                if keep_graph_focus && let Some(focus) = self.focus_return.clone() {
+                    request = request.returning_focus_to(focus);
+                }
+                self.open_popover_at(request, anchor, window, cx);
                 return;
             }
             ContextMenuAction::OpenWorktreeAddPrompt { repo_id, prefill } => {
-                self.pending_worktree_add_prefill = Some(prefill);
+                self.pending_worktree_add_prefill = Some((repo_id, prefill));
                 self.open_popover_centered(
                     PopoverKind::worktree(repo_id, WorktreePopoverKind::AddPrompt),
                     window,
@@ -1320,6 +1361,13 @@ impl PopoverHost {
             ContextMenuAction::CopyText { text } => {
                 window.activate();
                 crate::clipboard::write_text(cx, text, crate::clipboard::CopySource::ContextMenu);
+            }
+            ContextMenuAction::CopyCommitTitles {
+                repo_id,
+                commit_ids,
+            } => {
+                window.activate();
+                super::commit::copy_titles(self, repo_id, commit_ids, cx);
             }
             ContextMenuAction::CopyLinkAddress { url } => {
                 window.activate();
@@ -1479,8 +1527,20 @@ impl PopoverHost {
                     );
                 }
             }
+            // Deleting a tag asks first, from every menu that offers it.
             ContextMenuAction::DeleteTag { repo_id, name } => {
-                self.store.dispatch(Msg::DeleteTag { repo_id, name });
+                let anchor = self.popover_anchor_point();
+                self.open_popover_at(
+                    PopoverKind::DeleteTagConfirm {
+                        repo_id,
+                        name,
+                        remote: None,
+                    },
+                    anchor,
+                    window,
+                    cx,
+                );
+                return;
             }
             ContextMenuAction::PushTag {
                 repo_id,
@@ -1498,11 +1558,18 @@ impl PopoverHost {
                 remote,
                 name,
             } => {
-                self.store.dispatch(Msg::DeleteRemoteTag {
-                    repo_id,
-                    remote,
-                    name,
-                });
+                let anchor = self.popover_anchor_point();
+                self.open_popover_at(
+                    PopoverKind::DeleteTagConfirm {
+                        repo_id,
+                        name,
+                        remote: Some(remote),
+                    },
+                    anchor,
+                    window,
+                    cx,
+                );
+                return;
             }
         }
         // A menu floating over a picker is not the popover: it closed itself on

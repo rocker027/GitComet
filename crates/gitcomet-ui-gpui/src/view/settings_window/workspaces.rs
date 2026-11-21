@@ -11,6 +11,33 @@ fn sorted_workspaces(cx: &App) -> Vec<Workspace> {
     workspaces
 }
 
+fn color_label(label: &'static str, language: Language) -> &'static str {
+    let chinese = match label {
+        "Default" => "預設（不為標題列上色）",
+        "Gray" => "灰色",
+        "Brown" => "棕色",
+        "Red" => "紅色",
+        "Orange" => "橙色",
+        "Yellow" => "黃色",
+        "Lime" => "萊姆綠",
+        "Green" => "綠色",
+        "Teal" => "藍綠色",
+        "Cyan" => "青色",
+        "Blue" => "藍色",
+        "Indigo" => "靛色",
+        "Purple" => "紫色",
+        "Magenta" => "洋紅色",
+        "Pink" => "粉紅色",
+        _ => label,
+    };
+    let english = if label == "Default" {
+        "Default (no title-bar tint)"
+    } else {
+        label
+    };
+    language.text(english, chinese)
+}
+
 impl SettingsWindowView {
     pub(super) fn select_workspace(&mut self, id: WorkspaceId, cx: &mut gpui::Context<Self>) {
         if self.selected_workspace == Some(id) {
@@ -102,6 +129,7 @@ impl SettingsWindowView {
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Div {
         let ring = theme.colors.foreground.primary;
+        let language = Language::current(cx);
         div().px_2().py_1().flex().flex_wrap().gap_2().children(
             crate::workspaces::WORKSPACE_COLORS
                 .into_iter()
@@ -111,11 +139,7 @@ impl SettingsWindowView {
                     let debug_selector = selector.clone();
                     let selected = current == color;
                     // Default and Blue share a dot; only Blue tints the bar.
-                    let tooltip: SharedString = if color.is_none() {
-                        "Default (no title-bar tint)".into()
-                    } else {
-                        label.into()
-                    };
+                    let tooltip = color_label(label, language);
                     div()
                         .id(SharedString::from(selector))
                         .debug_selector(move || debug_selector.clone())
@@ -134,7 +158,7 @@ impl SettingsWindowView {
                                 .rounded_full()
                                 .bg(crate::view::chrome::workspace_color(color)),
                         )
-                        .gitcomet_tooltip(theme, tooltip)
+                        .gitcomet_tooltip(theme, tooltip.into())
                         .control_interaction(
                             crate::view::components::InteractionStyle::new(theme),
                             crate::view::components::InteractionState::default(),
@@ -164,17 +188,24 @@ impl SettingsWindowView {
         theme: AppTheme,
         cx: &mut gpui::Context<Self>,
     ) -> Stateful<gpui::Div> {
+        let language = Language::current(cx);
         let workspaces = sorted_workspaces(cx);
         let new_window_shortcut = crate::kit::components::secondary_shortcut("N");
         let open_workspace_shortcut = crate::kit::components::secondary_shortcut("Shift+R");
-        let new_workspace_button =
-            components::Button::new("settings_window_workspace_new", "New Workspace")
-                .style(components::ButtonStyle::Outlined)
-                .on_click(theme, cx, |_this, _e, _window, cx| {
-                    cx.defer(crate::app::open_new_empty_window);
-                });
+        let new_workspace_button = components::Button::new(
+            "settings_window_workspace_new",
+            language.text("New Workspace", "新增工作區"),
+        )
+        .style(components::ButtonStyle::Outlined)
+        .on_click(theme, cx, |_this, _e, _window, cx| {
+            cx.defer(crate::app::open_new_empty_window);
+        });
         let mut card = self
-            .card("settings_window_workspaces", "Workspaces", theme)
+            .card(
+                "settings_window_workspaces",
+                language.text("Workspaces", "工作區"),
+                theme,
+            )
             .child(
                 div()
                     .id("settings_window_workspaces_intro")
@@ -190,14 +221,19 @@ impl SettingsWindowView {
                             .min_w(px(0.0))
                             .text_size(theme.ui_text(12.0))
                             .text_color(theme.colors.foreground.secondary)
-                            .child(format!(
-                                "Each window is a workspace. Open a new one with New Workspace \
-                                 or New Window ({new_window_shortcut}); it is saved once a \
-                                 repository is open in it. Give a workspace a name, a title-bar \
-                                 colour or its own theme and it is kept even after its last \
-                                 repository closes. Reopen saved ones with Open Workspace \
-                                 ({open_workspace_shortcut})."
-                            )),
+                            .child(match language {
+                                Language::English => format!(
+                                    "Each window is a workspace. Open a new one with New Workspace \
+                                     or New Window ({new_window_shortcut}); it is saved once a \
+                                     repository is open in it. Give a workspace a name, a title-bar \
+                                     colour or its own theme and it is kept even after its last \
+                                     repository closes. Reopen saved ones with Open Workspace \
+                                     ({open_workspace_shortcut})."
+                                ),
+                                Language::TraditionalChinese => format!(
+                                    "每個視窗都是一個工作區。選擇「新增工作區」或「新增視窗」（{new_window_shortcut}），開啟儲存庫後就會儲存工作區。設定名稱、標題列顏色或主題後，即使關閉最後一個儲存庫也會保留。使用「開啟工作區」（{open_workspace_shortcut}）可再次開啟。"
+                                ),
+                            }),
                     )
                     .child(new_workspace_button),
             );
@@ -210,7 +246,10 @@ impl SettingsWindowView {
                     .py_2()
                     .text_size(theme.ui_text(13.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child("No workspaces yet. Open a repository and its window becomes one."),
+                    .child(language.text(
+                        "No workspaces yet. Open a repository and its window becomes one.",
+                        "目前沒有工作區。開啟儲存庫後，所在視窗就會成為工作區。",
+                    )),
             );
         }
 
@@ -220,7 +259,7 @@ impl SettingsWindowView {
             .p(ui_scale.px(4.0));
         for workspace in &workspaces {
             let id = workspace.id;
-            let item = crate::view::workspace_picker::workspace_picker_item(workspace);
+            let item = crate::view::workspace_picker::workspace_picker_item(workspace, language);
             let row_selector: SharedString = format!("settings_window_workspace_{id}").into();
             list = list.child(
                 components::picker_row(
@@ -260,10 +299,16 @@ impl SettingsWindowView {
         };
         let id = selected.id;
 
+        let placeholder = language.text("Automatic name", "自動命名");
+        self.workspace_name_input.update(cx, |input, cx| {
+            if input.placeholder() != placeholder {
+                input.set_placeholder(placeholder, cx);
+            }
+        });
         card = card
             .child(self.subsection_heading(
                 "settings_window_workspace_details",
-                "Selected workspace",
+                language.text("Selected workspace", "選取的工作區"),
                 theme,
             ))
             .child(
@@ -271,8 +316,15 @@ impl SettingsWindowView {
                     .child(
                         self.option_row(
                             "settings_window_workspace_open",
-                            "Open workspace",
-                            Some("Focus its window, or open one with its repositories.".into()),
+                            language.text("Open workspace", "開啟工作區"),
+                            Some(
+                                language
+                                    .text(
+                                        "Focus its window, or open one with its repositories.",
+                                        "切換至工作區視窗，或開啟視窗並載入其中的儲存庫。",
+                                    )
+                                    .into(),
+                            ),
                             false,
                             theme,
                         )
@@ -285,7 +337,7 @@ impl SettingsWindowView {
                         ),
                     ),
             )
-            .child(self.field_label("Name", theme))
+            .child(self.field_label(language.text("Name", "名稱"), theme))
             .child(
                 div()
                     .id("settings_window_workspace_name")
@@ -305,19 +357,22 @@ impl SettingsWindowView {
                     )
                     .child(
                         // Enter also saves; the button makes that discoverable.
-                        components::Button::new("settings_window_workspace_name_save", "Save")
-                            .style(components::ButtonStyle::Filled)
-                            .disabled(
-                                self.workspace_name_draft.trim()
-                                    == selected.custom_name.as_deref().unwrap_or(""),
-                            )
-                            .on_click(theme, cx, |this, _e, _window, cx| {
-                                this.commit_workspace_name(cx);
-                                cx.notify();
-                            }),
+                        components::Button::new(
+                            "settings_window_workspace_name_save",
+                            language.text("Save", "儲存"),
+                        )
+                        .style(components::ButtonStyle::Filled)
+                        .disabled(
+                            self.workspace_name_draft.trim()
+                                == selected.custom_name.as_deref().unwrap_or(""),
+                        )
+                        .on_click(theme, cx, |this, _e, _window, cx| {
+                            this.commit_workspace_name(cx);
+                            cx.notify();
+                        }),
                     ),
             )
-            .child(self.field_label("Title bar color", theme))
+            .child(self.field_label(language.text("Title bar color", "標題列顏色"), theme))
             .child(self.color_swatches(id, selected.color, theme, cx));
 
         let theme_expanded = self.expanded_section == Some(SettingsSection::WorkspaceTheme);
@@ -335,13 +390,13 @@ impl SettingsWindowView {
             .unwrap_or_else(|| self.app_theme_orb(&themes, theme));
         let orb = super::theme_grid::theme_orb(orb, self.row_scale(theme).px(16.0));
         let label: SharedString = override_mode.as_ref().map_or_else(
-            || "Follow app theme".into(),
+            || language.text("Follow app theme", "跟隨應用程式主題").into(),
             |mode| mode.catalog_label(&themes).into(),
         );
         card = card.child(
             self.summary_row_with_value_prefix(
                 "settings_window_workspace_theme",
-                "Theme",
+                language.text("Theme", "主題"),
                 Some(orb.into_any_element()),
                 label,
                 theme_expanded,
@@ -373,6 +428,7 @@ impl SettingsWindowView {
         cx: &mut gpui::Context<Self>,
     ) -> Stateful<gpui::Div> {
         let id = workspace.id;
+        let language = Language::current(cx);
         let danger = theme.colors.status.danger.foreground;
         let icon_size = self.row_scale(theme).px(14.0);
         let trash = || crate::view::icons::svg_icon("icons/trash.svg", danger, icon_size);
@@ -396,11 +452,17 @@ impl SettingsWindowView {
             .gap_2();
         if self.workspace_delete_confirm == Some(id) {
             return zone
-                .child(note(format!(
-                    "Delete \u{201c}{}\u{201d}? Its name, colour, theme and layout are \
-                     forgotten. Repositories and their files are not touched.",
-                    workspace.display_name()
-                )))
+                .child(note(match language {
+                    Language::English => format!(
+                        "Delete \u{201c}{}\u{201d}? Its name, colour, theme and layout are \
+                         forgotten. Repositories and their files are not touched.",
+                        workspace.display_name()
+                    ),
+                    Language::TraditionalChinese => format!(
+                        "要刪除「{}」嗎？工作區的名稱、顏色、主題及版面配置將被移除。儲存庫與檔案會保留。",
+                        workspace.display_name()
+                    ),
+                }))
                 .child(
                     div()
                         .flex()
@@ -408,7 +470,7 @@ impl SettingsWindowView {
                         .child(
                             components::Button::new(
                                 "settings_window_workspace_delete_confirm",
-                                "Delete",
+                                language.text("Delete", "刪除"),
                             )
                             .style(components::ButtonStyle::Danger)
                             .start_slot(trash())
@@ -423,7 +485,7 @@ impl SettingsWindowView {
                         .child(
                             components::Button::new(
                                 "settings_window_workspace_delete_cancel",
-                                "Cancel",
+                                language.text("Cancel", "取消"),
                             )
                             .style(components::ButtonStyle::Outlined)
                             .on_click(
@@ -438,7 +500,10 @@ impl SettingsWindowView {
                 );
         }
         zone.child(
-            components::Button::new("settings_window_workspace_delete", "Delete workspace")
+            components::Button::new(
+                "settings_window_workspace_delete",
+                language.text("Delete workspace", "刪除工作區"),
+            )
                 .style(components::ButtonStyle::Danger)
                 .start_slot(trash())
                 .on_click(theme, cx, move |this, _e, _window, cx| {
@@ -447,9 +512,13 @@ impl SettingsWindowView {
                 }),
         )
         .child(note(
-            "Closes its window (the last window returns to Home) and forgets its name, \
-             colour, theme and layout. Repositories and their files are not touched."
-                .to_string(),
+            language
+                .text(
+                    "Closes its window (the last window returns to Home) and forgets its name, \
+                     colour, theme and layout. Repositories and their files are not touched.",
+                    "關閉工作區視窗，並移除名稱、顏色、主題及版面配置。若是最後一個視窗，會返回首頁。儲存庫與檔案會保留。",
+                )
+                .to_owned(),
         ))
     }
 }

@@ -577,6 +577,63 @@ fn commit_message_focus_after_initial_draw_accepts_typed_input(cx: &mut gpui::Te
 }
 
 #[gpui::test]
+fn ai_commit_message_button_sits_above_the_input_and_needs_staged_changes(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    let repo_id = gitcomet_state::model::RepoId(45);
+    let repo = opening_repo_state(repo_id, Path::new("/tmp/repo-ai-commit-message"));
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            this.set_details_hide_when_clean(false, cx);
+            push_test_state(this, app_state_with_repo(repo, repo_id), cx);
+        });
+        let _ = window.draw(app);
+    });
+
+    let button = cx
+        .debug_bounds("ai_commit_message_button")
+        .expect("the AI commit message button");
+    let push_frame = cx
+        .debug_bounds("commit_and_push_button_frame")
+        .expect("the Commit & Push button");
+    assert!(
+        button.bottom() <= push_frame.top() && button.left() >= push_frame.left(),
+        "the button ends the header row above the buttons: {button:?} vs {push_frame:?}"
+    );
+
+    cx.simulate_mouse_move(button.center(), None, Modifiers::default());
+    cx.simulate_event(MouseDownEvent {
+        position: button.center(),
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position: button.center(),
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+    });
+    cx.run_until_parked();
+    let generating = cx.update(|_window, app| {
+        view.read(app)
+            .details_pane
+            .read(app)
+            .commit_message_generation
+            .is_some()
+    });
+    assert!(
+        !generating,
+        "nothing is staged, so the button stays disabled"
+    );
+}
+
+#[gpui::test]
 fn commit_click_dispatches_after_state_update_without_intermediate_redraw(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -609,6 +666,8 @@ fn commit_click_dispatches_after_state_update_without_intermediate_redraw(
 
     cx.update(|window, app| {
         view.update(app, |this, cx| {
+            // Shown as if toggled open: a clean working copy hides it.
+            this.set_details_hide_when_clean(false, cx);
             push_test_state(this, make_state(0, 0), cx);
         });
         let _ = window.draw(app);

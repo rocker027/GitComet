@@ -2,8 +2,8 @@ use crate::model::GitLogTagFetchMode;
 use crate::model::{
     BranchExistsPromptState, CommitRequest, ConflictFileLoadMode, DefaultTagType,
     FileBrowserSettings, ForceDeleteBranchPrompt, ForceRemoveWorktreePrompt,
-    GitOperationOuterOutcome, MaintenanceSettings, RemoteSettings, RepoId, SidebarDataRequest,
-    SidebarMode,
+    GitOperationOuterOutcome, MaintenanceSettings, RangeSelection, RemoteSettings, RepoId,
+    SidebarDataRequest, SidebarMode,
 };
 use gitcomet_core::auth::StagedGitAuth;
 use gitcomet_core::conflict_session::ConflictSession;
@@ -84,6 +84,8 @@ pub enum RepoActionKind {
     ApplyStash,
     PopStash,
     DropStash,
+    UndoGitOperation,
+    RedoGitOperation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,6 +109,8 @@ impl RepoActionKind {
                 | Self::DeleteBranch
                 | Self::ForceDeleteBranch
                 | Self::DeleteBranches
+                | Self::UndoGitOperation
+                | Self::RedoGitOperation
         )
     }
 
@@ -116,7 +120,9 @@ impl RepoActionKind {
             | Self::RenameBranch
             | Self::DeleteBranch
             | Self::ForceDeleteBranch
-            | Self::DeleteBranches => RepositoryRequirement::Repository,
+            | Self::DeleteBranches
+            | Self::UndoGitOperation
+            | Self::RedoGitOperation => RepositoryRequirement::Repository,
             Self::CheckoutBranch
             | Self::CheckoutRemoteBranch
             | Self::CheckoutCommit
@@ -166,7 +172,9 @@ impl RepoActionKind {
             | Self::StagePaths
             | Self::UnstagePath
             | Self::UnstagePaths
-            | Self::DropStash => false,
+            | Self::DropStash
+            | Self::UndoGitOperation
+            | Self::RedoGitOperation => false,
         }
     }
 
@@ -187,6 +195,8 @@ impl RepoActionKind {
             Self::ApplyStash => "Apply stash",
             Self::PopStash => "Pop stash",
             Self::DropStash => "Drop stash",
+            Self::UndoGitOperation => "Undo",
+            Self::RedoGitOperation => "Redo",
         }
     }
 }
@@ -527,6 +537,10 @@ pub enum Msg {
         request_id: Option<u64>,
         repo_id: RepoId,
     },
+    /// Show the live changes as a distinct step in main-view navigation.
+    ReviewWorkingTree {
+        repo_id: RepoId,
+    },
     /// Compare two points (commits, or branch/tag tips resolved to commit ids).
     /// `from` is the base/older side. Loads the changed-file list and drives the
     /// whole-range patch into the diff pane.
@@ -537,12 +551,25 @@ pub enum Msg {
         from_label: String,
         to_label: String,
     },
+    /// Switch between the cumulative and direct diff of two adjacent selected
+    /// commits. The endpoints identify the comparison the user acted on.
+    ToggleAdjacentComparison {
+        repo_id: RepoId,
+        from: CommitId,
+        to: CommitId,
+    },
     /// Compare a commit/branch/tag (resolved to `from`) against the live working
     /// tree. Loads the changed-file list; the tip tracks uncommitted changes.
     CompareWithWorkingTree {
         repo_id: RepoId,
         from: CommitId,
         from_label: String,
+    },
+    /// Toggle untracked files only if this exact working-tree comparison is
+    /// still current. The asynchronously resolved base is not its identity.
+    ToggleWorkingTreeComparisonUntracked {
+        repo_id: RepoId,
+        expected: RangeSelection,
     },
     /// A comparison with explicit options (a merge-base comparison, or one
     /// that lists untracked files). `to: None` is the working tree.
@@ -1105,6 +1132,12 @@ pub enum Msg {
     Push {
         repo_id: RepoId,
     },
+    PushBranch {
+        repo_id: RepoId,
+        local_branch: String,
+        upstream: Upstream,
+        set_upstream: bool,
+    },
     PushAfterCommit {
         repo_id: RepoId,
         target: SafePushAfterCommitTarget,
@@ -1400,10 +1433,20 @@ pub enum Msg {
         repo_id: RepoId,
         index: usize,
     },
+    /// Undoes the newest recorded ref-moving operation of this run (commit,
+    /// branch creation or deletion, soft reset).
+    UndoGitOperation {
+        repo_id: RepoId,
+    },
+    /// Redoes the newest undone operation.
+    RedoGitOperation {
+        repo_id: RepoId,
+    },
     DropStash {
         repo_id: RepoId,
         index: usize,
     },
+    WorktreeFinish(super::WorktreeFinishMsg),
     Internal(InternalMsg),
 }
 
@@ -1832,6 +1875,15 @@ pub enum InternalMsg {
         repo_id: RepoId,
         name: String,
     },
+    /// The worker read `reference` just before the pending operation of
+    /// `kind` moved it: the value the Undo journal records. `None` when it
+    /// could not be read.
+    GitUndoRefObserved {
+        repo_id: RepoId,
+        kind: crate::model::PendingGitUndoKind,
+        reference: String,
+        value: Option<gitcomet_core::domain::CommitId>,
+    },
     /// The action was carried out in (or redirected to) another worktree that
     /// has the branch checked out; on success that worktree is opened.
     RepoActionFinishedInWorktree {
@@ -1856,6 +1908,7 @@ pub enum InternalMsg {
         command: RepoCommandKind,
         result: Result<CommandOutput, Error>,
     },
+    WorktreeFinish(Box<super::WorktreeFinishInternalMsg>),
 }
 
 impl From<InternalMsg> for Msg {

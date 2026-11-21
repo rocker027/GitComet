@@ -44,6 +44,7 @@ pub(in crate::view) enum DiffCommand {
     RevealStatus {
         section: StatusSection,
         path: PathBuf,
+        after_transfer: Option<(RepoId, u64, u64)>,
     },
     RevealCommitFile {
         position: usize,
@@ -54,6 +55,10 @@ pub(in crate::view) enum DiffCommand {
         path: PathBuf,
     },
     FocusReviewFiles {
+        window: AnyWindowHandle,
+    },
+    ReviewWorkingTree {
+        repo: RepoId,
         window: AnyWindowHandle,
     },
     OpenPopover {

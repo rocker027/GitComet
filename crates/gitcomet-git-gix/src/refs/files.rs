@@ -2,6 +2,7 @@ use crate::repo::oid_to_arc_str;
 use gitcomet_core::domain::{Branch, CommitId};
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::Result;
+use gix::bstr::ByteSlice as _;
 use rustc_hash::FxHashMap;
 use std::fs::File;
 use std::io::Read;
@@ -16,27 +17,48 @@ pub(crate) fn reflog_lines_rev(
         return Ok(Vec::new());
     }
 
-    let Some(iter) = platform.rev().map_err(|e| {
+    let read_error = |e: std::io::Error| {
         Error::new(ErrorKind::Backend(format!("gix reflog {context}: {e}")))
             .with_source(e)
             .with_context("read Git reflog", None)
-    })?
-    else {
+    };
+    let line_error = |e| Error::new(ErrorKind::Backend(format!("gix reflog {context}: {e}")));
+    let Some(iter) = platform.rev().map_err(read_error)? else {
         return Ok(Vec::new());
     };
 
-    let mut lines = Vec::with_capacity(limit.unwrap_or(0).min(512));
-    for line in iter {
-        let line =
-            line.map_err(|e| Error::new(ErrorKind::Backend(format!("gix reflog {context}: {e}"))))?;
-        lines.push(line);
-        if let Some(limit) = limit
-            && lines.len() >= limit
-        {
-            break;
-        }
+    let limit = limit.unwrap_or(usize::MAX);
+    match iter.take(limit).collect::<std::result::Result<Vec<_>, _>>() {
+        Ok(lines) => return Ok(lines),
+        // gix's reverse reader uses a fixed buffer and reports overflow as an untyped I/O error.
+        Err(e)
+            if e.iter_errors()
+                .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .any(|io| {
+                    io.kind() == std::io::ErrorKind::Other
+                        && io
+                            .to_string()
+                            .starts_with("buffer too small for line size,")
+                }) => {}
+        Err(e) => return Err(line_error(e)),
     }
-    Ok(lines)
+
+    // The forward reader loads the complete file into the platform's buffer.
+    // Decode only the requested lines, in the same order as the reverse reader.
+    if platform.all().map_err(read_error)?.is_none() {
+        return Ok(Vec::new());
+    }
+    platform
+        .buf
+        .lines_with_terminator()
+        .rev()
+        .take(limit)
+        .map(|line| {
+            gix::refs::file::log::LineRef::from_bytes(line)
+                .map(Into::into)
+                .map_err(line_error)
+        })
+        .collect()
 }
 
 pub(crate) fn try_collect_loose_local_branches_fast(

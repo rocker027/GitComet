@@ -6,6 +6,7 @@
 //! workdir is not among them — it is where you already are.
 
 use super::*;
+use crate::localization::Language;
 use std::rc::Rc;
 
 /// The branch checked out in the worktree at `path`, as the sidebar rows name it.
@@ -28,7 +29,10 @@ fn worktree_picker_item(
     branch: Option<&str>,
     detached: bool,
     path: &std::path::Path,
+    language: Language,
 ) -> components::PickerPromptItem {
+    const DETACHED: &str = "(detached)";
+
     let mut parts = Vec::new();
     if let Some(branch) = branch {
         parts.push(
@@ -39,7 +43,7 @@ fn worktree_picker_item(
         parts.push(components::PickerPromptItemPart::separator("  "));
     } else if detached {
         parts.push(
-            components::PickerPromptItemPart::new("(detached)")
+            components::PickerPromptItemPart::new(language.text(DETACHED, "（分離 HEAD）"))
                 .profile(components::TextTruncationProfile::End)
                 .flexible(false),
         );
@@ -48,7 +52,12 @@ fn worktree_picker_item(
     parts.push(components::PickerPromptItemPart::path(
         path.display().to_string(),
     ));
-    components::PickerPromptItem::from_parts(parts)
+    let item = components::PickerPromptItem::from_parts(parts);
+    if branch.is_none() && detached && language != Language::English {
+        item.with_search_alias(format!("{DETACHED}{}", path.display()))
+    } else {
+        item
+    }
 }
 
 /// Height these pickers cap their row list at. Shared between the panel that
@@ -56,17 +65,22 @@ fn worktree_picker_item(
 /// its geometry for exactly this viewport.
 pub(super) const WORKTREE_PICKER_LIST_MAX_HEIGHT_PX: f32 = 260.0;
 
+pub(super) fn search_placeholder(language: Language) -> &'static str {
+    language.text("Filter worktrees", "篩選工作樹")
+}
+
 fn repo_for(this: &PopoverHost, repo_id: RepoId) -> Option<&RepoState> {
     this.state.repos.iter().find(|repo| repo.id == repo_id)
 }
 
 /// Everything the rows below read, `is_remove` included: the two pickers draw
 /// the same worktrees as different rows, so they cannot share a cache entry.
-fn rows_signature(this: &PopoverHost, repo_id: RepoId, is_remove: bool) -> u64 {
+fn rows_signature(this: &PopoverHost, repo_id: RepoId, is_remove: bool, language: Language) -> u64 {
     use std::hash::Hash;
 
     super::rows_cache::signature(|hasher| {
         is_remove.hash(hasher);
+        language.key().hash(hasher);
         let Some(repo) = repo_for(this, repo_id) else {
             return;
         };
@@ -85,10 +99,11 @@ pub(super) fn cached(
     repo_id: RepoId,
     is_remove: bool,
     query: &str,
+    language: Language,
 ) -> Rc<super::rows_cache::CachedRows<std::path::PathBuf>> {
     let key = super::rows_cache::RowsCacheKey::new(
         super::rows_cache::RowsCacheOwner::Worktree,
-        rows_signature(this, repo_id, is_remove),
+        rows_signature(this, repo_id, is_remove, language),
         query,
     );
     super::rows_cache::get_or_build(&this.worktree_picker_rows_cache, key, |_now| {
@@ -112,6 +127,7 @@ pub(super) fn cached(
                         worktree.branch.as_deref(),
                         worktree.detached,
                         &worktree.path,
+                        language,
                     )
                 };
                 (item, worktree.path.clone())
@@ -126,8 +142,9 @@ pub(super) fn nav_targets(
     repo_id: RepoId,
     is_remove: bool,
     query: &str,
+    language: Language,
 ) -> Vec<std::path::PathBuf> {
-    cached(this, repo_id, is_remove, query).filtered_payloads()
+    cached(this, repo_id, is_remove, query, language).filtered_payloads()
 }
 
 /// Opens the worktree, or the confirmation for removing it. Shared by the click
@@ -164,6 +181,7 @@ pub(super) fn panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let ui_scale = super::popover_ui_scale(cx);
     let ui_scale_percent = ui_scale.percent();
     let width = super::LARGE_PICKER_WIDTH;
@@ -181,11 +199,17 @@ pub(super) fn panel(
         };
 
     let Some(repo) = repo_for(this, repo_id) else {
-        return label(this, "No repository".into(), cx);
+        return label(
+            this,
+            language.text("No repository", "沒有儲存庫").into(),
+            cx,
+        );
     };
     match &repo.worktrees {
-        Loadable::Loading => return label(this, "Loading".into(), cx),
-        Loadable::NotLoaded => return label(this, "Not loaded".into(), cx),
+        Loadable::Loading => return label(this, language.text("Loading", "載入中").into(), cx),
+        Loadable::NotLoaded => {
+            return label(this, language.text("Not loaded", "尚未載入").into(), cx);
+        }
         Loadable::Error(e) => {
             let e = e.clone();
             return label(this, e.into(), cx);
@@ -194,10 +218,20 @@ pub(super) fn panel(
     }
 
     let Some(search) = this.worktree_picker_search_input.clone() else {
-        return label(this, "Search input not initialized".into(), cx);
+        return label(
+            this,
+            language
+                .text("Search input not initialized", "搜尋欄尚未初始化")
+                .into(),
+            cx,
+        );
     };
+    let placeholder = search_placeholder(language);
+    if search.read(cx).placeholder() != placeholder {
+        search.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+    }
     let query = search.read(cx).text().trim().to_string();
-    let built = cached(this, repo_id, is_remove, &query);
+    let built = cached(this, repo_id, is_remove, &query, language);
     let paths = Rc::clone(&built.payloads);
 
     components::context_menu(
@@ -205,7 +239,7 @@ pub(super) fn panel(
         components::PickerPrompt::new(search, this.picker_prompt_scroll.clone())
             .prebuilt_items(Rc::clone(&built.items), Rc::clone(&built.layout))
             .tooltip_host(this.tooltip_host.clone())
-            .empty_text("No worktrees")
+            .empty_text(language.text("No worktrees", "沒有工作樹"))
             .max_height(scaled_px(WORKTREE_PICKER_LIST_MAX_HEIGHT_PX))
             .selected_index(this.worktree_picker_selected_index)
             .render(

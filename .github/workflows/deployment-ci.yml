@@ -367,8 +367,8 @@ jobs:
           grep -q 'os macos: "macos", linux: "linux"' dist/deployment-ci/gitcomet.rb
           grep -q 'on_linux do' dist/deployment-ci/gitcomet.rb
           grep -q 'on_macos do' dist/deployment-ci/gitcomet.rb
-          grep -q 'app "GitComet.app"' dist/deployment-ci/gitcomet.rb
-          grep -q 'binary "#{appdir}/GitComet.app/Contents/MacOS/gitcomet", target: "gitcomet"' dist/deployment-ci/gitcomet.rb
+          grep -q 'app "RevWeave.app"' dist/deployment-ci/gitcomet.rb
+          grep -q 'binary "#{appdir}/RevWeave.app/Contents/MacOS/gitcomet", target: "gitcomet"' dist/deployment-ci/gitcomet.rb
           grep -q 'container type: :naked' dist/deployment-ci/gitcomet.rb
           grep -q 'binary "gitcomet-v#{version}-linux-#{arch}.AppImage", target: "gitcomet"' dist/deployment-ci/gitcomet.rb
           grep -q 'gitcomet-v#{version}-linux-#{arch}.AppImage' dist/deployment-ci/gitcomet.rb
@@ -555,7 +555,7 @@ jobs:
           test "$(rpm -q --queryformat '%{VERSION}' gitcomet)" = "0.0.0~rc.1"
           rpm -qL gitcomet | grep -qx /usr/share/licenses/gitcomet/LICENSE-AGPL-3.0
           rpm -qL gitcomet | grep -qx /usr/share/licenses/gitcomet/NOTICE
-          test "$(rpm -ql gitcomet | grep -c '^/usr/share/icons/hicolor/.*/apps/gitcomet.png$')" = 5
+          test "$(rpm -ql gitcomet | grep -c '^/usr/share/icons/hicolor/.*/apps/revweave.png$')" = 5
           rpm -V gitcomet
           missing=0
           for name in $(rpm -q --recommends --suggests gitcomet); do
@@ -575,7 +575,7 @@ jobs:
           apt-get install -y -qq --no-install-recommends /pkgs/gitcomet_0.0.0.rc.1-1_amd64.deb
           test "$(dpkg-query -W -f='${Version}' gitcomet)" = "0.0.0~rc.1-1"
           grep -q 'GNU AFFERO GENERAL PUBLIC LICENSE' /usr/share/doc/gitcomet/copyright
-          test "$(dpkg -L gitcomet | grep -c '^/usr/share/icons/hicolor/.*/apps/gitcomet.png$')" = 5
+          test "$(dpkg -L gitcomet | grep -c '^/usr/share/icons/hicolor/.*/apps/revweave.png$')" = 5
           missing=0
           for field in Recommends Suggests; do
             for name in $(dpkg-query -W -f="\${${field}}" gitcomet | tr ',' ' '); do
@@ -844,7 +844,7 @@ jobs:
             exit 1
           fi
 
-          app="${mount_point}/GitComet.app"
+          app="${mount_point}/RevWeave.app"
           "$app/Contents/MacOS/gitcomet" --help >/dev/null
 
           # Against the mounted image, not the staging tree: this is what users

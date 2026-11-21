@@ -8,9 +8,10 @@ use std::path::PathBuf;
 use super::RepoPathList;
 
 macro_rules! match_git_auth {
-    ($effect:expr, $auth:ident => $then:expr, $work:ident => $command:expr) => {
+    ($effect:expr, $auth:ident => $then:expr, $work:ident => $command:expr, $finish:ident => $finish_auth:expr) => {
         match $effect {
             Effect::RepoCommand($work) => $command,
+            Effect::WorktreeFinish($finish) => $finish_auth,
             Effect::CloneRepo { auth: $auth, .. } | Effect::Commit { auth: $auth, .. } => $then,
             _ => None,
         }
@@ -20,11 +21,21 @@ macro_rules! match_git_auth {
 impl Effect {
     #[cfg(test)]
     pub(crate) fn git_auth(&self) -> Option<&StagedGitAuth> {
-        match_git_auth!(self, auth => auth.as_ref(), work => work.git_auth())
+        match_git_auth!(
+            self,
+            auth => auth.as_ref(),
+            work => work.git_auth(),
+            finish => finish.git_auth()
+        )
     }
 
     pub(crate) fn git_auth_slot(&mut self) -> Option<&mut Option<StagedGitAuth>> {
-        match_git_auth!(self, auth => Some(auth), work => work.git_auth_slot())
+        match_git_auth!(
+            self,
+            auth => Some(auth),
+            work => work.git_auth_slot(),
+            finish => finish.git_auth_slot()
+        )
     }
 }
 
@@ -46,6 +57,7 @@ pub enum Effect {
     DiffSession(crate::diff_session::DiffSessionEffect),
     HistoryAuthors(crate::history_authors::HistoryAuthorsEffect),
     HistoryFind(crate::history_find::HistoryFindEffect),
+    WorktreeFinish(super::WorktreeFinishEffect),
 
     OpenRepo {
         repo_id: RepoId,
@@ -384,6 +396,14 @@ pub enum Effect {
         repo_id: RepoId,
         index: usize,
     },
+    /// Runs an undo or redo as one `git update-ref` transaction.
+    ApplyGitUndo {
+        repo_id: RepoId,
+        direction: crate::model::GitUndoDirection,
+        updates: Vec<gitcomet_core::services::RefUpdate>,
+        /// Confirmed against the repository before `updates` run.
+        checks: Vec<crate::model::GitUndoCheck>,
+    },
     DropStash {
         repo_id: RepoId,
         index: usize,
@@ -466,7 +486,9 @@ impl Effect {
             | Self::Stash { .. }
             | Self::ApplyStash { .. }
             | Self::PopStash { .. }
-            | Self::DropStash { .. } => true,
+            | Self::ApplyGitUndo { .. }
+            | Self::DropStash { .. }
+            | Self::WorktreeFinish(..) => true,
         }
     }
 }

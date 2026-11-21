@@ -833,6 +833,47 @@ fn local_branch_double_click_checks_out_when_no_worktree_is_open() {
 }
 
 #[test]
+fn remote_branch_double_click_checks_out_creates_or_asks() {
+    let local = |name: &str, upstream: Option<(&str, &str)>| Branch {
+        name: name.to_string(),
+        target: commit_id(name),
+        upstream: upstream.map(|(remote, branch)| Upstream {
+            remote: remote.to_string(),
+            branch: branch.to_string(),
+        }),
+        divergence: None,
+    };
+    let branches = vec![
+        local("main", Some(("origin", "main"))),
+        local("topic", Some(("origin", "feature/topic"))),
+        local("release", None),
+    ];
+    // An existing tracking branch is checked out, whatever its name.
+    assert_eq!(
+        remote_branch_double_click_action(Some(&branches), "origin", "feature/topic"),
+        RemoteBranchDoubleClickAction::CheckoutTracking {
+            name: "topic".to_string(),
+        }
+    );
+    // A free name is created and checked out without a prompt.
+    assert_eq!(
+        remote_branch_double_click_action(Some(&branches), "origin", "next"),
+        RemoteBranchDoubleClickAction::CreateTracking {
+            name: "next".to_string(),
+        }
+    );
+    // A name taken by an unrelated branch, or unknown branches, still ask.
+    assert_eq!(
+        remote_branch_double_click_action(Some(&branches), "origin", "release"),
+        RemoteBranchDoubleClickAction::PromptForName
+    );
+    assert_eq!(
+        remote_branch_double_click_action(None, "origin", "next"),
+        RemoteBranchDoubleClickAction::PromptForName
+    );
+}
+
+#[test]
 fn local_branch_double_click_opens_worktree_when_branch_has_active_worktree() {
     assert_eq!(
         local_branch_double_click_action(
@@ -1789,4 +1830,141 @@ fn branch_reveal_closes_open_history_refs_hover_without_reentrant_root_update(
                 !crate::view::test_support::history_refs_hover_is_open(view.read(app), app)
             })
     });
+}
+
+/// GitKraken-style drag and drop: dropping a sidebar branch on another opens
+/// the drop menu for that pair, and dropping a branch on itself does nothing.
+#[gpui::test]
+fn dropping_a_branch_on_another_opens_the_drop_menu(cx: &mut gpui::TestAppContext) {
+    let repo_dir = tempfile::tempdir().expect("repository fixture directory");
+    let repo_path =
+        gitcomet_core::path_utils::canonicalize_or_original(repo_dir.path().to_path_buf());
+    let (store, events) = AppStore::new_test(Arc::new(BlockingBackend));
+    let store_for_assert = store.clone();
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+
+    let repo_id = RepoId(1);
+    crate::view::test_support::redraw(cx);
+    store_for_assert.dispatch(Msg::OpenRepo(repo_path));
+    wait_until(cx, "opened repo placeholder", |_cx| {
+        store_for_assert.snapshot().active_repo == Some(repo_id)
+    });
+    sync_view_for_tests(cx, &view);
+    store_for_assert.dispatch(Msg::Internal(InternalMsg::HeadBranchLoaded {
+        repo_id,
+        result: Ok("main".to_string()),
+    }));
+    store_for_assert.dispatch(Msg::Internal(InternalMsg::BranchesLoaded {
+        repo_id,
+        result: Ok(vec![
+            Branch {
+                name: "main".to_string(),
+                target: commit_id("main-tip"),
+                upstream: None,
+                divergence: None,
+            },
+            Branch {
+                name: "feature".to_string(),
+                target: commit_id("feature-tip"),
+                upstream: None,
+                divergence: None,
+            },
+        ]),
+    }));
+    wait_until(cx, "branches loaded", |_cx| {
+        let snapshot = store_for_assert.snapshot();
+        snapshot.repos.iter().any(|repo| {
+            repo.id == repo_id
+                && matches!(repo.head_branch, Loadable::Ready(ref head) if head == "main")
+                && matches!(repo.branches, Loadable::Ready(_))
+        })
+    });
+    sync_view_for_tests(cx, &view);
+
+    let feature_ix = branch_row_index_for_name(cx, &view, BranchSection::Local, "feature");
+    let main_ix = branch_row_index_for_name(cx, &view, BranchSection::Local, "main");
+    let feature_row = cx
+        .debug_bounds(leak_selector(format!(
+            "branch_row_{}_{}",
+            repo_id.0, feature_ix
+        )))
+        .expect("feature row");
+    let main_row = cx
+        .debug_bounds(leak_selector(format!(
+            "branch_row_{}_{}",
+            repo_id.0, main_ix
+        )))
+        .expect("main row");
+    // Grab and drop over the labels, away from the trailing badges.
+    let start = gpui::point(feature_row.left() + px(48.0), feature_row.center().y);
+    let drop = gpui::point(main_row.left() + px(48.0), main_row.center().y);
+
+    cx.simulate_mouse_move(start, None, gpui::Modifiers::default());
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::default());
+    cx.simulate_mouse_move(
+        gpui::point(start.x, start.y + px(6.0)),
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_move(
+        drop,
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_up(drop, gpui::MouseButton::Left, gpui::Modifiers::default());
+    crate::view::test_support::redraw(cx);
+
+    let popover_kind = cx.update(|_window, app| {
+        view.read(app)
+            .popover_host
+            .read(app)
+            .popover_kind_for_tests()
+    });
+    assert!(
+        matches!(
+            popover_kind,
+            Some(PopoverKind::BranchDropMenu {
+                repo_id: opened_repo_id,
+                source: BranchMenuTarget::Local { ref name },
+                target: BranchMenuTarget::Local { name: ref target_name },
+            }) if opened_repo_id == repo_id && name == "feature" && target_name == "main"
+        ),
+        "expected dropping feature on main to open the drop menu"
+    );
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host
+                .update(cx, |host, cx| host.close_popover(cx));
+        });
+    });
+    cx.run_until_parked();
+    crate::view::test_support::redraw(cx);
+
+    // A branch dropped back on itself opens nothing.
+    cx.simulate_mouse_move(start, None, gpui::Modifiers::default());
+    cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::default());
+    let wiggle = gpui::point(start.x + px(10.0), start.y);
+    cx.simulate_mouse_move(
+        wiggle,
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_move(
+        start,
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_mouse_up(start, gpui::MouseButton::Left, gpui::Modifiers::default());
+    crate::view::test_support::redraw(cx);
+    assert!(
+        !cx.update(|_window, app| matches!(
+            view.read(app)
+                .popover_host
+                .read(app)
+                .popover_kind_for_tests(),
+            Some(PopoverKind::BranchDropMenu { .. })
+        )),
+        "a branch dropped on itself must not open the drop menu"
+    );
 }

@@ -59,15 +59,23 @@ fn sort_round_trips_through_its_storage_key() {
 
 #[test]
 fn sort_toggle_includes_the_selected_sort() {
-    assert_eq!(sort_toggle_label(RepoPickerSort::Newest), "Sort: Newest");
-    assert_eq!(sort_toggle_label(RepoPickerSort::Oldest), "Sort: Oldest");
+    let english = Language::English;
+    let chinese = Language::TraditionalChinese;
     assert_eq!(
-        sort_toggle_label(RepoPickerSort::Name),
-        format!("Sort: {}", RepoPickerSort::Name.label())
+        sort_toggle_label(RepoPickerSort::Newest, english),
+        "Sort: Newest"
     );
     assert_eq!(
-        sort_toggle_label(RepoPickerSort::Path),
-        format!("Sort: {}", RepoPickerSort::Path.label())
+        sort_toggle_label(RepoPickerSort::Oldest, english),
+        "Sort: Oldest"
+    );
+    assert_eq!(
+        sort_toggle_label(RepoPickerSort::Name, english),
+        format!("Sort: {}", RepoPickerSort::Name.label(english))
+    );
+    assert_eq!(
+        sort_toggle_label(RepoPickerSort::Path, chinese),
+        "排序：路徑（A–Z）"
     );
 }
 
@@ -80,7 +88,35 @@ fn review_regression_selected_sort_applies_to_workspace_rows() {
     alpha.custom_name = Some("Alpha".to_string());
     alpha.last_activation_order = 10;
 
-    let rows = workspace_rows(vec![zulu, alpha], RepoPickerSort::Name);
+    let rows = workspace_rows(vec![zulu, alpha], RepoPickerSort::Name, Language::English);
 
     assert_eq!(names(&rows), vec!["alpha", "zulu"]);
+}
+
+#[test]
+fn traditional_chinese_workspace_rows_keep_english_search_and_canonical_sections() {
+    let mut workspace = session::Workspace::new(vec!["/repos/產品".into()]);
+    workspace.custom_name = Some("Release".into());
+    workspace.restore_on_launch = true;
+    let row = workspace_row(workspace, 0, Language::TraditionalChinese);
+    let items = [row.item];
+
+    assert_eq!(
+        items[0].debug_display_text(),
+        "Release - 已開啟 · 1 個儲存庫"
+    );
+    for query in ["release", "產品", "1 個儲存庫"] {
+        let layout = components::picker_prompt_layout(&items, query);
+        assert_eq!(layout.item_indices, vec![0], "{query}");
+        assert!(layout.match_ranges[0].is_some(), "{query}");
+        assert_eq!(layout.headers[0].1.label.as_ref(), WORKSPACES_SECTION);
+    }
+
+    let alias_layout = components::picker_prompt_layout(&items, "Open · 1 repository");
+    assert_eq!(alias_layout.item_indices, vec![0]);
+    assert_eq!(alias_layout.match_ranges, vec![None]);
+    assert_eq!(
+        section_storage_key(WORKSPACES_SECTION),
+        Some("window_groups")
+    );
 }

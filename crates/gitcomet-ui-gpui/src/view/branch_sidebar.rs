@@ -24,7 +24,9 @@ const WORKTREES_SECTION_KEY: &str = "section:worktrees";
 const SUBMODULES_SECTION_KEY: &str = "section:submodules";
 const ANNEX_SECTION_KEY: &str = "section:annex";
 const STASH_SECTION_KEY: &str = "section:stash";
+const TAGS_SECTION_KEY: &str = "section:tags";
 const EXPANDED_DEFAULT_SECTION_PREFIX: &str = "expanded:";
+const SIDEBAR_SECTION_COLLAPSE_PREFIX: &str = "collapsed:";
 const TRAILING_BOTTOM_SPACERS: usize = 3;
 const REMOTE_HEADER_GROUP_PREFIX: &str = "group:remote-header:";
 const LOCAL_GROUP_PREFIX: &str = "group:local:";
@@ -233,6 +235,10 @@ pub(super) const fn stash_section_storage_key() -> &'static str {
     STASH_SECTION_KEY
 }
 
+pub(super) const fn tags_section_storage_key() -> &'static str {
+    TAGS_SECTION_KEY
+}
+
 pub(super) fn remote_header_storage_key(name: &str) -> String {
     let mut key = String::with_capacity(REMOTE_HEADER_GROUP_PREFIX.len() + name.len());
     key.push_str(REMOTE_HEADER_GROUP_PREFIX);
@@ -385,6 +391,16 @@ pub(super) enum BranchSidebarRow {
         tooltip: SharedString,
         created_at: Option<std::time::SystemTime>,
     },
+    /// GitKraken's Tags section: each local tag, revealing its commit.
+    TagsHeader {
+        top_border: bool,
+        collapsed: bool,
+        collapse_key: SharedString,
+    },
+    TagItem {
+        name: SharedString,
+        target: CommitId,
+    },
 }
 
 #[derive(Clone, Copy, Default)]
@@ -522,6 +538,9 @@ pub(in crate::view) struct BranchSidebarSourceFingerprintParts {
     stash_rev: u64,
     stash_hash: u64,
     stash_reuse_identity: fingerprint::LoadableArcIdentity,
+    tag_rev: u64,
+    tag_hash: u64,
+    tag_reuse_identity: fingerprint::LoadableArcIdentity,
 }
 
 impl BranchSidebarSourceFingerprintParts {
@@ -544,6 +563,8 @@ impl BranchSidebarSourceFingerprintParts {
         let submodule_reuse_identity = fingerprint::loadable_arc_identity(&repo.submodules);
         let stash_rev = repo.stashes_rev;
         let stash_reuse_identity = fingerprint::loadable_arc_identity(&repo.stashes);
+        let tag_rev = repo.tags_rev;
+        let tag_reuse_identity = fingerprint::loadable_arc_identity(&repo.tags);
 
         Self {
             annex_refs_hidden,
@@ -613,6 +634,16 @@ impl BranchSidebarSourceFingerprintParts {
                     || branch_sidebar_stash_source_hash(repo),
                     |parts| parts.stash_hash,
                 ),
+            tag_rev,
+            tag_reuse_identity,
+            tag_hash: reuse
+                .filter(|parts| {
+                    parts.tag_rev == tag_rev || parts.tag_reuse_identity == tag_reuse_identity
+                })
+                .map_or_else(
+                    || branch_sidebar_tag_source_hash(repo),
+                    |parts| parts.tag_hash,
+                ),
         }
     }
 
@@ -632,6 +663,8 @@ impl BranchSidebarSourceFingerprintParts {
         self.annex_hash.hash(&mut hasher);
         6u8.hash(&mut hasher);
         self.history_hidden_remotes.hash(&mut hasher);
+        7u8.hash(&mut hasher);
+        self.tag_hash.hash(&mut hasher);
         BranchSidebarSourceFingerprint(hasher.finish())
     }
 }
@@ -698,6 +731,12 @@ pub(in crate::view) fn branch_sidebar_source_matches_cached(
     let stash_rev = repo.stashes_rev;
     if cached.stash_rev != stash_rev
         && cached.stash_reuse_identity != fingerprint::loadable_arc_identity(&repo.stashes)
+    {
+        return false;
+    }
+
+    if cached.tag_rev != repo.tags_rev
+        && cached.tag_reuse_identity != fingerprint::loadable_arc_identity(&repo.tags)
     {
         return false;
     }
@@ -877,6 +916,18 @@ fn branch_sidebar_stash_source_hash(repo: &RepoState) -> u64 {
     hasher.finish()
 }
 
+fn branch_sidebar_tag_source_hash(repo: &RepoState) -> u64 {
+    let mut hasher = FxHasher::default();
+    fingerprint::hash_loadable_kind(&repo.tags, &mut hasher);
+    if let Loadable::Ready(tags) = &repo.tags {
+        for tag in tags.iter() {
+            tag.name.hash(&mut hasher);
+            tag.target.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
 fn cmp_ascii_case_insensitive(left: &[u8], right: &[u8]) -> Ordering {
     for (&left, &right) in left.iter().zip(right.iter()) {
         let ordering = left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase());
@@ -904,6 +955,34 @@ fn branch_sidebar_depth(depth: usize) -> BranchSidebarDepth {
     u16::try_from(depth).unwrap_or(u16::MAX)
 }
 
+/// The Tags section, as in GitKraken's left panel: local tags by name. Like
+/// the git-annex section it exists only where it has content, so a
+/// repository without tags (or with tag loading turned off) keeps its layout.
+fn push_tag_section_rows(repo: &RepoState, collapsed: bool, rows: &mut Vec<BranchSidebarRow>) {
+    let Loadable::Ready(tags) = &repo.tags else {
+        return;
+    };
+    if tags.is_empty() {
+        return;
+    }
+    rows.push(BranchSidebarRow::TagsHeader {
+        top_border: true,
+        collapsed,
+        collapse_key: tags_section_storage_key().into(),
+    });
+    if collapsed {
+        return;
+    }
+    let mut sorted: Vec<&gitcomet_core::domain::Tag> = tags.iter().collect();
+    sorted.sort_by(|a, b| cmp_case_insensitive_then_case_sensitive(&a.name, &b.name));
+    for tag in sorted {
+        rows.push(BranchSidebarRow::TagItem {
+            name: tag.name.clone().into(),
+            target: tag.target.clone(),
+        });
+    }
+}
+
 fn branch_sidebar_divergence_count(count: usize) -> Option<NonZeroU32> {
     if count == 0 {
         None
@@ -915,7 +994,7 @@ fn branch_sidebar_divergence_count(count: usize) -> Option<NonZeroU32> {
 fn defaults_to_collapsed(collapse_key: &str) -> bool {
     matches!(
         collapse_key,
-        WORKTREES_SECTION_KEY | SUBMODULES_SECTION_KEY | STASH_SECTION_KEY
+        WORKTREES_SECTION_KEY | SUBMODULES_SECTION_KEY | STASH_SECTION_KEY | TAGS_SECTION_KEY
     )
 }
 
@@ -1025,24 +1104,33 @@ pub(super) fn branch_sidebar_rows(
         &branch_filter.trim().to_ascii_lowercase(),
         Some(collapsed_items),
     );
-    rows.extend(sidebar_rows(repo, collapsed_items, branch_filter, false));
+    rows.extend(sidebar_rows(repo, collapsed_items, branch_filter, |key| {
+        is_collapsed(collapsed_items, key)
+    }));
     rows
 }
 
-/// Base tree with open top-level sections. The shared presentation adds pins,
-/// search results and an optional section scope for a minimized flyout.
+/// The full sidebar defaults to open sections. Search and rail flyouts reveal
+/// their contents even if the full sidebar has collapsed them.
 pub(super) fn expanded_sidebar_rows(
     repo: &RepoState,
     collapsed_items: &BTreeSet<String>,
-    branch_filter: &str,
+    reveal_sections: bool,
 ) -> Vec<BranchSidebarRow> {
-    sidebar_rows(repo, collapsed_items, branch_filter, true)
+    sidebar_rows(repo, collapsed_items, "", |key| {
+        !reveal_sections && collapsed_items.contains(&sidebar_section_collapse_key(key))
+    })
+}
+
+pub(super) fn sidebar_section_collapse_key(section_key: &str) -> String {
+    format!("{SIDEBAR_SECTION_COLLAPSE_PREFIX}{section_key}")
 }
 
 pub(super) fn is_top_level_collapse_key(key: &str) -> bool {
     key.starts_with("section:extension:")
         || matches!(
-            key.strip_prefix(EXPANDED_DEFAULT_SECTION_PREFIX)
+            key.strip_prefix(SIDEBAR_SECTION_COLLAPSE_PREFIX)
+                .or_else(|| key.strip_prefix(EXPANDED_DEFAULT_SECTION_PREFIX))
                 .unwrap_or(key),
             PINNED_LOCAL_SECTION_KEY
                 | PINNED_REMOTE_SECTION_KEY
@@ -1052,6 +1140,7 @@ pub(super) fn is_top_level_collapse_key(key: &str) -> bool {
                 | SUBMODULES_SECTION_KEY
                 | ANNEX_SECTION_KEY
                 | STASH_SECTION_KEY
+                | TAGS_SECTION_KEY
         )
 }
 
@@ -1059,7 +1148,7 @@ fn sidebar_rows(
     repo: &RepoState,
     collapsed_items: &BTreeSet<String>,
     branch_filter: &str,
-    always_expanded: bool,
+    is_section_collapsed: impl Fn(&str) -> bool,
 ) -> Vec<BranchSidebarRow> {
     let head = match &repo.head_branch {
         Loadable::Ready(head) => Some(head.as_str()),
@@ -1069,18 +1158,12 @@ fn sidebar_rows(
     // sections; a live query force-expands them so matches are always visible.
     let filter = branch_filter.trim().to_ascii_lowercase();
     let filtering = !filter.is_empty();
-    let local_collapsed = !always_expanded
-        && !filtering
-        && is_collapsed(collapsed_items, local_section_storage_key());
-    let remote_collapsed = !always_expanded
-        && !filtering
-        && is_collapsed(collapsed_items, remote_section_storage_key());
-    let worktrees_collapsed =
-        !always_expanded && is_collapsed(collapsed_items, worktrees_section_storage_key());
-    let submodules_collapsed =
-        !always_expanded && is_collapsed(collapsed_items, submodules_section_storage_key());
-    let stash_collapsed =
-        !always_expanded && is_collapsed(collapsed_items, stash_section_storage_key());
+    let local_collapsed = !filtering && is_section_collapsed(local_section_storage_key());
+    let remote_collapsed = !filtering && is_section_collapsed(remote_section_storage_key());
+    let worktrees_collapsed = is_section_collapsed(worktrees_section_storage_key());
+    let submodules_collapsed = is_section_collapsed(submodules_section_storage_key());
+    let stash_collapsed = is_section_collapsed(stash_section_storage_key());
+    let tags_collapsed = is_section_collapsed(tags_section_storage_key());
     let visible_rows = if local_collapsed {
         0
     } else {
@@ -1114,6 +1197,13 @@ fn sidebar_rows(
     } else {
         match &repo.stashes {
             Loadable::Ready(stashes) => stashes.len(),
+            _ => 0,
+        }
+    } + if tags_collapsed {
+        0
+    } else {
+        match &repo.tags {
+            Loadable::Ready(tags) => tags.len(),
             _ => 0,
         }
     };
@@ -1378,7 +1468,11 @@ fn sidebar_rows(
 
     rows.push(BranchSidebarRow::SectionSpacer);
 
-    push_annex_section_rows(repo, collapsed_items, always_expanded, &mut rows);
+    push_annex_section_rows(
+        repo,
+        is_section_collapsed(annex_section_storage_key()),
+        &mut rows,
+    );
 
     rows.push(BranchSidebarRow::StashHeader {
         top_border: true,
@@ -1419,6 +1513,8 @@ fn sidebar_rows(
             }),
         }
     }
+
+    push_tag_section_rows(repo, tags_collapsed, &mut rows);
 
     for _ in 0..TRAILING_BOTTOM_SPACERS {
         rows.push(BranchSidebarRow::SectionSpacer);
@@ -1715,12 +1811,7 @@ fn ensure_remote_group<'a>(
 }
 
 /// Only repositories that use git-annex get the section.
-fn push_annex_section_rows(
-    repo: &RepoState,
-    collapsed_items: &BTreeSet<String>,
-    always_expanded: bool,
-    rows: &mut Vec<BranchSidebarRow>,
-) {
+fn push_annex_section_rows(repo: &RepoState, collapsed: bool, rows: &mut Vec<BranchSidebarRow>) {
     let Loadable::Ready(support) = &repo.large_file_support else {
         return;
     };
@@ -1728,7 +1819,6 @@ fn push_annex_section_rows(
     if !annex.in_use() {
         return;
     }
-    let collapsed = !always_expanded && is_collapsed(collapsed_items, annex_section_storage_key());
     let summary = match (repo.annex_adjusted_branch(), annex.numcopies) {
         (Some((_, mode)), _) => Some(format!("adjusted ({mode})").into()),
         (None, Some(copies)) => Some(format!("numcopies {copies}").into()),

@@ -15,11 +15,11 @@ use crate::store::reducer::prepared::ReducerInputs;
 use crate::store::repository_runtime::RepositoryRuntimes;
 use gitcomet_core::auth::StagedGitAuth;
 use gitcomet_core::conflict_session::{ConflictRegionResolution, ConflictResolverStrategy};
-use gitcomet_core::domain::{DiffTarget, FileConflictKind};
+use gitcomet_core::domain::{DiffTarget, FileConflictKind, Upstream};
 use gitcomet_core::error::Error;
 use gitcomet_core::services::{
-    CheckoutRemoteBranchMode, CommandOutput, GitHooks, InteractiveRebaseEntry, PullMode,
-    SafePushAfterCommitTarget,
+    CheckoutRemoteBranchMode, CommandOutput, ForcePushLease, GitHooks, InteractiveRebaseEntry,
+    PullMode, SafePushAfterCommitTarget,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -387,6 +387,24 @@ pub(super) fn push(
     bump_in_flight(repos, state, repo_id, InFlightKind::Push);
     vec![Effect::RepoCommand(RepoCommandEffect::Push {
         repo_id,
+        auth: None,
+    })]
+}
+
+pub(super) fn push_branch(
+    repos: &RepositoryRuntimes,
+    state: &mut AppState,
+    repo_id: RepoId,
+    local_branch: String,
+    upstream: Upstream,
+    set_upstream: bool,
+) -> Vec<Effect> {
+    bump_in_flight(repos, state, repo_id, InFlightKind::Push);
+    vec![Effect::RepoCommand(RepoCommandEffect::PushBranch {
+        repo_id,
+        local_branch,
+        upstream,
+        set_upstream,
         auth: None,
     })]
 }
@@ -842,6 +860,7 @@ fn command_may_change_large_file_support(command: &RepoCommandKind) -> bool {
         | RepoCommandKind::PruneMergedBranches
         | RepoCommandKind::PruneLocalTags
         | RepoCommandKind::Push
+        | RepoCommandKind::PushBranch { .. }
         | RepoCommandKind::PushWithTags { .. }
         | RepoCommandKind::PushAfterCommit { .. }
         | RepoCommandKind::ForcePush
@@ -944,7 +963,10 @@ pub(super) fn command_touches_sequencer_state(command: &RepoCommandKind) -> bool
     )
 }
 
-fn command_clears_pending_force_push_lease(command: &RepoCommandKind) -> bool {
+fn command_clears_pending_force_push_lease(
+    command: &RepoCommandKind,
+    lease: &ForcePushLease,
+) -> bool {
     matches!(
         command,
         RepoCommandKind::Pull { .. }
@@ -968,6 +990,11 @@ fn command_clears_pending_force_push_lease(command: &RepoCommandKind) -> bool {
             | RepoCommandKind::Revert { .. }
             | RepoCommandKind::ApplyFileChange { commit: true, .. }
             | RepoCommandKind::MergeAbort
+    ) || matches!(
+        command,
+        RepoCommandKind::PushBranch { local_branch, upstream, set_upstream }
+            if (upstream.remote == lease.remote && upstream.branch == lease.branch)
+                || (*set_upstream && local_branch == &lease.local_branch)
     )
 }
 
@@ -1118,6 +1145,7 @@ pub(super) fn repo_command_finished(
         }
         RepoCommandKind::PushWithTags { .. }
         | RepoCommandKind::Push
+        | RepoCommandKind::PushBranch { .. }
         | RepoCommandKind::PushAfterCommit { .. }
         | RepoCommandKind::ForcePush
         | RepoCommandKind::ForcePushWithLease { .. }
@@ -1157,7 +1185,9 @@ pub(super) fn repo_command_finished(
     match result {
         Ok(output) => {
             repo_state.feedback_mut().last_error = None;
-            if command_clears_pending_force_push_lease(&command) {
+            if let Some(lease) = &repo_state.pending.force_push_lease
+                && command_clears_pending_force_push_lease(&command, lease)
+            {
                 repo_state.pending.force_push_lease = None;
             }
             repo_state.set_recent_commit_messages(Loadable::NotLoaded);

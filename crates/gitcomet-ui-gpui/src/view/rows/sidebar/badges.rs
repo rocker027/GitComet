@@ -147,8 +147,8 @@ pub(in crate::view::rows) fn worktree_branch_badge_label(
 /// which worktree it is checked out in, and only the pair is unambiguous when
 /// several worktrees sit on related branches.
 ///
-/// Falls back to the folder alone when there is no branch to name, and to the
-/// branch alone when the path has no final component.
+/// Shows a shared name once. Falls back to the folder alone when there is no
+/// branch to name, and to the branch alone when the path has no final component.
 pub(in crate::view) fn worktree_origin_label(
     branch: Option<&str>,
     detached: bool,
@@ -160,6 +160,7 @@ pub(in crate::view) fn worktree_origin_label(
         .file_name()
         .map(|name| name.to_string_lossy().into_owned());
     match (branch, folder) {
+        (Some(branch), Some(folder)) if branch.as_ref() == folder => branch,
         (Some(branch), Some(folder)) => SharedString::new(format!("{branch} · {folder}")),
         (Some(branch), None) => branch,
         (None, Some(folder)) => SharedString::new(folder),
@@ -210,16 +211,18 @@ pub(in crate::view) fn worktree_origin_chip(
         .border_color(palette.border)
         .bg(palette.bg)
         .child(svg_icon(WORKTREE_ICON_PATH, palette.icon, icon_size))
-        .child(
-            div()
-                .min_w(px(0.0))
-                .text_size(theme.ui_text(12.0))
-                .text_color(palette.text)
-                .line_clamp(1)
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(label),
-        )
+        .when(!label.is_empty(), |chip| {
+            chip.child(
+                div()
+                    .min_w(px(0.0))
+                    .text_size(theme.ui_text(12.0))
+                    .text_color(palette.text)
+                    .line_clamp(1)
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(label),
+            )
+        })
 }
 
 pub(in crate::view) fn worktree_badge_interaction(theme: AppTheme) -> controls::InteractionStyle {

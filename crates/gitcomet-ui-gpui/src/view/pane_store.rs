@@ -80,6 +80,14 @@ impl PaneStore {
         self.store.upgrade()?.repository(repo_id, lifetime)
     }
 
+    /// The window store's live set of worktrees with an open embedded terminal.
+    pub fn running_terminal_paths(&self) -> Vec<std::path::PathBuf> {
+        self.store
+            .upgrade()
+            .map(|store| store.running_terminal_paths())
+            .unwrap_or_default()
+    }
+
     pub fn read_only() -> Self {
         Self {
             store: std::sync::Weak::new(),

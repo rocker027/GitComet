@@ -61,19 +61,21 @@ impl SidebarPaneView {
             .as_ref()
             .is_none_or(|tabs| tabs.host_tabs)
         {
+            let branches = text(cx, "Branches", "分支");
+            let files = text(cx, "Files", "檔案");
             tabs.push((
                 SidebarTabTarget::Branches,
                 "sidebar_tab_branches".into(),
-                "Branches".into(),
+                branches.into(),
                 Some("icons/git_branch.svg".into()),
-                "Branches".into(),
+                branches.into(),
             ));
             tabs.push((
                 SidebarTabTarget::Files,
                 "sidebar_tab_files".into(),
-                "Files".into(),
+                files.into(),
                 Some("icons/folder.svg".into()),
-                "Files".into(),
+                files.into(),
             ));
         }
         if self.file_history_visible(cx) {
@@ -87,7 +89,7 @@ impl SidebarPaneView {
             tabs.push((
                 SidebarTabTarget::History,
                 "sidebar_tab_file_history".into(),
-                "History".into(),
+                text(cx, "History", "歷史").into(),
                 Some("icons/history.svg".into()),
                 title.into(),
             ));
@@ -195,17 +197,27 @@ impl SidebarPaneView {
                         })
                         .w(components::control_height(ui_scale))
                         .h(components::control_height(ui_scale))
-                        .gitcomet_tooltip(theme, "Files settings".into())
+                        .gitcomet_tooltip(theme, text(cx, "Files settings", "檔案設定").into())
                         .debug_selector(|| "sidebar_explorer_settings".to_string())
                         .into_any_element()
                 }
                 SidebarTool::LocateBranch => {
                     let tooltip = active_local_branch_name.clone().map_or_else(
-                        || SharedString::from("No active local branch to show"),
-                        |name| {
-                            SharedString::from(format!(
-                                "Show and select the active local branch: {name}"
-                            ))
+                        || {
+                            text(
+                                cx,
+                                "No active local branch to show",
+                                "目前沒有可定位的本機分支",
+                            )
+                            .into()
+                        },
+                        |name| match Language::current(cx) {
+                            Language::English => {
+                                format!("Show and select the active local branch: {name}").into()
+                            }
+                            Language::TraditionalChinese => {
+                                format!("顯示並選取目前的本機分支：{name}").into()
+                            }
                         },
                     );
                     components::Button::new("sidebar_locate_active_branch", "")
@@ -251,13 +263,18 @@ impl SidebarPaneView {
                     .gitcomet_tooltip(
                         theme,
                         if can_locate_open_file {
-                            format!(
-                                "Show the open file in the explorer ({})",
-                                crate::kit::components::secondary_shortcut("Shift+L")
-                            )
+                            let shortcut = crate::kit::components::secondary_shortcut("Shift+L");
+                            match Language::current(cx) {
+                                Language::English => {
+                                    format!("Show the open file in the explorer ({shortcut})")
+                                }
+                                Language::TraditionalChinese => {
+                                    format!("在檔案側欄定位已開啟的檔案（{shortcut}）")
+                                }
+                            }
                             .into()
                         } else {
-                            SharedString::from("No file is open")
+                            text(cx, "No file is open", "尚未開啟檔案").into()
                         },
                     )
                     .debug_selector(|| "sidebar_locate_open_file".to_string())

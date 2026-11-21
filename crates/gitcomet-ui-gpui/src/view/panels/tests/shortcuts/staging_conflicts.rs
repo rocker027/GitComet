@@ -122,6 +122,26 @@ fn semantic_conflict_navigation_handles_automatic_deltas_and_projection_rebuilds
             )
         },
     );
+    // Cmd/Ctrl-3 is also the third repository tab's shortcut; while the
+    // resolver is shown it still picks, toggling Theirs back off.
+    cx.simulate_keystrokes("secondary-3");
+    wait_for_main_pane_condition(
+        cx,
+        &view,
+        "secondary-3 picks instead of switching repository tabs",
+        |pane| {
+            pane.conflict_resolver_active_pick_state()
+                .is_some_and(|(_, selected)| {
+                    !selected.contains(&crate::view::conflict_resolver::ConflictChoice::Theirs)
+                })
+        },
+        |pane| {
+            format!(
+                "active pick state={:?}",
+                pane.conflict_resolver_active_pick_state()
+            )
+        },
+    );
     assert!(!can_prev_conflict);
     assert!(can_next_conflict);
     assert!(!can_first);
@@ -878,7 +898,7 @@ fn conflict_resolver_ignores_plain_file_step_keys(cx: &mut gpui::TestAppContext)
 /// and opens the next one in its section, then hands focus back to the diff
 /// so the next Space carries on.
 #[gpui::test]
-fn the_bar_stage_button_stages_and_advances_like_space(cx: &mut gpui::TestAppContext) {
+fn the_bar_stage_button_keeps_its_file_until_the_action_completes(cx: &mut gpui::TestAppContext) {
     let (store, events) = AppStore::new_test(Arc::new(TestBackend));
     let (view, cx) = cx.add_window_view(|window, cx| {
         super::super::super::GitCometView::new(store, events, None, window, cx)
@@ -910,10 +930,9 @@ fn the_bar_stage_button_stages_and_advances_like_space(cx: &mut gpui::TestAppCon
         .expect("a working-tree file offers Stage");
     cx.simulate_click(button.center(), Modifiers::default());
     draw_and_drain_test_window(cx);
-    wait_until_store_diff_target_path(cx, &view, second.as_path());
     sync_store_snapshot(cx, &view);
 
-    assert_eq!(active_worktree_diff_target_path(cx, &view), Some(second));
+    assert_eq!(active_worktree_diff_target_path(cx, &view), Some(first));
     assert!(
         cx.update(|window, app| {
             let diff_renderer = view.read(app).diff_renderer.clone();

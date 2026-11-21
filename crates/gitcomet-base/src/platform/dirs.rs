@@ -274,6 +274,30 @@ mod tests {
     }
 
     #[test]
+    fn revweave_keeps_state_data_and_crashes_separate_from_gitcomet() {
+        let vars = [
+            ("HOME", "/h"),
+            ("LOCALAPPDATA", "/local"),
+            ("APPDATA", "/roaming"),
+        ];
+        let upstream = ProductIdentity::gitcomet();
+        let fork = ProductIdentity::revweave();
+        for platform in [Platform::Linux, Platform::MacOs, Platform::Windows] {
+            let fork_paths = resolve(&fork, platform, &vars);
+            let upstream_paths = resolve(&upstream, platform, &vars);
+            for (fork_path, upstream_path) in fork_paths.into_iter().zip(upstream_paths) {
+                let fork_path = fork_path.unwrap();
+                assert!(
+                    fork_path
+                        .components()
+                        .any(|part| part.as_os_str() == "revweave")
+                );
+                assert_ne!(Some(fork_path), upstream_path);
+            }
+        }
+    }
+
+    #[test]
     fn empty_or_blank_variables_count_as_unset() {
         let gitcomet = ProductIdentity::gitcomet();
         assert_eq!(

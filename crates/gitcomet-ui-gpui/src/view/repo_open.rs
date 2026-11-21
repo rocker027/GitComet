@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::{Language, text};
 
 fn initialize_repository_command(path: &std::path::Path) -> std::process::Command {
     let mut command = gitcomet_core::process::git_command();
@@ -173,7 +174,12 @@ impl GitCometView {
         if show_notice {
             self.push_toast(
                 components::ToastKind::Warning,
-                "Native folder picker unavailable. Enter a repository path manually.".to_string(),
+                text(
+                    cx,
+                    "Native folder picker unavailable. Enter a repository path manually.",
+                    "無法使用系統資料夾選擇器。請手動輸入儲存庫路徑。",
+                )
+                .to_owned(),
                 cx,
             );
         }
@@ -336,6 +342,21 @@ impl GitCometView {
 
     pub(crate) fn activate_next_repo_tab(&mut self, cx: &mut gpui::Context<Self>) -> bool {
         self.activate_repo_tab_in_direction(RepoTabDirection::Next, cx)
+    }
+
+    /// Activates the `index`th repository tab (0-based), if there is one.
+    pub(crate) fn activate_repo_tab_at(
+        &mut self,
+        index: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(repo_id) = self.state.repos.get(index).map(|repo| repo.id) else {
+            return false;
+        };
+        if self.state.active_repo == Some(repo_id) {
+            return true;
+        }
+        self.activate_repo(repo_id, cx)
     }
 
     fn repo_id_for_path(&self, path: &std::path::Path) -> Option<RepoId> {
@@ -561,7 +582,7 @@ impl GitCometView {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Open Git Repository".into()),
+            prompt: Some(text(cx, "Open Git Repository", "開啟 Git 儲存庫").into()),
             directory: None,
         });
 
@@ -596,7 +617,7 @@ impl GitCometView {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Initialize Git Repository".into()),
+            prompt: Some(text(cx, "Initialize Git Repository", "初始化 Git 儲存庫").into()),
             directory: None,
         });
 
@@ -610,7 +631,14 @@ impl GitCometView {
                         let _ = view.update(cx, |this, cx| {
                             this.push_toast(
                                 components::ToastKind::Error,
-                                format!("Could not open the folder picker: {err}"),
+                                match Language::current(cx) {
+                                    Language::English => {
+                                        format!("Could not open the folder picker: {err}")
+                                    }
+                                    Language::TraditionalChinese => {
+                                        format!("無法開啟資料夾選擇器：{err}")
+                                    }
+                                },
                                 cx,
                             );
                         });
@@ -620,7 +648,14 @@ impl GitCometView {
                         let _ = view.update(cx, |this, cx| {
                             this.push_toast(
                                 components::ToastKind::Error,
-                                format!("Could not open the folder picker: {err}"),
+                                match Language::current(cx) {
+                                    Language::English => {
+                                        format!("Could not open the folder picker: {err}")
+                                    }
+                                    Language::TraditionalChinese => {
+                                        format!("無法開啟資料夾選擇器：{err}")
+                                    }
+                                },
                                 cx,
                             );
                         });
@@ -638,7 +673,14 @@ impl GitCometView {
                     Ok(()) => {
                         this.push_toast(
                             components::ToastKind::Success,
-                            format!("Initialized repository at {}", path.display()),
+                            match Language::current(cx) {
+                                Language::English => {
+                                    format!("Initialized repository at {}", path.display())
+                                }
+                                Language::TraditionalChinese => {
+                                    format!("已在 {} 初始化儲存庫", path.display())
+                                }
+                            },
                             cx,
                         );
                         this.open_repo_path(path, cx);

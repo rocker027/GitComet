@@ -113,6 +113,14 @@ impl PopoverHost {
                 index,
                 message,
             } => stash_drop_confirm::panel(self, repo_id, index, message, cx),
+            PopoverKind::DeleteTagConfirm {
+                repo_id,
+                name,
+                remote,
+            } => destructive_confirms::delete_tag_panel(self, repo_id, name, remote, cx),
+            PopoverKind::DiscardAllConfirm { repo_id } => {
+                destructive_confirms::discard_all_panel(self, repo_id, cx)
+            }
             PopoverKind::CloneRepo => clone_repo::panel(self, cx),
             PopoverKind::ResetPrompt {
                 repo_id,
@@ -151,6 +159,14 @@ impl PopoverHost {
                         PopoverKind::remote(repo_id, RemotePopoverKind::OpenInBrowserMenu),
                         cx,
                     ),
+                    RemotePopoverKind::EditUrlMenu => self.context_menu_view(
+                        PopoverKind::remote(repo_id, RemotePopoverKind::EditUrlMenu),
+                        cx,
+                    ),
+                    RemotePopoverKind::RemoveMenu => self.context_menu_view(
+                        PopoverKind::remote(repo_id, RemotePopoverKind::RemoveMenu),
+                        cx,
+                    ),
                 },
                 RepoPopoverKind::Worktree(worktree_kind) => match worktree_kind {
                     WorktreePopoverKind::SectionMenu => self.context_menu_view(
@@ -182,6 +198,12 @@ impl PopoverHost {
                     }
                     WorktreePopoverKind::RemoveConfirm { path, branch } => {
                         worktree_remove_confirm::panel(self, repo_id, path, branch, cx)
+                    }
+                    WorktreePopoverKind::FinishSetup { .. } => {
+                        worktree_finish_setup::panel(self, repo_id, cx)
+                    }
+                    WorktreePopoverKind::FinishQueue { run_id } => {
+                        worktree_finish_queue::panel(self, repo_id, run_id, cx)
                     }
                 },
                 RepoPopoverKind::Annex(annex_kind) => match annex_kind {
@@ -221,11 +243,9 @@ impl PopoverHost {
                     }
                 },
             },
-            PopoverKind::PushSetUpstreamPrompt {
-                repo_id,
-                remote,
-                configure_only_for,
-            } => push_set_upstream_prompt::panel(self, repo_id, remote, configure_only_for, cx),
+            PopoverKind::PushSetUpstreamPrompt { repo_id, mode, .. } => {
+                push_set_upstream_prompt::panel(self, repo_id, mode, cx)
+            }
             PopoverKind::ForcePushConfirm { repo_id } => {
                 force_push_confirm::panel(self, repo_id, cx)
             }
@@ -515,8 +535,26 @@ impl PopoverHost {
             PopoverKind::BranchMenu { repo_id, target } => {
                 self.context_menu_view(PopoverKind::BranchMenu { repo_id, target }, cx)
             }
+            PopoverKind::RefPickerMenu { repo_id, purpose } => {
+                self.context_menu_view(PopoverKind::RefPickerMenu { repo_id, purpose }, cx)
+            }
+            PopoverKind::BranchDropMenu {
+                repo_id,
+                source,
+                target,
+            } => self.context_menu_view(
+                PopoverKind::BranchDropMenu {
+                    repo_id,
+                    source,
+                    target,
+                },
+                cx,
+            ),
             PopoverKind::BranchSectionMenu { repo_id, section } => {
                 self.context_menu_view(PopoverKind::BranchSectionMenu { repo_id, section }, cx)
+            }
+            PopoverKind::StashRestoreMenu { repo_id } => {
+                self.context_menu_view(PopoverKind::StashRestoreMenu { repo_id }, cx)
             }
             PopoverKind::StashMenu {
                 repo_id,

@@ -1,5 +1,6 @@
 use super::{
     DiskFileStamp, GixRepo, TEMP_FILE_MEMO_LIMIT, VerifiedPreviewBlob, WorktreeSourceMemoEntry,
+    comparison::{ComparisonIndex, intent_to_add_index},
     conflict_stages::{
         ConflictStageData, gix_index_conflict_stage_data, gix_index_stage_object_id_optional,
     },
@@ -63,28 +64,32 @@ impl GixRepo {
     }
 
     /// The unified diff command for `target`, and the index it reads when that
-    /// is not the repository's own. Against the working tree an untracked file
-    /// (the new copy of a file moved without `git mv`) is invisible to
-    /// `git diff`, so it goes into a copy of the index as intent-to-add. The
-    /// copy must outlive the command.
-    fn unified_diff_command(&self, target: &DiffTarget) -> (Command, Option<tempfile::TempPath>) {
+    /// is not the repository's own. A temporary index makes an untracked file
+    /// visible as intent-to-add without writing to the real index or object
+    /// store. Keep the temporary context alive for the command.
+    fn unified_diff_command(
+        &self,
+        target: &DiffTarget,
+        cancellation: &CancellationToken,
+    ) -> Result<(Command, Option<ComparisonIndex>)> {
         let mut command = self.build_unified_diff_command(target);
         let index = match target {
             DiffTarget::CommitRange {
                 to_commit_id: None,
                 path: Some(path),
                 ..
-            } if self.is_untracked_worktree_file(path) => super::comparison::intent_to_add_index(
+            } if self.is_untracked_worktree_file(path) => Some(intent_to_add_index(
                 &self.spec.workdir,
-                &self.repo().index_path(),
+                &self.repo(),
                 std::slice::from_ref(path),
-            ),
+                cancellation,
+            )?),
             _ => None,
         };
         if let Some(index) = &index {
-            command.env("GIT_INDEX_FILE", index);
+            index.configure(&mut command);
         }
-        (command, index)
+        Ok((command, index))
     }
 
     /// Whether `path` is a file in the working tree that the index does not
@@ -203,7 +208,7 @@ impl GixRepo {
     }
 
     pub(super) fn diff_unified_impl(&self, target: &DiffTarget) -> Result<String> {
-        let (command, _index) = self.unified_diff_command(target);
+        let (command, _index) = self.unified_diff_command(target, &CancellationToken::new())?;
         run_git_parsed_stdout(command, "git diff", true, |stdout| {
             Diff::read_unified_text(stdout)
                 .map(|(text, _notice)| text)
@@ -256,7 +261,7 @@ impl GixRepo {
             return Ok(diff);
         }
 
-        let (command, _index) = self.unified_diff_command(target);
+        let (command, _index) = self.unified_diff_command(target, cancellation)?;
         let (bytes, notice) = run_git_parsed_stdout_cancellable(
             command,
             "git diff",

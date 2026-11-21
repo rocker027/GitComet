@@ -1,5 +1,6 @@
 use super::*;
 use crate::appearance::{Appearance, FontRole, UiDensity};
+use crate::localization::{Language, text};
 use crate::preference_writer::PreferenceWriter;
 use crate::ui_scale;
 use crate::view::preference_change::PreferenceChange;
@@ -31,8 +32,12 @@ const SETTINGS_DROPDOWN_DETAIL_LIST_EXTRA_HEIGHT_PX: f32 = 24.0;
 const SETTINGS_DROPDOWN_DENSE_DETAIL_ROW_HEIGHT_PX: f32 = 28.0;
 const AUTO_FETCH_INTERVAL_INPUT_WIDTH_PX: f32 = 80.0;
 
-fn settings_window_title() -> String {
-    format!("Settings: {}", crate::view::product_name())
+fn settings_window_title(language: Language) -> String {
+    format!(
+        "{}: {}",
+        language.text("Settings", "設定"),
+        crate::view::product_name()
+    )
 }
 
 fn repository_url() -> Option<&'static str> {
@@ -314,6 +319,7 @@ fn remote_url_policy_settings_label(policy: RemoteUrlPolicy) -> String {
 enum SettingsSection {
     #[cfg(target_os = "windows")]
     GraphicsRenderer,
+    Language,
     UiScale,
     WindowControls,
     BrowserOpenTarget,
@@ -349,9 +355,11 @@ impl SettingsSection {
         match self {
             #[cfg(target_os = "windows")]
             Self::GraphicsRenderer => SettingsCategory::General,
-            Self::UiScale | Self::WindowControls | Self::UiFont | Self::EditorFont => {
-                SettingsCategory::Appearance
-            }
+            Self::Language
+            | Self::UiScale
+            | Self::WindowControls
+            | Self::UiFont
+            | Self::EditorFont => SettingsCategory::Appearance,
             Self::BrowserOpenTarget
             | Self::ExternalCodeEditor
             | Self::DateFormat
@@ -396,6 +404,7 @@ enum SettingsCategory {
     GitExecutable,
     Environment,
     Links,
+    CommitMessage,
 }
 
 impl SettingsCategory {
@@ -416,27 +425,30 @@ impl SettingsCategory {
         SettingsCategory::GitExecutable,
         SettingsCategory::Environment,
         SettingsCategory::Links,
+        SettingsCategory::CommitMessage,
     ];
 
-    fn label(self) -> &'static str {
-        match self {
-            Self::General => "General",
-            Self::Appearance => "Appearance",
-            Self::Workspaces => "Workspaces",
-            Self::SecurityPrivacy => "Security / Privacy",
-            Self::Terminal => "Terminal",
-            Self::ChangeTracking => "Change tracking",
-            Self::Diff => "Diff",
-            Self::FileEditing => "File editing",
-            Self::GitLog => "Git log",
-            Self::Remotes => "Remotes",
-            Self::LargeFiles => "Large files",
-            Self::Tags => "Tags",
-            Self::Maintenance => "Maintenance",
-            Self::GitExecutable => "Executables",
-            Self::Environment => "Environment",
-            Self::Links => "Links",
-        }
+    fn label(self, language: Language) -> &'static str {
+        let (english, traditional_chinese) = match self {
+            Self::General => ("General", "一般"),
+            Self::Appearance => ("Appearance", "外觀"),
+            Self::Workspaces => ("Workspaces", "工作空間"),
+            Self::SecurityPrivacy => ("Security / Privacy", "安全與隱私"),
+            Self::Terminal => ("Terminal", "終端機"),
+            Self::ChangeTracking => ("Change tracking", "變更追蹤"),
+            Self::Diff => ("Diff", "差異"),
+            Self::FileEditing => ("File editing", "檔案編輯"),
+            Self::GitLog => ("Git log", "Git 歷史"),
+            Self::Remotes => ("Remotes", "遠端"),
+            Self::LargeFiles => ("Large files", "大型檔案"),
+            Self::Tags => ("Tags", "標籤"),
+            Self::Maintenance => ("Maintenance", "維護"),
+            Self::GitExecutable => ("Executables", "執行檔"),
+            Self::Environment => ("Environment", "環境"),
+            Self::Links => ("Links", "連結"),
+            Self::CommitMessage => ("AI commit message", "AI 提交訊息"),
+        };
+        language.text(english, traditional_chinese)
     }
 
     fn icon(self) -> &'static str {
@@ -457,6 +469,7 @@ impl SettingsCategory {
             Self::GitExecutable => "icons/git_branch.svg",
             Self::Environment => "icons/computer.svg",
             Self::Links => "icons/link.svg",
+            Self::CommitMessage => "icons/lightning.svg",
         }
     }
 
@@ -478,6 +491,7 @@ impl SettingsCategory {
             Self::GitExecutable => "settings_window_nav_git_executable",
             Self::Environment => "settings_window_nav_environment",
             Self::Links => "settings_window_nav_links",
+            Self::CommitMessage => "settings_window_nav_commit_message",
         }
     }
 
@@ -545,6 +559,9 @@ impl SettingsCategory {
                 "links theme guide github license open source licenses professional edition \
                  upgrade waitlist"
             }
+            Self::CommitMessage => {
+                "ai commit message prompt template orca agent generate staged 提交訊息 提示詞 模板"
+            }
         }
     }
 
@@ -560,7 +577,13 @@ impl SettingsCategory {
             return true;
         }
         self.search_haystack().contains(query.as_str())
-            || (matches!(self, Self::Appearance) && theme_names_match(&query))
+            || self
+                .label(Language::TraditionalChinese)
+                .to_lowercase()
+                .contains(query.as_str())
+            || (matches!(self, Self::Appearance)
+                && ("interface language english zh-tw 介面語言 繁體中文".contains(query.as_str())
+                    || theme_names_match(&query)))
     }
 }
 
@@ -663,6 +686,8 @@ pub(crate) struct SettingsWindowView {
     terminal_external_program_input: Entity<components::TextInput>,
     terminal_external_args_input: Entity<components::TextInput>,
     terminal_status: Option<TerminalSettingsStatus>,
+    commit_message_prompt_input: Entity<components::TextInput>,
+    commit_message_prompt_status: Option<SharedString>,
     diff_content_mode: DiffContentMode,
     diff_whitespace_mode: DiffWhitespaceMode,
     diff_engine: DiffEngine,
@@ -855,6 +880,7 @@ pub(in crate::view) fn open_settings_at(
                     "executables" => SettingsCategory::GitExecutable,
                     "environment" => SettingsCategory::Environment,
                     "links" => SettingsCategory::Links,
+                    "commit-message" => SettingsCategory::CommitMessage,
                     _ => return,
                 };
                 view.select_category(page, cx);
@@ -908,7 +934,7 @@ fn settings_window_options_for_scale(
 
 fn settings_window_titlebar_options() -> TitlebarOptions {
     TitlebarOptions {
-        title: Some(settings_window_title().into()),
+        title: Some(settings_window_title(Language::default()).into()),
         // Windows needs a transparent native titlebar to avoid rendering its own
         // caption on top of the custom settings header.
         appears_transparent: cfg!(any(target_os = "macos", target_os = "windows")),
@@ -1017,42 +1043,50 @@ fn settings_dropdown_height(
 }
 
 fn history_columns_settings_label(
+    cx: &App,
     show_graph: bool,
     show_author: bool,
     show_date: bool,
     show_sha: bool,
 ) -> SharedString {
+    use crate::localization::text;
+
     let mut columns = Vec::new();
     if show_graph {
-        columns.push("Graph");
+        columns.push(text(cx, "Graph", "提交圖"));
     }
     if show_author {
-        columns.push("Author");
+        columns.push(text(cx, "Author", "作者"));
     }
     if show_date {
-        columns.push("Commit date");
+        columns.push(text(cx, "Commit date", "提交日期"));
     }
     if show_sha {
         columns.push("SHA");
     }
 
     if columns.is_empty() {
-        "None".into()
+        text(cx, "None", "無").into()
     } else {
-        columns.join(", ").into()
+        columns.join(text(cx, ", ", "、")).into()
     }
 }
 
 fn hidden_refs_summary(
+    cx: &App,
     settings: &gitcomet_state::model::HiddenRefSettings,
     presets: &[gitcomet_core::identity::HistoryRefPreset],
     fixed: &gitcomet_core::services::HistoryRefFilter,
 ) -> SharedString {
-    match settings.hidden_count(presets, fixed) {
-        0 if !settings.enabled => "Off".into(),
-        0 => "None".into(),
-        1 => "1 namespace".into(),
-        count => format!("{count} namespaces").into(),
+    use crate::localization::{Language, text};
+
+    let count = settings.hidden_count(presets, fixed);
+    match (Language::current(cx), count) {
+        (_, 0) if !settings.enabled => text(cx, "Off", "關閉").into(),
+        (_, 0) => text(cx, "None", "無").into(),
+        (Language::English, 1) => "1 namespace".into(),
+        (Language::English, count) => format!("{count} namespaces").into(),
+        (Language::TraditionalChinese, count) => format!("{count} 個命名空間").into(),
     }
 }
 
@@ -1086,9 +1120,10 @@ impl SettingsWindowView {
             cx.notify();
         })
         .detach();
-        window.set_window_title(&settings_window_title());
-
         let ui_session = session::load();
+        Language::initialize(ui_session.ui_language.as_deref(), cx);
+        window.set_window_title(&settings_window_title(Language::current(cx)));
+
         let ui_preferences = UiPreferences::from_session(&ui_session);
         crate::session_ui::initialize_appearance(&ui_session, cx);
         let ui_scale = crate::session_ui::ui_scale(&ui_session, cx);
@@ -1230,6 +1265,21 @@ impl SettingsWindowView {
             input
         });
 
+        let commit_message_prompt_input = cx.new(|cx| {
+            let mut input = components::TextInput::new(
+                components::TextInputOptions {
+                    multiline: true,
+                    soft_wrap: true,
+                    min_lines: 8,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            input.set_text(saved_commit_message_prompt(), cx);
+            input
+        });
+
         let git_executable_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
@@ -1325,7 +1375,7 @@ impl SettingsWindowView {
         let search_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Search".into(),
+                    placeholder: text(cx, "Search", "搜尋").into(),
                     leading_icon: Some("icons/zoom.svg"),
                     ..Default::default()
                 },
@@ -1523,6 +1573,8 @@ impl SettingsWindowView {
             terminal_external_program_input,
             terminal_external_args_input,
             terminal_status: None,
+            commit_message_prompt_input,
+            commit_message_prompt_status: None,
             diff_content_mode,
             diff_whitespace_mode,
             diff_engine,
@@ -1711,6 +1763,8 @@ impl SettingsWindowView {
 
 mod appearance;
 mod cards;
+mod commit_message_prompt;
+use commit_message_prompt::saved_commit_message_prompt;
 pub(crate) mod close_guards;
 mod extension_host;
 mod extension_pages;

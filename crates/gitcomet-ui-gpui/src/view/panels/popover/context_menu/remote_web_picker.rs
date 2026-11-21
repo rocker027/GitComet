@@ -1,8 +1,9 @@
 use super::*;
+use crate::localization::Language;
 
 /// One row per remote with a web page, `origin` first, so the user picks which
 /// to open. Digits pick directly; the first row is preselected for Enter.
-pub(super) fn model(this: &PopoverHost, repo_id: RepoId) -> ContextMenuModel {
+pub(super) fn model(this: &PopoverHost, repo_id: RepoId, language: Language) -> ContextMenuModel {
     let pages = this
         .state
         .repos
@@ -13,13 +14,22 @@ pub(super) fn model(this: &PopoverHost, repo_id: RepoId) -> ContextMenuModel {
         .unwrap_or_default();
 
     let mut items = vec![
-        ContextMenuItem::Header(crate::menu_labels::OPEN_REMOTE_IN_BROWSER.into()),
+        ContextMenuItem::Header(
+            language
+                .text(
+                    crate::menu_labels::OPEN_REMOTE_IN_BROWSER,
+                    "在瀏覽器中開啟遠端",
+                )
+                .into(),
+        ),
         ContextMenuItem::Separator,
     ];
     // The remotes can change under an open picker.
     if pages.is_empty() {
         items.push(ContextMenuItem::Label(
-            "No remote has a web page to open".into(),
+            language
+                .text("No remote has a web page to open", "沒有可開啟的遠端網頁")
+                .into(),
         ));
         return ContextMenuModel::new(items);
     }

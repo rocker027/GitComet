@@ -325,3 +325,69 @@ fn multi_cherry_pick_colours_skip_stash_helper_commits(cx: &mut gpui::TestAppCon
     );
     assert_eq!(colours, [("u".to_string(), 3), ("t".to_string(), 2)]);
 }
+
+/// GitKraken's single keys: click a row of the editor, then press D.
+#[gpui::test]
+fn pressing_d_on_a_selected_row_drops_it(cx: &mut gpui::TestAppContext) {
+    use crate::view::panels::tests::{app_state_with_repo, push_test_state};
+    use gitcomet_state::model::{InteractiveCherryPickSetup, RepoState};
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(1);
+    let first = "1111111111111111111111111111111111111111";
+    let second = "2222222222222222222222222222222222222222";
+    let mut repo = RepoState::new_opening(
+        repo_id,
+        gitcomet_core::domain::RepoSpec {
+            workdir: std::env::temp_dir().join("gitcomet_ui_test_irebase_single_key"),
+        },
+    );
+    repo.open = Loadable::Ready(());
+    repo.repository_mode = Some(gitcomet_core::domain::RepositoryMode::WorkingTree);
+    repo.interactive_cherry_pick_setup = Some(InteractiveCherryPickSetup {
+        entries: vec![
+            entry(first, InteractiveRebaseAction::Pick),
+            entry(second, InteractiveRebaseAction::Pick),
+        ],
+        source_colors: vec![],
+        full_messages: Loadable::Ready(()),
+    });
+    // History has the second commit selected.
+    repo.history_state.selected_commit = Some(CommitId(second.into()));
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            push_test_state(this, app_state_with_repo(repo, repo_id), cx);
+        });
+    });
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+
+    // Click the first commit's row while history still has the second
+    // selected: the key acts on the clicked row, not the stale selection.
+    click(cx, "irebase_row_0");
+    cx.simulate_keystrokes("d");
+    cx.run_until_parked();
+
+    let actions = cx.update(|_window, app| {
+        view.read(app)
+            .main_pane
+            .read(app)
+            .active_irebase()
+            .map(|st| {
+                st.entries
+                    .iter()
+                    .map(|e| (e.commit_id.clone(), e.action))
+                    .collect::<Vec<_>>()
+            })
+    });
+    assert_eq!(
+        actions,
+        Some(vec![
+            (first.to_string(), InteractiveRebaseAction::Drop),
+            (second.to_string(), InteractiveRebaseAction::Pick),
+        ])
+    );
+}

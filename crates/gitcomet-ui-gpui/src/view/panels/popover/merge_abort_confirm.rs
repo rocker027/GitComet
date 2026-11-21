@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 use gitcomet_core::services::SequencerState;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,6 +28,7 @@ pub(super) fn panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let mode = this
         .state
         .repos
@@ -37,32 +39,44 @@ pub(super) fn panel(
 
     let (title, body, command, button_id, button_label) = match mode {
         AbortMode::Merge => (
-            "Abort merge?",
-            "This will abort the current merge and restore the pre-merge state. Any resolved conflicts will be lost.",
+            language.text("Abort merge?", "要中止合併嗎？"),
+            language.text(
+                "This will abort the current merge and restore the pre-merge state. Any resolved conflicts will be lost.",
+                "這會中止目前的合併並還原到合併前的狀態。已解決的衝突會失去處理結果。",
+            ),
             "git merge --abort",
             "merge_abort_go",
-            "Abort merge",
+            language.text("Abort merge", "中止合併"),
         ),
         AbortMode::RebaseOrApply => (
-            "Abort apply/rebase?",
-            "This will abort the in-progress patch apply or rebase and restore the previous state. Any resolved conflicts will be lost.",
+            language.text("Abort apply/rebase?", "要中止套用修補檔或變基嗎？"),
+            language.text(
+                "This will abort the in-progress patch apply or rebase and restore the previous state. Any resolved conflicts will be lost.",
+                "這會中止進行中的修補檔套用或變基，並還原到先前的狀態。已解決的衝突會失去處理結果。",
+            ),
             "git rebase --abort / git am --abort",
             "rebase_or_apply_abort_go",
-            "Abort",
+            language.text("Abort", "中止"),
         ),
         AbortMode::CherryPick => (
-            "Abort cherry-pick?",
-            "This will abort the current cherry-pick and restore the previous state. Any resolved conflicts will be lost.",
+            language.text("Abort cherry-pick?", "要中止揀選提交嗎？"),
+            language.text(
+                "This will abort the current cherry-pick and restore the previous state. Any resolved conflicts will be lost.",
+                "這會中止目前的揀選提交操作，並還原到先前的狀態。已解決的衝突會失去處理結果。",
+            ),
             "git cherry-pick --abort",
             "cherry_pick_abort_go",
-            "Abort cherry-pick",
+            language.text("Abort cherry-pick", "中止揀選"),
         ),
         AbortMode::Revert => (
-            "Abort revert?",
-            "This will stop the current revert and reset the working tree to HEAD. Any resolved conflicts and staged reverted changes will be lost; commits an earlier step already made stay on the branch.",
+            language.text("Abort revert?", "要中止還原提交嗎？"),
+            language.text(
+                "This will stop the current revert and reset the working tree to HEAD. Any resolved conflicts and staged reverted changes will be lost; commits an earlier step already made stay on the branch.",
+                "這會中止目前的還原提交操作，並將工作樹重設到 HEAD。衝突的處理結果與已暫存的還原變更將會遺失。先前步驟已建立的提交會留在分支上。",
+            ),
             "git revert --abort",
             "revert_abort_go",
-            "Abort revert",
+            language.text("Abort revert", "中止還原"),
         ),
     };
 

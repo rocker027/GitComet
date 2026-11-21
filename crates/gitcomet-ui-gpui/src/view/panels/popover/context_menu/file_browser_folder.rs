@@ -1,5 +1,6 @@
 use super::explorer_operations::push_group;
 use super::*;
+use crate::localization::Language;
 use gitcomet_core::domain::FileSource;
 
 /// Context menu for a folder row in the sidebar file browser, and for the
@@ -9,6 +10,7 @@ pub(super) fn model(
     this: &PopoverHost,
     repo_id: RepoId,
     path: &std::path::Path,
+    language: Language,
 ) -> ContextMenuModel {
     let repo = this.state.repos.iter().find(|repo| repo.id == repo_id);
     let source = repo
@@ -36,14 +38,19 @@ pub(super) fn model(
     });
 
     let root = path.as_os_str().is_empty();
-    let ops = super::explorer_operations::ExplorerOps::new(this, repo_id, path, &source);
+    let ops = super::explorer_operations::ExplorerOps::new(this, repo_id, path, &source, language);
     let mut items = Vec::new();
     // The root is never collapsed and recursive expansion refuses it, so its
     // tree entries would do nothing.
     if !root {
         push_group(&mut items, |items| {
             items.push(ContextMenuItem::Entry {
-                label: if is_expanded { "Collapse" } else { "Expand" }.into(),
+                label: if is_expanded {
+                    language.text("Collapse", "收合")
+                } else {
+                    language.text("Expand", "展開")
+                }
+                .into(),
                 icon: Some(
                     if is_expanded {
                         "icons/chevron_down.svg"
@@ -60,7 +67,9 @@ pub(super) fn model(
                 }),
             });
             items.push(ContextMenuItem::Entry {
-                label: "Expand all under here".into(),
+                label: language
+                    .text("Expand all under here", "展開下方所有資料夾")
+                    .into(),
                 icon: Some("icons/arrow_down_to_line.svg".into()),
                 shortcut: None,
                 disabled: filtered_by_search,
@@ -71,7 +80,9 @@ pub(super) fn model(
                 }),
             });
             items.push(ContextMenuItem::Entry {
-                label: "Collapse all under here".into(),
+                label: language
+                    .text("Collapse all under here", "收合下方所有資料夾")
+                    .into(),
                 icon: Some("icons/arrow_up_to_line.svg".into()),
                 shortcut: None,
                 disabled: filtered_by_search,
@@ -94,7 +105,9 @@ pub(super) fn model(
         // menu draws.
         if matches!(source, FileSource::WorkingDirectory) {
             items.push(ContextMenuItem::Entry {
-                label: "Open folder location".into(),
+                label: language
+                    .text("Open folder location", "開啟資料夾位置")
+                    .into(),
                 icon: Some("icons/folder.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -109,7 +122,9 @@ pub(super) fn model(
             // entry can only ever produce a "not configured" error toast.
             if this.external_editor_available() {
                 items.push(ContextMenuItem::Entry {
-                    label: "Open in code editor".into(),
+                    label: language
+                        .text("Open in code editor", "在程式碼編輯器中開啟")
+                        .into(),
                     icon: Some("icons/open_external.svg".into()),
                     shortcut: None,
                     disabled: false,
@@ -120,7 +135,7 @@ pub(super) fn model(
                 });
             }
         }
-        push_copy_path_entries(items, this, repo_id, path, None);
+        push_copy_path_entries(items, this, repo_id, path, None, language);
     });
     if let Some(ops) = &ops {
         push_group(&mut items, |items| ops.push_destroy(items));

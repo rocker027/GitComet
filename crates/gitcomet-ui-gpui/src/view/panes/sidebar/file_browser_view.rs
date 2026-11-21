@@ -13,6 +13,7 @@ use super::{
 use crate::kit::click::PointerClickExt;
 use crate::kit::components::ControlInteractionExt;
 use crate::kit::components::InteractiveRowExt;
+use crate::localization::{Language, text};
 use gpui::prelude::*;
 use palette::IntoColor;
 
@@ -41,16 +42,19 @@ impl SidebarPaneView {
         let body: AnyElement = if visible_rows.is_empty() {
             let repo = self.active_repo();
             let message = match repo {
-                None => "No repository selected.",
+                None => text(cx, "No repository selected.", "尚未選取儲存庫。"),
                 Some(r) => match &r.file_browser.entries {
-                    Loadable::NotLoaded => "Loading files...",
-                    Loadable::Loading => "Loading files...",
-                    Loadable::Ready(entries) if entries.is_empty() => "Empty repository.",
-                    Loadable::Ready(_) => "No files visible.",
-                    Loadable::Error(_) => "Error loading files.",
+                    Loadable::NotLoaded | Loadable::Loading => {
+                        text(cx, "Loading files...", "正在載入檔案…")
+                    }
+                    Loadable::Ready(entries) if entries.is_empty() => {
+                        text(cx, "Empty repository.", "儲存庫沒有檔案。")
+                    }
+                    Loadable::Ready(_) => text(cx, "No files visible.", "沒有可顯示的檔案。"),
+                    Loadable::Error(_) => text(cx, "Error loading files.", "無法載入檔案。"),
                 },
             };
-            self.explorer_empty_state(theme, message)
+            self.explorer_empty_state(theme, message, cx)
         } else {
             let row_count = visible_rows.len();
             let list = uniform_list(
@@ -106,6 +110,8 @@ impl SidebarPaneView {
                 cx.listener(|this, _, window, cx| this.explorer_background_click(window, cx)),
             )
             .track_focus(&self.explorer_focus)
+            // The Files explorer keeps Cmd/Ctrl-Z for its own file undo.
+            .key_context("FileExplorer")
             .capture_key_down(cx.listener(Self::explorer_key_down))
             .on_pointer_click(
                 MouseButton::Right,
@@ -665,7 +671,12 @@ impl SidebarPaneView {
                                         .min_w(px(0.0))
                                         .text_size(theme.ui_text(12.0))
                                         .text_color(theme.colors.foreground.secondary)
-                                        .child(format!("Unsaved edits ({count})")),
+                                        .child(match Language::current(cx) {
+                                            Language::English => format!("Unsaved edits ({count})"),
+                                            Language::TraditionalChinese => {
+                                                format!("未儲存的編輯（{count}）")
+                                            }
+                                        }),
                                 )
                                 .into_any_element(),
                         );

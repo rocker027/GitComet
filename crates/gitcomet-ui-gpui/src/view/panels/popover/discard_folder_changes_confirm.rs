@@ -1,4 +1,6 @@
+use super::discard_changes_confirm::{CONFLICT_DISCARD_NOTE_ZH, conflict_discard_note};
 use super::*;
+use crate::localization::{Language, text};
 
 /// Discard for a status tree folder. The files are resolved when it is shown
 /// and again on confirm, so a status refresh in between is honoured.
@@ -16,20 +18,27 @@ pub(super) fn panel(
         .status_folder_subtree_paths(repo_id, section, &folder);
     let count = paths.len();
     let files = if count == 1 { "file" } else { "files" };
-    let note = super::discard_changes_confirm::conflict_discard_note(
+    let note = conflict_discard_note(
         &this.state,
         repo_id,
         paths.iter().map(|path| path.as_path()),
     );
 
-    let mut dialog = ConfirmDialog::new("Discard changes", DIALOG_420_WIDTH)
+    let mut dialog = ConfirmDialog::new(text(cx, "Discard changes", "捨棄變更"), DIALOG_420_WIDTH)
         .text(
             theme,
-            format!("This will discard working tree changes for {count} {files} in this folder."),
+            match Language::current(cx) {
+                Language::English => format!(
+                    "This will discard working tree changes for {count} {files} in this folder."
+                ),
+                Language::TraditionalChinese => {
+                    format!("這會捨棄這個資料夾內 {count} 個檔案在工作樹中的變更。")
+                }
+            },
         )
         .mono_value(theme, folder.display().to_string());
     if let Some(note) = note {
-        dialog = dialog.note(theme, note);
+        dialog = dialog.note(theme, text(cx, note, CONFLICT_DISCARD_NOTE_ZH));
     }
     dialog.render(
         theme,
@@ -39,7 +48,7 @@ pub(super) fn panel(
             theme,
             cx,
         ),
-        components::Button::new("discard_folder_changes_go", "Discard")
+        components::Button::new("discard_folder_changes_go", text(cx, "Discard", "捨棄"))
             .style(components::ButtonStyle::Danger)
             .disabled(count == 0)
             .on_click(theme, cx, move |this, _e, _w, cx| {

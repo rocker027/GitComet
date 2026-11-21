@@ -4,9 +4,10 @@ use super::commands::Command;
 use super::{
     AnnexPopoverKind, AnnexPrompt, BranchPickerPurpose, CloseWindow, DecreaseUiScale, DiffArea,
     DiffViewMode, GitCometView, IncreaseUiScale, Loadable, Msg, NewWindow, OpenRepository,
-    PopoverKind, PullMode, PushRequest, RemotePopoverKind, RepoPopoverKind, ResetUiScale,
-    StashPickerPurpose, SubmodulePopoverKind, ToggleRevealCommit, Window, WorktreePopoverKind,
-    command_palette, components, head_branch_has_live_upstream, head_is_detached, push_request,
+    PopoverKind, PullMode, PushRequest, PushUpstreamMode, RefPickerPurpose, RemotePopoverKind,
+    RepoPopoverKind, ResetUiScale, StashPickerPurpose, SubmodulePopoverKind, ToggleRevealCommit,
+    Window, WorktreePopoverKind, command_palette, components, head_branch_has_live_upstream,
+    head_is_detached, push_request,
 };
 use crate::kit::search_keys::OpenActiveViewSearch;
 
@@ -61,6 +62,10 @@ impl GitCometView {
                 &self.command_palette_context(cx),
             )
         {
+            let reason = command_palette::localized_unavailable_reason(
+                reason,
+                crate::localization::Language::current(cx),
+            );
             self.push_toast(components::ToastKind::Warning, reason.to_owned(), cx);
             return;
         }
@@ -264,6 +269,14 @@ impl GitCometView {
             }
             Command::PruneMergedBranches => {
                 if let Some(repo_id) = self.active_repo_id() {
+                    if self.state.has_active_worktree_finish_run(repo_id) {
+                        self.push_toast(
+                            components::ToastKind::Warning,
+                            "This repository has an active Worktree Finish run.".to_string(),
+                            cx,
+                        );
+                        return;
+                    }
                     self.store.dispatch(Msg::PruneMergedBranches { repo_id });
                 }
             }
@@ -309,7 +322,7 @@ impl GitCometView {
                 self.set_sidebar_collapsed(!self.sidebar_collapsed, cx);
             }
             Command::ToggleDetails => {
-                self.set_details_collapsed(!self.details_collapsed, cx);
+                self.toggle_details(cx);
             }
             Command::ToggleDiffView => {
                 let next = match self.diff_view_mode {
@@ -357,6 +370,18 @@ impl GitCometView {
                 }
             }
             Command::CheckoutBranch => {
+                if self
+                    .active_repo()
+                    .is_some_and(|repo| self.state.worktree_finish_blocks_workdir_mutation(repo.id))
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(window) = window {
                     self.open_popover_centered(
                         PopoverKind::BranchPicker {
@@ -379,6 +404,17 @@ impl GitCometView {
                 }
             }
             Command::RenameBranch => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(repo_id) = self.active_repo_id()
                     && let Some(window) = window
                     && let Some(name) = self
@@ -408,6 +444,15 @@ impl GitCometView {
                 let Some(repo) = self.active_repo() else {
                     return;
                 };
+                if self.state.worktree_finish_blocks_workdir_mutation(repo.id) {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 self.store.dispatch(Msg::Pull {
                     repo_id: repo.id,
                     mode: PullMode::Default,
@@ -426,7 +471,7 @@ impl GitCometView {
                                 PopoverKind::PushSetUpstreamPrompt {
                                     repo_id,
                                     remote,
-                                    configure_only_for: None,
+                                    mode: PushUpstreamMode::CurrentBranch,
                                 },
                                 window,
                                 cx,
@@ -462,7 +507,64 @@ impl GitCometView {
                     );
                 }
             }
-            Command::Commit => {
+            Command::UndoGitOperation | Command::RedoGitOperation => {
+                let direction = if command == Command::UndoGitOperation {
+                    gitcomet_state::model::GitUndoDirection::Undo
+                } else {
+                    gitcomet_state::model::GitUndoDirection::Redo
+                };
+                if self.active_repo().is_some_and(|repo| {
+                    self.state.worktree_finish_blocks_workdir_mutation(repo.id)
+                        || repo.git_undo.next(direction).is_some_and(|entry| {
+                            entry.changes.iter().any(|change| {
+                                self.state
+                                    .worktree_finish_protects_branch(repo.id, &change.reference)
+                            })
+                        })
+                }) {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
+                if let Some(repo_id) = self.active_repo_id() {
+                    self.store
+                        .dispatch(if command == Command::UndoGitOperation {
+                            Msg::UndoGitOperation { repo_id }
+                        } else {
+                            Msg::RedoGitOperation { repo_id }
+                        });
+                }
+            }
+            Command::FocusCommitMessage => {
+                if let Some(window) = window
+                    && self.focused_terminal_viewport(window, cx).is_none()
+                {
+                    // The working-copy changes, with the commit box, replace
+                    // any commit details; then the message takes the focus.
+                    self.navigate_review(
+                        crate::view::review_navigation::ReviewNavigation::WorkingCopy,
+                        window,
+                        cx,
+                    );
+                    // Asking for the commit box shows it, like toggling the
+                    // details pane, even while a clean working copy hides it.
+                    self.set_details_hide_when_clean(false, cx);
+                    let focus = self
+                        .details_pane
+                        .read(cx)
+                        .commit_message_input
+                        .read(cx)
+                        .focus_handle();
+                    window.focus(&focus, cx);
+                }
+            }
+            // The commit prompt stages every change first when nothing is
+            // staged, so both open it.
+            Command::Commit | Command::StageAllAndCommit => {
                 if let Some(repo_id) = self.active_repo_id()
                     && let Some(window) = window
                 {
@@ -470,6 +572,18 @@ impl GitCometView {
                 }
             }
             Command::ApplyPatch => {
+                if self
+                    .active_repo()
+                    .is_some_and(|repo| self.state.worktree_finish_blocks_workdir_mutation(repo.id))
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 let Some(repo_id) = self.active_repo_id() else {
                     return;
                 };
@@ -479,7 +593,9 @@ impl GitCometView {
                         files: true,
                         directories: false,
                         multiple: false,
-                        prompt: Some("Select patch file".into()),
+                        prompt: Some(
+                            crate::localization::text(cx, "Select patch file", "選擇修補檔").into(),
+                        ),
                         directory: None,
                     });
                     cx.spawn(async move |cx| {
@@ -554,11 +670,36 @@ impl GitCometView {
                 }
             }
             Command::Stash => {
+                if self
+                    .active_repo()
+                    .is_some_and(|repo| self.state.worktree_finish_blocks_workdir_mutation(repo.id))
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(window) = window {
                     self.open_popover_centered(PopoverKind::StashPrompt, window, cx);
                 }
             }
             Command::StashPop | Command::StashApply | Command::StashDrop => {
+                if matches!(command, Command::StashPop | Command::StashApply)
+                    && self.active_repo().is_some_and(|repo| {
+                        self.state.worktree_finish_blocks_workdir_mutation(repo.id)
+                    })
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree is currently in use by an active Worktree Finish run."
+                            .to_string(),
+                        cx,
+                    );
+                    return;
+                }
                 if let Some(repo_id) = self.active_repo_id()
                     && let Some(window) = window
                 {
@@ -572,6 +713,22 @@ impl GitCometView {
                         window,
                         cx,
                     );
+                }
+            }
+            Command::Merge => {
+                if let Some(window) = window {
+                    self.open_popover_centered(
+                        PopoverKind::BranchPicker {
+                            purpose: BranchPickerPurpose::Merge,
+                        },
+                        window,
+                        cx,
+                    );
+                }
+            }
+            Command::SearchCommits => {
+                if let Some(window) = window {
+                    self.open_commit_search(window, cx);
                 }
             }
             Command::Rebase => {
@@ -613,6 +770,29 @@ impl GitCometView {
                     );
                 }
             }
+            Command::EditRemoteUrl => {
+                if let Some(repo) = self.active_repo()
+                    && let Some(window) = window
+                {
+                    // One remote goes straight to its fetch URL; several are
+                    // listed first.
+                    let only_remote = repo
+                        .remotes
+                        .ready()
+                        .filter(|remotes| remotes.len() == 1)
+                        .and_then(|remotes| remotes.first())
+                        .map(|remote| remote.name.clone());
+                    let kind = match only_remote {
+                        Some(name) => RemotePopoverKind::EditUrlPrompt {
+                            name,
+                            kind: gitcomet_core::services::RemoteUrlKind::Fetch,
+                        },
+                        None => RemotePopoverKind::EditUrlMenu,
+                    };
+                    let repo_id = repo.id;
+                    self.open_popover_centered(PopoverKind::remote(repo_id, kind), window, cx);
+                }
+            }
             Command::AddRemote => {
                 if let Some(repo_id) = self.active_repo_id()
                     && let Some(window) = window
@@ -644,6 +824,74 @@ impl GitCometView {
             Command::UpdateSubmodules => {
                 if let Some(repo_id) = self.active_repo_id() {
                     self.store.dispatch(Msg::UpdateSubmodules { repo_id });
+                }
+            }
+            // Deletions open a picker or confirmation; nothing is deleted here.
+            Command::DeleteTag | Command::DeleteRemoteBranch | Command::DiscardAll => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && let Some(window) = window
+                {
+                    let kind = match command {
+                        Command::DeleteTag => PopoverKind::RefPickerMenu {
+                            repo_id,
+                            purpose: RefPickerPurpose::DeleteTag,
+                        },
+                        Command::DeleteRemoteBranch => PopoverKind::RefPickerMenu {
+                            repo_id,
+                            purpose: RefPickerPurpose::DeleteRemoteBranch,
+                        },
+                        _ => {
+                            // The dialog leaves submodules out, so it needs their list.
+                            if self.active_repo().is_some_and(|repo| {
+                                matches!(repo.submodules, Loadable::NotLoaded | Loadable::Error(_))
+                            }) {
+                                self.store.dispatch(Msg::LoadSubmodules { repo_id });
+                            }
+                            PopoverKind::DiscardAllConfirm { repo_id }
+                        }
+                    };
+                    self.open_popover_centered(kind, window, cx);
+                }
+            }
+            Command::FinishWorktrees => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && let Some(window) = window
+                {
+                    self.open_popover_centered(
+                        PopoverKind::worktree(
+                            repo_id,
+                            WorktreePopoverKind::FinishSetup {
+                                preselected: Vec::new(),
+                                target: None,
+                                mode: None,
+                            },
+                        ),
+                        window,
+                        cx,
+                    );
+                }
+            }
+            Command::RemoveWorktree | Command::RemoveSubmodule => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && let Some(window) = window
+                {
+                    let kind = if command == Command::RemoveWorktree {
+                        PopoverKind::worktree(repo_id, WorktreePopoverKind::RemovePicker)
+                    } else {
+                        PopoverKind::submodule(repo_id, SubmodulePopoverKind::RemovePicker)
+                    };
+                    self.open_popover_centered(kind, window, cx);
+                }
+            }
+            Command::RemoveRemote => {
+                if let Some(repo_id) = self.active_repo_id()
+                    && let Some(window) = window
+                {
+                    self.open_popover_centered(
+                        PopoverKind::remote(repo_id, RemotePopoverKind::RemoveMenu),
+                        window,
+                        cx,
+                    );
                 }
             }
             Command::AddWorktree => {

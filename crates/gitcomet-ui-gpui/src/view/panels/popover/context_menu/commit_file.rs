@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 
 use crate::kit::components::secondary_shortcut;
 
@@ -60,16 +61,21 @@ pub(super) fn apply_change_entry(
     this: &PopoverHost,
     repo_id: RepoId,
     target: gitcomet_core::domain::ApplyChangeTarget,
+    language: Language,
 ) -> ContextMenuItem {
     let busy = this
         .state
         .repos
         .iter()
         .find(|repo| repo.id == repo_id)
-        .is_none_or(|repo| repo.history_rewrite_busy());
-    let label = match target.paths.len() {
-        1 => "Apply change".into(),
-        count => format!("Apply changes ({count})").into(),
+        .is_none_or(|repo| {
+            repo.history_rewrite_busy()
+                || this.state.worktree_finish_blocks_workdir_mutation(repo.id)
+        });
+    let label = match (language, target.paths.len()) {
+        (_, 1) => language.text("Apply change", "套用變更").into(),
+        (Language::English, count) => format!("Apply changes ({count})").into(),
+        (Language::TraditionalChinese, count) => format!("套用變更（{count}）").into(),
     };
     ContextMenuItem::Entry {
         label,
@@ -86,6 +92,7 @@ pub(super) fn model(
     source: FileMenuSource<'_>,
     path: &std::path::Path,
     cx: &gpui::Context<PopoverHost>,
+    language: Language,
 ) -> ContextMenuModel {
     let is_submodule = this
         .state
@@ -126,7 +133,9 @@ pub(super) fn model(
         }
         items.push(ContextMenuItem::Separator);
         items.push(ContextMenuItem::Entry {
-            label: "Open submodule summary".into(),
+            label: language
+                .text("Open submodule summary", "開啟子模組摘要")
+                .into(),
             icon: Some("icons/box.svg".into()),
             shortcut: None,
             disabled: false,
@@ -136,7 +145,7 @@ pub(super) fn model(
             }),
         });
         items.push(ContextMenuItem::Entry {
-            label: "Open submodule".into(),
+            label: language.text("Open submodule", "開啟子模組").into(),
             icon: Some("icons/open_external.svg".into()),
             shortcut: None,
             disabled: !submodule_state.can_open,
@@ -146,7 +155,9 @@ pub(super) fn model(
         });
         if this.external_editor_available() {
             items.push(ContextMenuItem::Entry {
-                label: "Open in code editor".into(),
+                label: language
+                    .text("Open in code editor", "在程式碼編輯器中開啟")
+                    .into(),
                 icon: Some("icons/open_external.svg".into()),
                 shortcut: Some(secondary_shortcut("E").into()),
                 disabled: !submodule_state.can_open,
@@ -158,7 +169,7 @@ pub(super) fn model(
         }
         if submodule_state.show_load {
             items.push(ContextMenuItem::Entry {
-                label: "Load submodule".into(),
+                label: language.text("Load submodule", "載入子模組").into(),
                 icon: Some("icons/plus.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -168,13 +179,13 @@ pub(super) fn model(
                 }),
             });
         }
-        push_copy_path_entries(&mut items, this, repo_id, path, Some("C".into()));
+        push_copy_path_entries(&mut items, this, repo_id, path, Some("C".into()), language);
         return ContextMenuModel::new(items);
     }
 
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
-        label: "Open file".into(),
+        label: language.text("Open file", "開啟檔案").into(),
         icon: Some("icons/file.svg".into()),
         shortcut: None,
         disabled: false,
@@ -184,7 +195,7 @@ pub(super) fn model(
         }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Edit file".into(),
+        label: language.text("Edit file", "編輯檔案").into(),
         icon: Some("icons/pencil.svg".into()),
         shortcut: None,
         disabled: crate::view::should_bypass_text_file_preview_for_path(path),
@@ -194,7 +205,7 @@ pub(super) fn model(
         }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Open file location".into(),
+        label: language.text("Open file location", "開啟檔案位置").into(),
         icon: Some("icons/folder.svg".into()),
         shortcut: None,
         disabled: false,
@@ -205,7 +216,9 @@ pub(super) fn model(
     });
     if this.external_editor_available() {
         items.push(ContextMenuItem::Entry {
-            label: "Open in code editor".into(),
+            label: language
+                .text("Open in code editor", "在程式碼編輯器中開啟")
+                .into(),
             icon: Some("icons/open_external.svg".into()),
             shortcut: Some(secondary_shortcut("E").into()),
             disabled: false,
@@ -216,7 +229,7 @@ pub(super) fn model(
         });
     }
     items.push(ContextMenuItem::Entry {
-        label: "File history".into(),
+        label: language.text("File history", "檔案歷史").into(),
         icon: Some("icons/refresh.svg".into()),
         shortcut: Some("H".into()),
         disabled: false,
@@ -239,6 +252,7 @@ pub(super) fn model(
                 source: apply_source,
                 paths,
             },
+            language,
         ));
         items.push(ContextMenuItem::Separator);
     }
@@ -254,14 +268,16 @@ pub(super) fn model(
         }
     }) {
         items.push(ContextMenuItem::Entry {
-            label: "Copy file permalink".into(),
+            label: language
+                .text("Copy file permalink", "複製檔案的永久連結")
+                .into(),
             icon: Some("icons/copy.svg".into()),
             shortcut: None,
             disabled: false,
             action: Box::new(ContextMenuAction::CopyText { text: permalink }),
         });
     }
-    push_copy_path_entries(&mut items, this, repo_id, path, Some("C".into()));
+    push_copy_path_entries(&mut items, this, repo_id, path, Some("C".into()), language);
 
     ContextMenuModel::new(items)
 }

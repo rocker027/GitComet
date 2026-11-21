@@ -24,7 +24,7 @@ impl gpui::Render for GraphPaintView {
     }
 }
 
-/// Each node is one round quad of even device size, centred on its lane.
+/// The lane ring surrounds a pixel-aligned author mark in every node state.
 #[gpui::test]
 fn history_nodes_paint_as_round_quads_centred_on_their_lane(cx: &mut gpui::TestAppContext) {
     use crate::appearance::{Appearance, UiDensity};
@@ -104,10 +104,14 @@ fn history_nodes_paint_as_round_quads_centred_on_their_lane(cx: &mut gpui::TestA
                     window.painted_quads()
                 });
                 assert_eq!(history_perf::count(Work::PaintPath), 0, "{case}");
-                let (nodes, lanes): (Vec<&gpui::Quad>, Vec<&gpui::Quad>) = quads
+                let (round, rects): (Vec<&gpui::Quad>, Vec<&gpui::Quad>) = quads
                     .iter()
                     .partition(|quad| quad.corner_radii.top_left.0 > 0.0);
+                let (nodes, badges): (Vec<&gpui::Quad>, Vec<&gpui::Quad>) = round
+                    .into_iter()
+                    .partition(|quad| quad.border_widths.top.0 > 0.0);
                 assert_eq!(nodes.len(), 1, "{case}");
+                assert_eq!(badges.len(), usize::from(is_merge), "{case}: merge badge");
                 let node = nodes[0].bounds;
                 let diameter = node.size.width.0;
                 assert_eq!(node.size.width, node.size.height, "{case}");
@@ -121,8 +125,34 @@ fn history_nodes_paint_as_round_quads_centred_on_their_lane(cx: &mut gpui::TestA
                     "{case}: radius {:?} for {diameter}",
                     nodes[0].corner_radii,
                 );
-                let expected_ring = if reveal > 0.0 { ring } else { 0.0 };
-                assert_eq!(nodes[0].border_widths.top.0, expected_ring, "{case}");
+                assert_eq!(nodes[0].border_widths.top.0, ring, "{case}");
+                let (lanes, marks): (Vec<&gpui::Quad>, Vec<&gpui::Quad>) = rects
+                    .into_iter()
+                    .partition(|quad| quad.bounds.size.height.0 > quad.bounds.size.width.0);
+                let pattern = HistoryAuthorVm::new("Ada Lovelace".into()).pattern;
+                let mut painted_rows = [0u8; 4];
+                // Reconstruct the painted bitmap from its upper-left ink cell.
+                let left = marks
+                    .iter()
+                    .map(|q| q.bounds.left().0)
+                    .reduce(f32::min)
+                    .unwrap();
+                let top = marks
+                    .iter()
+                    .map(|q| q.bounds.top().0)
+                    .reduce(f32::min)
+                    .unwrap();
+                let cell = marks[0].bounds.size.height.0;
+                assert!(cell >= 1.0 && cell.fract() == 0.0, "{case}");
+                for mark in marks {
+                    let x = ((mark.bounds.left().0 - left) / cell).round() as u32;
+                    let y = ((mark.bounds.top().0 - top) / cell).round() as usize;
+                    let width = (mark.bounds.size.width.0 / cell).round() as u32;
+                    painted_rows[y] |= ((1 << width) - 1) << x;
+                }
+                // Center-only glyphs have a narrower painted extent.
+                let first_ink = pattern.iter().map(|r| r.trailing_zeros()).min().unwrap();
+                assert_eq!(painted_rows, pattern.map(|r| r >> first_ink), "{case}");
                 assert_eq!(lanes.len(), 2, "{case}: incoming and continuing runs");
                 for lane in lanes {
                     assert!(
@@ -206,10 +236,11 @@ fn author_nodes_fit_resized_graphs_at_fractional_scales() {
                         scale.ui_text(16.0) + scale.px(icon_size - 16.0),
                         device_scale,
                     );
+                    let author = graph_node_bounds(&row, false, 1.0, cell, grid, scale);
                     row.is_merge = true;
                     assert_eq!(
                         graph_node_bounds(&row, false, 1.0, cell, grid, scale),
-                        stash
+                        author
                     );
                     row.is_merge = false;
                 }

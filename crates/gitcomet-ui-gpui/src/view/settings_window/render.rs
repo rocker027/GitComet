@@ -5,6 +5,12 @@ use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
 impl Render for SettingsWindowView {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         crate::view::perf::settings_rendered();
+        let search_placeholder = text(cx, "Search", "搜尋");
+        if self.search_input.read(cx).placeholder() != search_placeholder {
+            self.search_input.update(cx, |input, cx| {
+                input.set_placeholder(search_placeholder, cx)
+            });
+        }
         let metrics = crate::appearance::current(cx);
         if self.appearance_metrics != metrics {
             self.appearance_metrics = metrics;
@@ -480,7 +486,7 @@ impl SettingsWindowView {
                     .line_height(px(16.0))
                     .font_weight(FontWeight::BOLD)
                     .whitespace_nowrap()
-                    .child(settings_window_title()),
+                    .child(settings_window_title(Language::current(cx))),
             );
 
         let is_maximized = window.is_maximized();

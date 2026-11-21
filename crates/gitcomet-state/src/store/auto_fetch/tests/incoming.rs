@@ -165,6 +165,7 @@ fn incoming_tracking_broadcast_includes_linked_tabs_in_the_initiating_store() {
                     repository: None,
                     active: false,
                     needs_refresh: true,
+                    protected_branches: Vec::new(),
                 })
                 .collect(),
             RemoteSettings::default(),

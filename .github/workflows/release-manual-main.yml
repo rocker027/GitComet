@@ -145,7 +145,7 @@ jobs:
           tag="${{ needs.validate.outputs.tag }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$tag" -m "GitComet $tag"
+          git tag -a "$tag" -m "RevWeave $tag"
           git push origin "$tag"
 
       - name: Create draft GitHub release
@@ -157,7 +157,7 @@ jobs:
           tag="${{ needs.validate.outputs.tag }}"
           prerelease="${{ needs.validate.outputs.prerelease }}"
 
-          args=(release create "$tag" --repo "$GITHUB_REPOSITORY" --title "GitComet $tag" --target "$GITHUB_SHA" --generate-notes --draft)
+          args=(release create "$tag" --repo "$GITHUB_REPOSITORY" --title "RevWeave $tag" --target "$GITHUB_SHA" --generate-notes --draft)
           if [ "$prerelease" = "true" ]; then
             args+=(--prerelease)
           fi

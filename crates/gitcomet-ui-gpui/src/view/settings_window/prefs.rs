@@ -21,6 +21,7 @@ impl SettingsWindowView {
             sidebar_collapsed: None,
             repo_sidebar_collapsed_items: None,
             repo_sidebar_pinned_branches: None,
+            ui_language: None,
             theme_mode: Some(self.theme_mode.key().to_string()),
             ui_scale_percent: Some(self.default_ui_scale_percent),
             image_sampling_mode: None,
@@ -107,6 +108,8 @@ impl SettingsWindowView {
             terminal_external_args: None,
             terminal_action_bar_target: None,
             external_code_editor: None,
+            // Saved on its own from the AI commit message page.
+            commit_message_prompt_template: None,
         };
         self.terminal_preferences
             .apply_to_ui_settings(&mut settings);

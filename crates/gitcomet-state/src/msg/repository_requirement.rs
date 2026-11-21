@@ -26,6 +26,7 @@ impl Msg {
             | Self::CherryPickCommit { repo_id, .. }
             | Self::Commit { repo_id, .. }
             | Self::CompareWithWorkingTree { repo_id, .. }
+            | Self::ToggleWorkingTreeComparisonUntracked { repo_id, .. }
             | Self::ConflictAddManualAlignment { repo_id, .. }
             | Self::ConflictApplyAutosolve { repo_id, .. }
             | Self::ConflictApplyBulkChoice { repo_id, .. }
@@ -111,7 +112,9 @@ impl Msg {
             | Self::SelectCommit { repo_id, .. }
             | Self::SelectCommitMulti { repo_id, .. }
             | Self::ClearCommitSelection { repo_id, .. }
+            | Self::ReviewWorkingTree { repo_id, .. }
             | Self::CompareCommitRange { repo_id, .. }
+            | Self::ToggleAdjacentComparison { repo_id, .. }
             | Self::ClearComparison { repo_id, .. }
             | Self::MarkForComparison { repo_id, .. }
             | Self::CompareWithMarked { repo_id, .. }
@@ -157,6 +160,8 @@ impl Msg {
             | Self::CreateBranch { repo_id, .. }
             | Self::RenameBranch { repo_id, .. }
             | Self::DeleteBranch { repo_id, .. }
+            | Self::UndoGitOperation { repo_id }
+            | Self::RedoGitOperation { repo_id }
             | Self::ForceDeleteBranch { repo_id, .. }
             | Self::DeleteBranches { repo_id, .. }
             | Self::ExportPatch { repo_id, .. }
@@ -174,6 +179,7 @@ impl Msg {
             | Self::PushWithTags { repo_id, .. }
             | Self::PreviewTagPush { repo_id, .. }
             | Self::Push { repo_id, .. }
+            | Self::PushBranch { repo_id, .. }
             | Self::PushAfterCommit { repo_id, .. }
             | Self::ForcePush { repo_id, .. }
             | Self::ForcePushWithLease { repo_id, .. }
@@ -305,6 +311,7 @@ impl Msg {
             | Self::ConfirmSubmoduleTrustPrompt
             | Self::CancelSubmoduleTrustPrompt
             | Self::Fetch(..)
+            | Self::WorktreeFinish(..)
             | Self::Internal(..) => None,
         }
     }

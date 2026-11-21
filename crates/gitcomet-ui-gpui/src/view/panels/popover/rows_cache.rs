@@ -291,6 +291,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::localization::Language;
 
     /// A named revision bump, and the label the assertion reports it under.
     type RevisionBump = (&'static str, fn(&mut RepoState));
@@ -323,7 +324,7 @@ mod tests {
     fn worktree_badge_key(repo: &RepoState, query: &str) -> RowsCacheKey {
         RowsCacheKey::new(
             RowsCacheOwner::Workspace,
-            worktree_badge_picker::rows_signature(repo),
+            worktree_badge_picker::rows_signature(repo, Language::English),
             query,
         )
     }
@@ -398,11 +399,11 @@ mod tests {
 
         for (label, bump) in checks {
             let mut repo = repo();
-            let before = worktree_badge_picker::rows_signature(&repo);
+            let before = worktree_badge_picker::rows_signature(&repo, Language::English);
             bump(&mut repo);
             assert_ne!(
                 before,
-                worktree_badge_picker::rows_signature(&repo),
+                worktree_badge_picker::rows_signature(&repo, Language::English),
                 "{label} must invalidate the workspace rows"
             );
         }

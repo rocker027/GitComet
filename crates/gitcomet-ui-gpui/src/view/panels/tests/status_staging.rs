@@ -558,15 +558,42 @@ fn exercise_with_failure(
                 }
         },
     );
+    let follows_open_diff = failure == Failure::None
+        && matches!(surface, Surface::Row | Surface::RowUnrelatedSelection)
+        && matches!(viewed, Viewed::Diff(viewed_area) if viewed_area == area)
+        && path == "a.txt";
+    let expected_target = if follows_open_diff {
+        super::shortcuts::wait_until(cx, "row file transfer", |cx| {
+            cx.update(|_, app| {
+                view.update(app, |root, cx| {
+                    crate::view::test_support::sync_store_snapshot(root, cx)
+                });
+                view.read(app)
+                    .diff_renderer
+                    .read(app)
+                    .stage_file_transfer
+                    .is_none()
+            })
+        });
+        Some(DiffTarget::working_tree(
+            path.into(),
+            match area {
+                DiffArea::Unstaged => DiffArea::Staged,
+                DiffArea::Staged => DiffArea::Unstaged,
+            },
+        ))
+    } else {
+        (!closes).then(|| target.clone())
+    };
     // Checked before the content wait so a wrong diff fails by name.
     assert_eq!(
         store.snapshot().repos[0].diff_state.diff_target,
-        (!closes).then(|| target.clone()),
+        expected_target,
         "{surface:?} {area:?} {viewed:?} {path}"
     );
     // Unavailable Git can also reject a reload. The failure cases assert that
     // the selected view survives; successful actions additionally reload it.
-    if !closes && failure == Failure::None {
+    if (!closes || follows_open_diff) && failure == Failure::None {
         wait_for_displayed_content(cx, &view);
     }
     let snapshot = store.snapshot();
@@ -588,8 +615,7 @@ fn exercise_with_failure(
         repo.feedback.last_error
     );
     assert_eq!(
-        repo.diff_state.diff_target,
-        (!closes).then_some(target),
+        repo.diff_state.diff_target, expected_target,
         "{surface:?} {area:?} {viewed:?} {path}"
     );
     let acted_paths: &[&str] = match surface {

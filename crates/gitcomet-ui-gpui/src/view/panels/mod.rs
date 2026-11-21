@@ -58,6 +58,10 @@ pub(in crate::view) enum HistoryMenuRef {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(in crate::view) enum CommitMenuRefs {
     All,
+    /// The graph's overflow chooser: named refs only, without commit actions.
+    Chooser,
+    /// The details card's overflow chooser includes remotes hidden from the graph.
+    DetailsChooser,
     /// The one ref picked from the row's ref list.
     Only(HistoryMenuRef),
     /// The detached HEAD picked from the row's ref list: no ref of its own.
@@ -67,7 +71,7 @@ pub(in crate::view) enum CommitMenuRefs {
 impl CommitMenuRefs {
     pub(in crate::view) fn admits(&self, target: &HistoryMenuRef) -> bool {
         match self {
-            Self::All => true,
+            Self::All | Self::Chooser | Self::DetailsChooser => true,
             Self::Only(only) => only == target,
             Self::Hidden => false,
         }
@@ -367,6 +371,11 @@ pub(in crate::view) enum ContextMenuAction {
         repo_id: RepoId,
         commit_id: CommitId,
     },
+    /// Shows the commit in the details pane with its message editor open.
+    EditCommitMessage {
+        repo_id: RepoId,
+        commit_id: CommitId,
+    },
     /// Expands or collapses a file list folder; `recursive` takes every folder
     /// below it along.
     SetFileListFolderCollapsed {
@@ -582,6 +591,11 @@ pub(in crate::view) enum ContextMenuAction {
     Push {
         repo_id: RepoId,
     },
+    PushBranch {
+        repo_id: RepoId,
+        local_branch: String,
+        upstream: Upstream,
+    },
     SetUpstreamBranch {
         repo_id: RepoId,
         branch: String,
@@ -659,6 +673,10 @@ pub(in crate::view) enum ContextMenuAction {
     /// Copy a commit's full SHA and confirm it with a toast.
     CopyCommitSha {
         commit_id: CommitId,
+    },
+    CopyCommitTitles {
+        repo_id: RepoId,
+        commit_ids: std::sync::Arc<Vec<CommitId>>,
     },
     /// Approve one repository-controlled remote image in the current Markdown
     /// preview. The pane re-checks that Ask mode is still active when invoked.
@@ -766,6 +784,8 @@ struct ContextMenuModel {
     /// Stable debug selectors for menus whose entries predate the shared context-menu
     /// renderer. Sparse so ordinary menus continue deriving selectors from labels.
     entry_debug_selectors: FxHashMap<usize, SharedString>,
+    /// English source labels used by the existing icon, tone and debug rules.
+    entry_source_labels: FxHashMap<usize, SharedString>,
     /// Item ranges painted as one tinted block: an inline submenu's header
     /// plus the rows it expands to. Sparse and ordered.
     groups: Vec<std::ops::Range<usize>>,
@@ -792,6 +812,7 @@ impl ContextMenuModel {
             shortcut_keycaps: false,
             entry_tooltips: FxHashMap::default(),
             entry_debug_selectors: FxHashMap::default(),
+            entry_source_labels: FxHashMap::default(),
             groups: Vec::new(),
         }
     }
@@ -860,6 +881,7 @@ mod bars;
 mod bottom_status_bar;
 mod layout;
 mod main;
+pub(in crate::view) use main::status_navigation_section;
 pub(in crate::view) mod popover;
 mod repo_tabs_bar;
 
@@ -867,6 +889,7 @@ mod repo_tabs_bar;
 pub(in crate::view) use action_bar::action_bar_breakpoints;
 pub(super) use action_bar::{ActionBarView, action_bar_density, action_bar_height};
 pub(super) use bottom_status_bar::{BottomStatusBarView, bottom_status_bar_height};
+pub(in crate::view) use layout::commit_reword_availability_for_commit;
 pub(in crate::view) use layout::commit_reword_submittable;
 #[cfg(test)]
 pub(in crate::view) use layout::{commit_reword_availability, commit_reword_blocker};

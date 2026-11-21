@@ -40,6 +40,7 @@ pub struct UiSession {
     pub details_width: Option<u32>,
     pub sidebar_collapsed: Option<bool>,
     pub theme_mode: Option<String>,
+    pub ui_language: Option<String>,
     pub ui_scale_percent: Option<u32>,
     pub image_sampling_mode: Option<String>,
     pub image_smooth_filter: Option<String>,
@@ -113,6 +114,8 @@ pub struct UiSession {
     pub recommend_repo_maintenance: Option<bool>,
     pub git_executable_path: Option<PathBuf>,
     pub external_code_editor: Option<ExternalCodeEditorSetting>,
+    /// The saved prompt template for AI commit messages; `None` uses the default.
+    pub commit_message_prompt_template: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -191,6 +194,12 @@ pub(crate) struct UiSessionFile {
     sidebar_collapsed: Option<bool>,
     #[serde(default, deserialize_with = "lenient")]
     theme_mode: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    ui_language: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     ui_scale_percent: Option<u32>,
     #[serde(default, deserialize_with = "lenient")]
@@ -337,6 +346,8 @@ pub(crate) struct UiSessionFile {
     git_executable_path: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
     external_code_editor: Option<ExternalCodeEditorSettingFile>,
+    #[serde(default, deserialize_with = "lenient")]
+    commit_message_prompt_template: Option<String>,
     #[serde(
         default,
         deserialize_with = "repository_preferences::lenient_preferences"
@@ -521,6 +532,7 @@ pub fn load_from_path(path: &Path) -> UiSession {
             .map(|layout| layout.sidebar_collapsed)
             .or(file.sidebar_collapsed),
         theme_mode: file.theme_mode,
+        ui_language: file.ui_language,
         ui_scale_percent: file.ui_scale_percent,
         image_sampling_mode: file.image_sampling_mode,
         image_smooth_filter: file.image_smooth_filter,
@@ -602,6 +614,7 @@ pub fn load_from_path(path: &Path) -> UiSession {
             .as_deref()
             .map(path_from_storage_key),
         external_code_editor: external_code_editor_from_file(file.external_code_editor),
+        commit_message_prompt_template: file.commit_message_prompt_template,
     }
 }
 

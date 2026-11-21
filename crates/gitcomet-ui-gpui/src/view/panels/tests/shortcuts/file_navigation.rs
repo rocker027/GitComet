@@ -1300,7 +1300,14 @@ fn image_toolbar_preserves_file_navigation_and_staging_at_normal_window_widths(
     let button = cx.debug_bounds("diff_bar_stage").unwrap();
     cx.simulate_click(button.center(), Modifiers::default());
     draw_and_drain_test_window(cx);
-    wait_until_store_diff_target_path(cx, &view, &paths[2]);
+    // Real index lane transfers are exercised by the file-button scenarios.
+    // This layout fixture leaves the selected image open.
+    sync_store_snapshot(cx, &view);
+    assert_eq!(
+        active_worktree_diff_target_path(cx, &view),
+        Some(paths[1].clone()),
+        "the Stage button must keep the current image selected"
+    );
 }
 
 /// Every control on the diff's header and bar names its keys in its tooltip.
@@ -1376,7 +1383,7 @@ fn the_diff_controls_name_their_keys(cx: &mut gpui::TestAppContext) {
             "diff_next_file",
             format!("Next file (F4 / {})", alt("Down")),
         ),
-        ("diff_bar_stage", "Stage this file (Space)".to_string()),
+        ("diff_bar_stage", "Stage this file".to_string()),
         (
             "diff_prev_hunk",
             "Previous change (F2 / Shift+F7 / Up)".to_owned(),

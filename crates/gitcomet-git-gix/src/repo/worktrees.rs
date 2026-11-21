@@ -97,6 +97,25 @@ impl GixRepo {
                     Some(&tracking_ref),
                 )?
             }
+            WorktreeCheckout::NewBranchFromRemote { name, upstream } => {
+                validate_ref_like_arg(name, "worktree branch")?;
+                validate_ref_like_arg(&upstream.remote, "remote name")?;
+                validate_ref_like_arg(&upstream.branch, "branch name")?;
+                let tracking_ref =
+                    self.live_tracking_ref(upstream, "git worktree add --no-track")?;
+                push_worktree_args(
+                    &mut cmd,
+                    &["add", "--no-track", "-b", name],
+                    path,
+                    Some(&tracking_ref),
+                )?
+            }
+            WorktreeCheckout::ExistingRemote { upstream } => {
+                validate_ref_like_arg(&upstream.remote, "remote name")?;
+                validate_ref_like_arg(&upstream.branch, "branch name")?;
+                let tracking_ref = self.live_tracking_ref(upstream, "git worktree add --detach")?;
+                push_worktree_args(&mut cmd, &["add", "--detach"], path, Some(&tracking_ref))?
+            }
         };
         run_git_with_output(cmd, &label)
     }

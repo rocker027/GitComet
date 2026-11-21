@@ -165,12 +165,72 @@ pub(super) fn notify_fingerprint(
                 std::mem::discriminant(&check.operation).hash(&mut hasher);
             }
         }
+        PopoverKind::Repo {
+            kind:
+                RepoPopoverKind::Worktree(
+                    WorktreePopoverKind::FinishSetup { .. }
+                    | WorktreePopoverKind::FinishQueue { .. },
+                ),
+            ..
+        } => {
+            if let Some(repo) = repo_for_popover(state, popover, binding) {
+                repo.branches_rev.hash(&mut hasher);
+                repo.worktrees_rev.hash(&mut hasher);
+                repo.head_branch_rev.hash(&mut hasher);
+            }
+            state.worktree_finish_runs.len().hash(&mut hasher);
+            for run in &state.worktree_finish_runs {
+                run.id.hash(&mut hasher);
+                std::mem::discriminant(&run.phase).hash(&mut hasher);
+                run.compute_fingerprint().hash(&mut hasher);
+                run.preview_blockers.len().hash(&mut hasher);
+                run.preview_warnings.len().hash(&mut hasher);
+                run.temp_worktree_kept_note.hash(&mut hasher);
+                run.cleanup_agent_check_unverified.hash(&mut hasher);
+                std::mem::discriminant(&run.agent_dispatch.installed).hash(&mut hasher);
+                run.agent_dispatch.last_error.hash(&mut hasher);
+                for src in &run.sources {
+                    std::mem::discriminant(&src.preview).hash(&mut hasher);
+                    std::mem::discriminant(&src.phase).hash(&mut hasher);
+                    std::mem::discriminant(&src.cleanup).hash(&mut hasher);
+                    src.conflict_stops.hash(&mut hasher);
+                    src.result_head.hash(&mut hasher);
+                    src.agent_receipt_unknown.hash(&mut hasher);
+                }
+            }
+        }
         _ => {
             if let Some(repo) = repo_for_popover(state, popover, binding) {
                 let diff = binding
                     .and_then(|binding| binding.diff(repo))
                     .unwrap_or(&repo.diff_state);
                 hash_repo_for_popover(repo, diff, popover, &mut hasher);
+                state
+                    .worktree_finish_blocks_workdir_mutation(repo.id)
+                    .hash(&mut hasher);
+                state
+                    .has_active_worktree_finish_run(repo.id)
+                    .hash(&mut hasher);
+                if let PopoverKind::BranchMenu { target, .. } = popover {
+                    state
+                        .worktree_finish_protects_branch(repo.id, &target.display_name())
+                        .hash(&mut hasher);
+                }
+                if let PopoverKind::Repo {
+                    kind: RepoPopoverKind::Worktree(WorktreePopoverKind::Menu { path, branch }),
+                    ..
+                } = popover
+                {
+                    state.active_repo.hash(&mut hasher);
+                    repo.lifetime().hash(&mut hasher);
+                    state
+                        .worktree_finish_protects_worktree(repo.id, path)
+                        .hash(&mut hasher);
+                    branch
+                        .as_deref()
+                        .is_some_and(|b| state.worktree_finish_protects_branch(repo.id, b))
+                        .hash(&mut hasher);
+                }
                 if matches!(popover, PopoverKind::PullPicker | PopoverKind::PushPicker) {
                     hash_large_file_picker_entries(state, repo, &mut hasher);
                 }
@@ -241,6 +301,7 @@ fn repo_for_popover<'a>(
         // Popovers that carry an explicit repo id.
         PopoverKind::CommitPrompt { repo_id }
         | PopoverKind::StashPickerPrompt { repo_id, .. }
+        | PopoverKind::StashRestoreMenu { repo_id }
         | PopoverKind::FileHistoryFilePicker { repo_id }
         | PopoverKind::UpstreamPicker { repo_id, .. }
         | PopoverKind::CreateBranchFromRefPrompt { repo_id, .. }
@@ -249,6 +310,9 @@ fn repo_for_popover<'a>(
         | PopoverKind::SquashPrompt { repo_id }
         | PopoverKind::CheckoutRemoteBranchPrompt { repo_id, .. }
         | PopoverKind::StashDropConfirm { repo_id, .. }
+        | PopoverKind::DeleteTagConfirm { repo_id, .. }
+        | PopoverKind::DiscardAllConfirm { repo_id }
+        | PopoverKind::RefPickerMenu { repo_id, .. }
         | PopoverKind::StashMenu { repo_id, .. }
         | PopoverKind::RepoTabMenu { repo_id }
         | PopoverKind::CreateTagPrompt { repo_id, .. }
@@ -284,6 +348,7 @@ fn repo_for_popover<'a>(
         | PopoverKind::StatusFileMenu { repo_id, .. }
         | PopoverKind::StatusConflictMenu { repo_id, .. }
         | PopoverKind::BranchMenu { repo_id, .. }
+        | PopoverKind::BranchDropMenu { repo_id, .. }
         | PopoverKind::BranchSectionMenu { repo_id, .. }
         | PopoverKind::BranchGroupMenu { repo_id, .. }
         | PopoverKind::SidebarPinnedOverflow { repo_id, .. }
@@ -323,12 +388,24 @@ fn hash_repo_for_popover<H: Hasher>(
 ) {
     view_fingerprint::hash_loadable_kind(&repo.open, hasher);
 
+    if matches!(
+        popover,
+        PopoverKind::BranchMenu { .. } | PopoverKind::CommitMenu { .. }
+    ) {
+        // Starting a sequencer operation or moving a detached HEAD can change
+        // which actions are available without refreshing the branch lists.
+        repo.history_rewrite_busy().hash(hasher);
+        repo.detached_head_commit.hash(hasher);
+        repo.head_commit.hash(hasher);
+    }
+
     match popover {
         PopoverKind::BranchPicker { .. }
         | PopoverKind::UpstreamPicker { .. }
         | PopoverKind::CreateBranchFromRefPrompt { .. }
         | PopoverKind::RenameBranchPrompt { .. }
         | PopoverKind::BranchMenu { .. }
+        | PopoverKind::BranchDropMenu { .. }
         | PopoverKind::BranchSectionMenu { .. }
         // The group menu's branch count and the pinned menu's "Unpin all (N)"
         // both read the live branch lists, so a refresh landing while the menu
@@ -344,6 +421,7 @@ fn hash_repo_for_popover<H: Hasher>(
             repo.remote_branches_rev.hash(hasher);
             repo.tags_rev.hash(hasher);
             repo.annex_refs_hidden.hash(hasher);
+            repo.large_file_support_rev.hash(hasher);
             // The checkout picker's rows carry each ref's author, date and
             // summary on their detail line, so metadata landing while the picker
             // is open has to repaint it — the rows change height, not just text.
@@ -430,6 +508,18 @@ fn hash_repo_for_popover<H: Hasher>(
         | PopoverKind::StashMenu { .. }
         | PopoverKind::StashPickerPrompt { .. } => {
             repo.stashes_rev.hash(hasher);
+        }
+        PopoverKind::DeleteTagConfirm { .. } => {
+            repo.tags_rev.hash(hasher);
+        }
+        PopoverKind::DiscardAllConfirm { .. } => {
+            repo.status_cache_rev().hash(hasher);
+            repo.submodules_rev.hash(hasher);
+            repo.ops_rev.hash(hasher);
+        }
+        PopoverKind::RefPickerMenu { .. } => {
+            repo.tags_rev.hash(hasher);
+            repo.remote_branches_rev.hash(hasher);
         }
         PopoverKind::FileHistoryFilePicker { .. } => {
             repo.file_browser.file_browser_rev.hash(hasher);
@@ -518,11 +608,14 @@ fn hash_repo_for_popover<H: Hasher>(
             repo.tags_rev.hash(hasher);
             repo.remotes_rev.hash(hasher);
             repo.remote_tags_rev.hash(hasher);
+            repo.large_file_support_rev.hash(hasher);
             repo.status_rev.hash(hasher);
             repo.history_state.selected_commit_rev.hash(hasher);
             repo.history_state.log_rev.hash(hasher);
             repo.ops_rev.hash(hasher);
             repo.worktrees_rev.hash(hasher);
+            // A stash node's menu lists the stash by index.
+            repo.stashes_rev.hash(hasher);
         }
         PopoverKind::FileHistoryCommitMenu { .. } => {
             repo.head_branch_rev.hash(hasher);
@@ -618,6 +711,7 @@ fn hash_repo_for_popover<H: Hasher>(
         | PopoverKind::MergetoolSettingsMenu
         | PopoverKind::ChangeTrackingSettings
         | PopoverKind::UiScalePicker
+        | PopoverKind::StashRestoreMenu { .. }
         | PopoverKind::ConflictResolverInputRowMenu { .. }
         | PopoverKind::ConflictResolverChunkMenu { .. }
         | PopoverKind::ConflictResolverOutputMenu { .. }
@@ -721,6 +815,25 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
             index.hash(hasher);
             message.hash(hasher);
         }
+        PopoverKind::DeleteTagConfirm {
+            repo_id,
+            name,
+            remote,
+        } => {
+            repo_id.hash(hasher);
+            name.hash(hasher);
+            remote.hash(hasher);
+        }
+        PopoverKind::DiscardAllConfirm { repo_id } => {
+            repo_id.hash(hasher);
+        }
+        PopoverKind::RefPickerMenu { repo_id, purpose } => {
+            repo_id.hash(hasher);
+            purpose.hash(hasher);
+        }
+        PopoverKind::StashRestoreMenu { repo_id } => {
+            repo_id.hash(hasher);
+        }
         PopoverKind::StashMenu {
             repo_id,
             index,
@@ -806,11 +919,11 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
         PopoverKind::PushSetUpstreamPrompt {
             repo_id,
             remote,
-            configure_only_for,
+            mode,
         } => {
             repo_id.hash(hasher);
             remote.hash(hasher);
-            configure_only_for.hash(hasher);
+            mode.hash(hasher);
         }
         PopoverKind::ForcePushConfirm { repo_id } => {
             repo_id.hash(hasher);
@@ -1043,6 +1156,15 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
             repo_id.hash(hasher);
             target.hash(hasher);
         }
+        PopoverKind::BranchDropMenu {
+            repo_id,
+            source,
+            target,
+        } => {
+            repo_id.hash(hasher);
+            source.hash(hasher);
+            target.hash(hasher);
+        }
         PopoverKind::BranchSectionMenu { repo_id, section } => {
             repo_id.hash(hasher);
             hash_branch_section(*section, hasher);
@@ -1259,6 +1381,14 @@ fn hash_repo_popover_kind<H: Hasher>(repo_id: RepoId, kind: &RepoPopoverKind, ha
                 108u8.hash(hasher);
                 repo_id.hash(hasher);
             }
+            RemotePopoverKind::EditUrlMenu => {
+                109u8.hash(hasher);
+                repo_id.hash(hasher);
+            }
+            RemotePopoverKind::RemoveMenu => {
+                110u8.hash(hasher);
+                repo_id.hash(hasher);
+            }
         },
         RepoPopoverKind::Worktree(worktree_kind) => match worktree_kind {
             WorktreePopoverKind::SectionMenu => {
@@ -1297,6 +1427,22 @@ fn hash_repo_popover_kind<H: Hasher>(repo_id: RepoId, kind: &RepoPopoverKind, ha
                 37u8.hash(hasher);
                 repo_id.hash(hasher);
                 commit_id.hash(hasher);
+            }
+            WorktreePopoverKind::FinishSetup {
+                preselected,
+                target,
+                mode,
+            } => {
+                38u8.hash(hasher);
+                repo_id.hash(hasher);
+                preselected.hash(hasher);
+                target.hash(hasher);
+                mode.hash(hasher);
+            }
+            WorktreePopoverKind::FinishQueue { run_id } => {
+                39u8.hash(hasher);
+                repo_id.hash(hasher);
+                run_id.hash(hasher);
             }
         },
         RepoPopoverKind::Submodule(submodule_kind) => match submodule_kind {
@@ -1543,6 +1689,42 @@ mod tests {
             PopoverKind::worktree(repo_id, WorktreePopoverKind::AddPrompt),
             bump_branches,
         ));
+    }
+
+    #[test]
+    fn graph_context_menus_repaint_after_sequencer_and_detached_head_changes() {
+        let repo_id = RepoId(9);
+        let mut state = AppState {
+            active_repo: Some(repo_id),
+            ..AppState::test_default()
+        };
+        state.repos.push(RepoState::new_opening(
+            repo_id,
+            gitcomet_core::domain::RepoSpec {
+                workdir: std::env::temp_dir().join("gitcomet_graph_context_menu_fingerprint"),
+            },
+        ));
+        for popover in [
+            PopoverKind::BranchMenu {
+                repo_id,
+                target: crate::view::BranchMenuTarget::local("topic"),
+            },
+            PopoverKind::CommitMenu {
+                repo_id,
+                commit_id: CommitId("deadbeef".into()),
+                refs: CommitMenuRefs::All,
+            },
+        ] {
+            let before = notify_fingerprint(&state, &popover, None);
+            let mut busy = state.clone();
+            busy.repos[0].sequencer_state =
+                Loadable::Ready(gitcomet_core::services::SequencerState::CherryPick);
+            assert_ne!(before, notify_fingerprint(&busy, &popover, None));
+
+            let mut moved = state.clone();
+            moved.repos[0].detached_head_commit = Some(CommitId("deadbeef".into()));
+            assert_ne!(before, notify_fingerprint(&moved, &popover, None));
+        }
     }
 
     #[test]

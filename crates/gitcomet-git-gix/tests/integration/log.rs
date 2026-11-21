@@ -2483,6 +2483,64 @@ fn log_all_branches_includes_older_stash_reflog_entries() {
     );
 }
 
+#[test]
+fn long_stash_reflog_entry_preserves_list_and_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git_with_env(
+        repo,
+        &["init", "-b", "main"],
+        &[("GIT_DEFAULT_REF_FORMAT", "files")],
+    );
+    append_config(
+        repo,
+        &[("user.email", "you@example.com"), ("user.name", "You")],
+    );
+    commit_file_at(repo, "a.txt", "base\n", "base", 1);
+
+    let marker = "stash-message-to-expand";
+    for message in ["older stash", marker, "newer stash"] {
+        std::fs::write(repo.join("a.txt"), message).unwrap();
+        run_git(repo, &["stash", "push", "-m", message]);
+    }
+
+    // Expand the fixture's message on disk to avoid OS command-line length limits.
+    let long_message = "x".repeat(96_000);
+    let reflog_path = repo.join(".git/logs/refs/stash");
+    let reflog = std::fs::read_to_string(&reflog_path).unwrap();
+    std::fs::write(reflog_path, reflog.replace(marker, &long_message)).unwrap();
+
+    let git_stashes = git_stdout(repo, &["stash", "list", "--format=%gd%x09%H%x09%gs"]);
+    let git_stashes: Vec<_> = git_stashes.lines().collect();
+    assert_eq!(git_stashes.len(), 3);
+
+    let opened = GixBackend.open(repo).unwrap();
+    let cancel = gitcomet_core::services::CancellationToken::new();
+    let stashes = opened.stash_list(&cancel).unwrap();
+    assert_eq!(stashes.len(), git_stashes.len());
+    assert!(stashes[1].message.ends_with(long_message.as_str()));
+    for (index, (stash, line)) in stashes.iter().zip(git_stashes).enumerate() {
+        let mut fields = line.splitn(3, '\t');
+        assert_eq!(fields.next().unwrap(), format!("stash@{{{index}}}"));
+        assert_eq!(stash.index, index);
+        assert_eq!(stash.id.as_ref(), fields.next().unwrap());
+        assert!(
+            stash.message.as_ref() == fields.next().unwrap(),
+            "message mismatch for stash@{{{index}}}"
+        );
+    }
+
+    let page = opened.log_all_branches_page(200, None, &cancel).unwrap();
+    for stash in &stashes {
+        assert!(
+            page.commits.iter().any(|commit| commit.id == stash.id),
+            "expected all-branches log to include stash@{{{}}}",
+            stash.index
+        );
+    }
+}
+
 // --- Author filtering ---
 
 /// Commits alternating between two authors, newest first: `even` owns the

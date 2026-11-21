@@ -1,26 +1,33 @@
 use super::*;
+use crate::localization::Language;
 
 use crate::kit::components::secondary_shortcut;
 
 fn diff_hunk_primary_metadata(
     diff_target: Option<&DiffTarget>,
+    language: Language,
 ) -> (bool, &'static str, &'static str, Option<String>) {
     match diff_target {
         Some(DiffTarget::WorkingTree { area, .. }) => match area {
             DiffArea::Unstaged => (
                 false,
-                "Stage hunk",
+                language.text("Stage hunk", "暫存這段變更"),
                 "icons/plus.svg",
                 Some(secondary_shortcut("S")),
             ),
             DiffArea::Staged => (
                 false,
-                "Unstage hunk",
+                language.text("Unstage hunk", "取消暫存這段變更"),
                 "icons/minus.svg",
                 Some(secondary_shortcut("U")),
             ),
         },
-        _ => (true, "Stage/Unstage hunk", "icons/plus.svg", None),
+        _ => (
+            true,
+            language.text("Stage/Unstage hunk", "暫存或取消暫存這段變更"),
+            "icons/plus.svg",
+            None,
+        ),
     }
 }
 
@@ -43,13 +50,16 @@ pub(super) fn model(
     repo_id: RepoId,
     src_ix: usize,
     cx: &gpui::App,
+    language: Language,
 ) -> ContextMenuModel {
-    let mut items = vec![ContextMenuItem::Header("Hunk".into())];
+    let mut items = vec![ContextMenuItem::Header(
+        language.text("Hunk", "變更區塊").into(),
+    )];
     items.push(ContextMenuItem::Separator);
 
     let pane = this.diff_renderer.read(cx);
     let diff_target = pane.rendered_diff_target();
-    let (disabled, label, icon, shortcut) = diff_hunk_primary_metadata(diff_target);
+    let (disabled, label, icon, shortcut) = diff_hunk_primary_metadata(diff_target, language);
     let patch = this.build_unified_patch_for_hunk_src_ix(repo_id, src_ix, cx);
 
     items.push(ContextMenuItem::Entry {
@@ -80,7 +90,7 @@ pub(super) fn model(
     );
     if !is_staged {
         items.push(ContextMenuItem::Entry {
-            label: "Discard hunk".into(),
+            label: language.text("Discard hunk", "捨棄這段變更").into(),
             icon: Some("icons/refresh.svg".into()),
             shortcut: Some(secondary_shortcut("U").into()),
             disabled: !is_unstaged || patch.is_none(),
@@ -104,7 +114,8 @@ mod tests {
         let target =
             DiffTarget::working_tree(std::path::PathBuf::from("src/lib.rs"), DiffArea::Unstaged);
 
-        let (disabled, label, icon, shortcut) = diff_hunk_primary_metadata(Some(&target));
+        let (disabled, label, icon, shortcut) =
+            diff_hunk_primary_metadata(Some(&target), Language::English);
         assert!(!disabled);
         assert_eq!(label, "Stage hunk");
         assert_eq!(icon, "icons/plus.svg");
@@ -123,7 +134,8 @@ mod tests {
         let target =
             DiffTarget::working_tree(std::path::PathBuf::from("src/lib.rs"), DiffArea::Staged);
 
-        let (disabled, label, icon, shortcut) = diff_hunk_primary_metadata(Some(&target));
+        let (disabled, label, icon, shortcut) =
+            diff_hunk_primary_metadata(Some(&target), Language::English);
         assert!(!disabled);
         assert_eq!(label, "Unstage hunk");
         assert_eq!(icon, "icons/minus.svg");
@@ -135,5 +147,28 @@ mod tests {
                 src_ix: 5
             } if repo_id == RepoId(10)
         ));
+    }
+
+    #[test]
+    fn traditional_chinese_hunk_labels_keep_shortcuts_and_actions() {
+        for (area, expected_label, key) in [
+            (DiffArea::Unstaged, "暫存這段變更", "S"),
+            (DiffArea::Staged, "取消暫存這段變更", "U"),
+        ] {
+            let target = DiffTarget::working_tree("src/lib.rs".into(), area);
+            let (disabled, label, _, shortcut) =
+                diff_hunk_primary_metadata(Some(&target), Language::TraditionalChinese);
+            assert!(!disabled);
+            assert_eq!(label, expected_label);
+            assert_eq!(shortcut, Some(secondary_shortcut(key)));
+            let action = diff_hunk_primary_action(RepoId(9), 4, Some(&target));
+            assert!(match (area, action) {
+                (DiffArea::Unstaged, ContextMenuAction::StageHunk { repo_id, src_ix })
+                | (DiffArea::Staged, ContextMenuAction::UnstageHunk { repo_id, src_ix }) => {
+                    repo_id == RepoId(9) && src_ix == 4
+                }
+                _ => false,
+            });
+        }
     }
 }

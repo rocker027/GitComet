@@ -1,7 +1,71 @@
 use super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
+use crate::localization::Language;
+use crate::view::panes::diff::services::DiffCommand;
+
+fn working_tree_change_count(repo: &RepoState) -> usize {
+    let staged = repo.staged_status_entries().unwrap_or_default();
+    let unstaged = repo.worktree_status_entries().unwrap_or_default();
+    if staged.is_empty() || unstaged.is_empty() {
+        return staged.len() + unstaged.len();
+    }
+    staged
+        .iter()
+        .chain(unstaged)
+        .map(|entry| &entry.path)
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
 
 impl DiffRenderer {
+    pub(super) fn working_tree_changes_button(
+        &self,
+        theme: AppTheme,
+        scale: crate::ui_scale::UiScale,
+        window: &Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.view_mode != GitCometViewMode::Normal
+            || self.hosted_decor.is_some()
+            || !self
+                .commands
+                .navigation
+                .as_ref()
+                .is_some_and(|navigation| navigation.can_focus_review_files(window, cx))
+            || self.is_inline_submodule_diff_active()
+            || self.diff_surface().file_editor
+        {
+            return None;
+        }
+        let repo = self.active_repo()?;
+        if repo.is_bare()
+            || !matches!(
+                self.bound_diff_state(repo).diff_target.as_ref(),
+                Some(DiffTarget::Commit { .. } | DiffTarget::CommitRange { .. })
+            )
+        {
+            return None;
+        }
+        let count = working_tree_change_count(repo);
+        if count == 0 {
+            return None;
+        }
+        let repo = repo.id;
+        let label = match Language::current(cx) {
+            Language::English => format!("View uncommitted changes ({count})"),
+            Language::TraditionalChinese => format!("查看未提交變更（{count}）"),
+        };
+        let commands = self.commands.clone();
+        let window = window.window_handle();
+        Some(
+            components::ActionButton::new("working_tree_changes", label, move |(), cx| {
+                commands.defer(DiffCommand::ReviewWorkingTree { repo, window }, cx);
+            })
+            .framed()
+            .render("diff_bar_working_tree_changes", (), theme, scale),
+        )
+    }
+
     /// The worktree chip for the diff currently on screen, when that diff comes
     /// from a linked worktree rather than this tab. `None` for everything else,
     /// including submodule diffs, which the file list already labels.

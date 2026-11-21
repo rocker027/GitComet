@@ -19,6 +19,7 @@ mod repo_load;
 mod status;
 mod unavailable;
 mod util;
+mod worktree_finish;
 pub(super) mod worktree_list;
 
 /// Releases one runtime's ownership without disturbing other stores or tabs.
@@ -319,6 +320,18 @@ pub(super) fn schedule_effect(
             {
                 history_find::schedule(history_find_executor, repos, msg_tx, work, cancellation);
             }
+        }
+        Effect::WorktreeFinish(work) => {
+            let dispatcher = Arc::clone(&msg_tx.agent_dispatcher);
+            worktree_finish::schedule(
+                executor,
+                backend,
+                &dispatcher,
+                thread_state,
+                repos,
+                msg_tx,
+                work,
+            );
         }
         Effect::IndexedHistory(work) => {
             let repo_id = work.repo_id();
@@ -1056,6 +1069,16 @@ pub(super) fn schedule_effect(
         }
         Effect::PopStash { repo_id, index } => {
             repo_actions::schedule_pop_stash(executor, repos, msg_tx, repo_id, index);
+        }
+        Effect::ApplyGitUndo {
+            repo_id,
+            direction,
+            updates,
+            checks,
+        } => {
+            repo_actions::schedule_git_undo(
+                executor, repos, msg_tx, repo_id, direction, updates, checks,
+            );
         }
         Effect::DropStash { repo_id, index } => {
             repo_actions::schedule_drop_stash(executor, repos, msg_tx, repo_id, index);

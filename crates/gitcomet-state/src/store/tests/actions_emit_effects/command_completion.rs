@@ -297,6 +297,7 @@ fn repo_operations_emit_effects() {
                 message: "m".to_string(),
                 push_after_commit: false,
                 hooks: gitcomet_core::services::GitHooks::Run,
+                stage_paths: Vec::new(),
             },
         },
     );

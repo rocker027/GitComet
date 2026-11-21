@@ -6,13 +6,14 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/package-macos.sh --version VERSION [--arch arm64|x86_64] [--release|--debug] [--no-build] [--skip-dmg] [--out-dir PATH] [--symbols-out PATH] [--codesign-identity NAME] [--codesign-keychain PATH]
+Usage: scripts/package-macos.sh [--version VERSION] [--arch arm64|x86_64] [--release|--debug] [--no-build] [--skip-dmg] [--out-dir PATH] [--symbols-out PATH] [--codesign-identity NAME] [--codesign-keychain PATH]
 
 Builds a macOS app bundle and release artifacts:
   - gitcomet-v<VERSION>-macos-<ARCH>.dmg
 
 Defaults:
-  --release, build if needed, output to ./dist
+  --version from [workspace.package] in Cargo.toml, --release, build if needed,
+  output to ./dist
 
 With --symbols-out, Breakpad symbols are written to that directory as a symbol
 store. This happens here rather than in the release workflow because this script
@@ -93,7 +94,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$version" ]]; then
-  echo "--version is required (e.g. --version 0.2.0)." >&2
+  version="$(awk '
+    /^\[workspace\.package\]/ { in_section = 1; next }
+    /^\[/ { in_section = 0 }
+    in_section && $1 == "version" { gsub(/"/, "", $3); print $3; exit }
+  ' "${SCRIPT_DIR}/../Cargo.toml")"
+fi
+if [[ -z "$version" ]]; then
+  echo "--version was not given and no [workspace.package] version was found in Cargo.toml." >&2
   exit 2
 fi
 
@@ -232,7 +240,7 @@ clean_target_intermediates_for_ci() {
 stage_root="${out_abs}/stage"
 release_root="gitcomet-v${version}-macos-${arch}"
 release_dir="${stage_root}/${release_root}"
-app_bundle="${release_dir}/GitComet.app"
+app_bundle="${release_dir}/RevWeave.app"
 contents_dir="${app_bundle}/Contents"
 macos_dir="${contents_dir}/MacOS"
 resources_dir="${contents_dir}/Resources"
@@ -242,14 +250,14 @@ mkdir -p "$macos_dir" "$resources_dir"
 
 install -m755 "$bin_src" "${macos_dir}/gitcomet"
 
-# Inside the bundle: the DMG ships only GitComet.app, and it is now the only
+# Inside the bundle: the DMG ships only RevWeave.app, and it is now the only
 # macOS artifact, so this is what keeps the licence with the program.
 install -m644 "${repo_root}/README.md" "${resources_dir}/README.md"
 install -m644 "${repo_root}/LICENSE-AGPL-3.0" "${resources_dir}/LICENSE-AGPL-3.0"
 install -m644 "${repo_root}/NOTICE" "${resources_dir}/NOTICE"
 
-icon_png="${repo_root}/assets/gitcomet-512.png"
-icon_icns="${resources_dir}/GitComet.icns"
+icon_png="${repo_root}/assets/revweave-512.png"
+icon_icns="${resources_dir}/RevWeave.icns"
 
 if [[ ! -f "$icon_png" ]]; then
   echo "Missing macOS icon source: $icon_png" >&2
@@ -269,17 +277,17 @@ cat > "${contents_dir}/Info.plist" <<PLIST
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>GitComet</string>
+  <string>RevWeave</string>
   <key>CFBundleExecutable</key>
   <string>gitcomet</string>
   <key>CFBundleIdentifier</key>
-  <string>ai.autoexplore.gitcomet</string>
+  <string>io.github.rocker027.revweave</string>
   <key>CFBundleIconFile</key>
-  <string>GitComet.icns</string>
+  <string>RevWeave.icns</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>GitComet</string>
+  <string>RevWeave</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -327,7 +335,7 @@ if [[ $create_dmg -eq 1 ]]; then
   dmg_stage="${out_abs}/dmg-stage-${arch}"
   rm -rf "$dmg_stage"
   mkdir -p "$dmg_stage"
-  cp -R "$app_bundle" "${dmg_stage}/GitComet.app"
+  cp -R "$app_bundle" "${dmg_stage}/RevWeave.app"
   ln -s /Applications "${dmg_stage}/Applications"
   dmg_size_mib="$(dmg_size_for_source "$dmg_stage")"
   echo "Creating macOS DMG with ${dmg_size_mib} MiB filesystem."
@@ -335,7 +343,7 @@ if [[ $create_dmg -eq 1 ]]; then
   # Preserve compatibility with older macOS tooling.
   rm -f "$dmg_path"
   hdiutil create \
-    -volname "GitComet" \
+    -volname "RevWeave" \
     -srcfolder "$dmg_stage" \
     -fs HFS+ \
     -size "${dmg_size_mib}m" \

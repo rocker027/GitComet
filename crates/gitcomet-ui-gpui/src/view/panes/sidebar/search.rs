@@ -15,6 +15,7 @@ fn is_searchable_branch_row(row: &BranchSidebarRow) -> bool {
             | BranchSidebarRow::SubmoduleItem { .. }
             | BranchSidebarRow::AnnexRepositoryItem { .. }
             | BranchSidebarRow::StashItem { .. }
+            | BranchSidebarRow::TagItem { .. }
     )
 }
 
@@ -177,6 +178,14 @@ impl SidebarPaneView {
         cx: &mut gpui::Context<Self>,
     ) {
         if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
+            return;
+        }
+        if cx.active_drag().is_some_and(|drag| {
+            drag.value
+                .is::<crate::view::rows::branch_drag::BranchDrag>()
+        }) {
+            window.cancel_drag(cx);
+            cx.stop_propagation();
             return;
         }
         let files = self.search_targets_files();
@@ -485,6 +494,14 @@ impl SidebarPaneView {
                 Rc::clone(&self.branch_search_bar),
             )
         };
+        let placeholder = if files {
+            text(cx, "Search files", "搜尋檔案")
+        } else {
+            text(cx, "Search branches", "搜尋分支")
+        };
+        if input.read(cx).placeholder() != placeholder {
+            input.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        }
         // Pad the first line onto the centre of the bar's control row.
         let file_line = scale.px(FILE_SEARCH_LINE_HEIGHT_PX);
         let file_pad =
@@ -725,9 +742,9 @@ impl SidebarPaneView {
             .gitcomet_tooltip(
                 theme,
                 if available {
-                    "Show current item"
+                    text(cx, "Show current item", "定位目前項目")
                 } else {
-                    "No current item to show"
+                    text(cx, "No current item to show", "目前沒有可定位的項目")
                 }
                 .into(),
             )
@@ -802,6 +819,53 @@ mod tests {
         app.clear_key_bindings();
         crate::app::bind_app_keys_for_test(app);
         crate::app::bind_text_input_keys_for_test(app);
+    }
+
+    #[gpui::test]
+    fn sidebar_ui_language_updates_an_open_search_without_clearing_its_query(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|app| app.set_global(Language::English));
+        let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            window.activate();
+            GitCometView::new(store, events, None, window, cx)
+        });
+        let pane = cx.update(|_, app| view.read(app).sidebar_pane.clone());
+        let state = super::super::long_list_tests::branch_fixture(100);
+        cx.update(|_, app| {
+            view.update(app, |view, cx| {
+                view.store.replace_snapshot_for_test(state.clone());
+                test_support::push_test_state(view, state, cx);
+                view.set_sidebar_collapsed(false, cx);
+            });
+        });
+        test_support::redraw(cx);
+        cx.update(|window, app| {
+            bind_keys(app);
+            let focus = pane.read(app).sidebar_focus.clone();
+            window.focus(&focus, app);
+        });
+        cx.simulate_keystrokes("secondary-f");
+        test_support::redraw(cx);
+        cx.simulate_keystrokes("t o p i c");
+        test_support::redraw(cx);
+
+        cx.update(|_, app| {
+            let input = pane.read(app).branch_filter_input.read(app);
+            assert_eq!(input.placeholder(), "Search branches");
+            assert_eq!(input.text(), "topic");
+            app.set_global(Language::TraditionalChinese);
+            app.refresh_windows();
+        });
+        test_support::redraw(cx);
+        assert!(cx.debug_bounds("sidebar_branches_search").is_some());
+        cx.update(|_, app| {
+            assert_eq!(CollapsedSidebarSection::Local.title(app), "本機分支");
+            let input = pane.read(app).branch_filter_input.read(app);
+            assert_eq!(input.placeholder(), "搜尋分支");
+            assert_eq!(input.text(), "topic");
+        });
     }
 
     #[gpui::test]

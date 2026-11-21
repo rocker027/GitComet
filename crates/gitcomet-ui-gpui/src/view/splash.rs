@@ -1,6 +1,7 @@
 use super::*;
 use crate::kit::click::PointerClickExt as _;
 use crate::kit::interaction as controls;
+use crate::localization::Language;
 use crate::view::components::{ControlInteractionExt, InteractionState, InteractionStyle};
 use std::sync::OnceLock;
 
@@ -170,16 +171,17 @@ impl GitCometView {
         )
     }
 
-    fn git_runtime_unavailable_detail(&self) -> String {
+    fn git_runtime_unavailable_detail(&self, language: Language) -> String {
         self.state
             .git_runtime
             .unavailable_detail()
             .map(ToString::to_string)
             .unwrap_or_else(|| {
-                format!(
-                    "{} could not find a usable Git executable.",
-                    crate::view::product_name()
-                )
+                let name = crate::view::product_name();
+                match language {
+                    Language::English => format!("{name} could not find a usable Git executable."),
+                    Language::TraditionalChinese => format!("{name} 找不到可用的 Git 執行檔。"),
+                }
             })
     }
 
@@ -200,8 +202,8 @@ impl GitCometView {
             .into_any_element()
     }
 
-    fn git_runtime_unavailable_detail_content(&self) -> AnyElement {
-        let detail = self.git_runtime_unavailable_detail();
+    fn git_runtime_unavailable_detail_content(&self, language: Language) -> AnyElement {
+        let detail = self.git_runtime_unavailable_detail(language);
         if let Some((summary, recovery)) = detail.split_once(". ") {
             return div()
                 .flex()
@@ -303,11 +305,12 @@ impl GitCometView {
         &self,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let settings_tooltip: SharedString = "Open settings".into();
+        let language = Language::current(cx);
+        let settings_tooltip: SharedString = language.text("Open settings", "開啟設定").into();
 
         components::interstitial_cta_button(
             "git_unavailable_open_settings",
-            "Open Settings",
+            language.text("Open Settings", "開啟設定"),
             "icons/cog.svg",
             true,
             self.theme,
@@ -330,6 +333,16 @@ impl GitCometView {
         theme: AppTheme,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        let language = Language::current(cx);
+        let name = crate::view::product_name();
+        let recovery = match language {
+            Language::English => format!(
+                "{name} cannot open, refresh, or run repository actions until a Git executable is configured."
+            ),
+            Language::TraditionalChinese => {
+                format!("請先設定 Git 執行檔，{name} 才能開啟或重新整理儲存庫，以及執行相關操作。")
+            }
+        };
         let scaled_px = crate::ui_scale::scaler(self.ui_scale_percent);
         let detail_bg = with_alpha(
             theme.colors.surface.canvas,
@@ -355,7 +368,7 @@ impl GitCometView {
                     .text_size(theme.ui_text(18.0))
                     .font_weight(FontWeight::BOLD)
                     .text_center()
-                    .child("Git executable unavailable"),
+                    .child(language.text("Git executable unavailable", "Git 執行檔無法使用")),
             )
             .child(
                 div()
@@ -364,10 +377,7 @@ impl GitCometView {
                     .text_size(self.theme.ui_text(14.0))
                     .line_height(self.theme.ui_text(22.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child(format!(
-                        "{} cannot open, refresh, or run repository actions until a Git executable is configured.",
-                        crate::view::product_name()
-                    )),
+                    .child(recovery),
             )
             .child(
                 div()
@@ -383,7 +393,7 @@ impl GitCometView {
                     .text_size(self.theme.ui_text(12.0))
                     .line_height(self.theme.ui_text(18.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child(self.git_runtime_unavailable_detail_content()),
+                    .child(self.git_runtime_unavailable_detail_content(language)),
             )
             .child(
                 div()
@@ -450,8 +460,10 @@ impl GitCometView {
             .into_any_element()
     }
 
-    pub(super) fn startup_repository_loading_screen(&mut self) -> AnyElement {
+    pub(super) fn startup_repository_loading_screen(&mut self, cx: &App) -> AnyElement {
         let theme = self.theme;
+        let language = Language::current(cx);
+        let name = crate::view::product_name();
         let ui_scale_percent = self.ui_scale_percent;
         let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
 
@@ -467,16 +479,18 @@ impl GitCometView {
                     div()
                         .text_size(theme.ui_text(18.0))
                         .font_weight(FontWeight::BOLD)
-                        .child("Loading repository session"),
+                        .child(
+                            language.text("Loading repository session", "正在載入儲存庫工作階段"),
+                        ),
                 )
                 .child(
                     div()
                         .text_size(self.theme.ui_text(14.0))
                         .text_color(theme.colors.foreground.secondary)
-                        .child(format!(
-                            "{} is opening your workspace.",
-                            crate::view::product_name()
-                        )),
+                        .child(match language {
+                            Language::English => format!("{name} is opening your workspace."),
+                            Language::TraditionalChinese => format!("{name} 正在開啟您的工作區。"),
+                        }),
                 )
                 .child(
                     div()
@@ -491,7 +505,7 @@ impl GitCometView {
                             theme.colors.accent.foreground,
                             scaled_px(16.0),
                         ))
-                        .child("Please wait…"),
+                        .child(language.text("Please wait…", "請稍候…")),
                 ),
             theme,
         )
@@ -542,7 +556,7 @@ impl GitCometView {
                         this.toggle_sidebar_collapsed_popover(section, cx);
                     }),
                 )
-                .gitcomet_tooltip(theme, section.title().into())
+                .gitcomet_tooltip(theme, section.title(cx).into())
         });
 
         div()
@@ -672,6 +686,7 @@ impl GitCometView {
         let home_active = self.is_home_screen_active();
         self.home.update(cx, |home, _| home.set_active(home_active));
         if let Some(pane) = &self.focused_diff_pane {
+            let language = Language::current(cx);
             return div()
                 .flex()
                 .flex_col()
@@ -691,7 +706,11 @@ impl GitCometView {
                                 .flex_1()
                                 .min_w(px(0.0))
                                 .truncate()
-                                .child(format!("Before: {}", pane.labels[0])),
+                                .child(format!(
+                                    "{} {}",
+                                    language.text("Before:", "變更前："),
+                                    pane.labels[0]
+                                )),
                         )
                         .child(
                             div()
@@ -699,7 +718,11 @@ impl GitCometView {
                                 .flex_1()
                                 .min_w(px(0.0))
                                 .truncate()
-                                .child(format!("After: {}", pane.labels[1])),
+                                .child(format!(
+                                    "{} {}",
+                                    language.text("After:", "變更後："),
+                                    pane.labels[1]
+                                )),
                         ),
                 )
                 .child(div().flex_1().min_h(px(0.0)).child(pane.pane.view()))
@@ -744,7 +767,7 @@ impl GitCometView {
         }
 
         if self.is_startup_repository_loading_screen_active() {
-            return self.startup_repository_loading_screen();
+            return self.startup_repository_loading_screen(cx);
         }
 
         if self.is_home_screen_active() {
@@ -766,6 +789,13 @@ impl GitCometView {
                 .then(|| self.terminal_panel_resize_handle(theme, cx));
             let main_content = self.repository_main_content();
             let details_tabs = self.details_tab_content(cx);
+            let details_auto_hidden = self.details_auto_hidden(cx);
+            if details_auto_hidden
+                && self.details_pane.read(cx).contains_focus(window, cx)
+                && let Some(focus) = self.mounted_main_focus(cx)
+            {
+                window.focus(&focus, cx);
+            }
             let sidebar_sections = (!self.sidebar_collapsed)
                 .then(|| self.sidebar_section_content(window, cx))
                 .flatten();
@@ -884,7 +914,7 @@ impl GitCometView {
                                             }
                                         }),
                                 )
-                                .child(
+                                .children((!details_auto_hidden).then(|| {
                                     div()
                                         .id("details_pane")
                                         .debug_selector(|| "details_pane".to_string())
@@ -904,9 +934,9 @@ impl GitCometView {
                                                 stable_cached_fill_view(self.details_pane.clone()),
                                             )),
                                             Some(content) => d.child(content),
-                                        }),
-                                )
-                                .child(
+                                        })
+                                }))
+                                .children((!details_auto_hidden).then(|| {
                                     // Keep the full resize hit target without reserving a
                                     // visible strip between the main and details panes.
                                     div()
@@ -923,8 +953,8 @@ impl GitCometView {
                                             "pane_resize_details",
                                             SidePane::Details,
                                             cx,
-                                        )),
-                                )
+                                        ))
+                                }))
                                 .child(card_left_corner_caps(
                                     px((main_content_card_radius(theme) - 1.0).max(0.0)),
                                     theme.colors.surface.chrome,

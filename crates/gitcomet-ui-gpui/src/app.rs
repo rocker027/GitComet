@@ -94,6 +94,14 @@ actions!(
     ]
 );
 
+/// Activates the repository tab at `index` (0-based): GitKraken's Cmd-1…9.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
+#[action(namespace = app_menu)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActivateRepositoryTab {
+    pub(crate) index: usize,
+}
+
 #[cfg(test)]
 pub(crate) fn bind_text_input_keys_for_test(cx: &mut App) {
     bind_text_input_keys(cx);

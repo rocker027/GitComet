@@ -47,6 +47,14 @@ pub(crate) enum BranchPickerPurpose {
     Checkout,
     Delete,
     RebaseOnto,
+    /// Merge the chosen branch into the current one.
+    Merge,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum RefPickerPurpose {
+    DeleteTag,
+    DeleteRemoteBranch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,6 +109,22 @@ pub(crate) enum TextFormatMenuSection {
     Encoding,
     LineEnding,
     TabSize,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum PushUpstreamMode {
+    CurrentBranch,
+    SelectedBranch(String),
+    ConfigureOnly(String),
+}
+
+impl PushUpstreamMode {
+    pub(in crate::view) fn local_branch(&self) -> Option<&str> {
+        match self {
+            Self::CurrentBranch => None,
+            Self::SelectedBranch(branch) | Self::ConfigureOnly(branch) => Some(branch),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,9 +187,29 @@ pub(crate) enum PopoverKind {
         index: usize,
         message: String,
     },
+    /// Confirms deleting a tag, locally (`remote: None`) or from a remote.
+    /// Every tag deletion passes through it.
+    DeleteTagConfirm {
+        repo_id: RepoId,
+        name: String,
+        remote: Option<String>,
+    },
+    /// Confirms discarding every unstaged and untracked change.
+    DiscardAllConfirm {
+        repo_id: RepoId,
+    },
+    /// The palette's pick-a-ref menus for deletions; each row opens the
+    /// deletion's confirmation.
+    RefPickerMenu {
+        repo_id: RepoId,
+        purpose: RefPickerPurpose,
+    },
     StashPickerPrompt {
         repo_id: RepoId,
         purpose: StashPickerPurpose,
+    },
+    StashRestoreMenu {
+        repo_id: RepoId,
     },
     FileHistoryFilePicker {
         repo_id: RepoId,
@@ -209,9 +253,7 @@ pub(crate) enum PopoverKind {
     PushSetUpstreamPrompt {
         repo_id: RepoId,
         remote: String,
-        /// `Some` configures this local branch without pushing. `None` is the
-        /// first-push flow that creates the remote branch immediately.
-        configure_only_for: Option<String>,
+        mode: PushUpstreamMode,
     },
     ForcePushConfirm {
         repo_id: RepoId,
@@ -448,6 +490,12 @@ pub(crate) enum PopoverKind {
         repo_id: RepoId,
         target: BranchMenuTarget,
     },
+    /// A sidebar branch dropped on another: merge, rebase or push.
+    BranchDropMenu {
+        repo_id: RepoId,
+        source: BranchMenuTarget,
+        target: BranchMenuTarget,
+    },
     BranchSectionMenu {
         repo_id: RepoId,
         section: BranchSection,
@@ -607,11 +655,26 @@ pub(crate) enum AnnexPrompt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RemotePopoverKind {
     AddPrompt,
-    EditUrlPrompt { name: String, kind: RemoteUrlKind },
-    RemoveConfirm { name: String },
-    Menu { name: String },
-    DeleteBranchConfirm { remote: String, branch: String },
+    EditUrlPrompt {
+        name: String,
+        kind: RemoteUrlKind,
+    },
+    RemoveConfirm {
+        name: String,
+    },
+    Menu {
+        name: String,
+    },
+    DeleteBranchConfirm {
+        remote: String,
+        branch: String,
+    },
     OpenInBrowserMenu,
+    /// Picks which remote's fetch URL to edit, for the palette command.
+    EditUrlMenu,
+    /// Picks which remote to remove, for the palette command; each row opens
+    /// the existing removal confirmation.
+    RemoveMenu,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -636,6 +699,16 @@ pub(crate) enum WorktreePopoverKind {
     CommitMenu {
         commit_id: CommitId,
     },
+    /// Batch/single worktree finish setup & preview dialog.
+    FinishSetup {
+        preselected: Vec<std::path::PathBuf>,
+        target: Option<String>,
+        mode: Option<gitcomet_state::model::FinishMode>,
+    },
+    /// Live queue & conflict resolution panel for a worktree finish run.
+    FinishQueue {
+        run_id: gitcomet_state::model::WorktreeFinishRunId,
+    },
 }
 
 /// What the Add-worktree dialog opens with when another surface starts it. The
@@ -643,6 +716,7 @@ pub(crate) enum WorktreePopoverKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorktreeAddPrefill {
     pub(crate) source: String,
+    pub(crate) source_upstream: Option<gitcomet_core::domain::Upstream>,
     pub(crate) create_branch: bool,
     pub(crate) new_branch: String,
     /// Open the worktree in a tab once git has created it.

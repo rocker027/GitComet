@@ -1050,6 +1050,14 @@ jobs:
             --linux-intel-appimage "${linux_intel_appimage_path}" \
             --output "dist/release/gitcomet.rb"
 
+      - name: Archive corresponding source from the release tag
+        run: |
+          set -euo pipefail
+          archive="revweave-${TAG}-source"
+          git archive --format=tar.gz --prefix="${archive}/" \
+            --output="dist/release/${archive}.tar.gz" "refs/tags/${TAG}^{commit}" \
+            -- . ':(exclude).omc'
+
       - name: Generate checksums
         run: |
           set -euo pipefail

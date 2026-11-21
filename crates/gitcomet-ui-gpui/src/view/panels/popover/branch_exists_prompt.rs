@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 
 fn display_target(target: &str) -> SharedString {
     let is_full_object_id =
@@ -17,17 +18,26 @@ fn worktree_note(
     repo_id: RepoId,
     name: &str,
     operation: &BranchExistsPromptOperation,
+    language: Language,
 ) -> Option<String> {
     let repo = this.state.repos.iter().find(|repo| repo.id == repo_id)?;
     let path = crate::view::rows::listed_worktree_paths_by_branch(repo).remove(name)?;
-    let mut note = format!(
-        "'{name}' is checked out in the worktree at {}. Checkout existing opens that worktree; overwriting applies there and opens it.",
-        path.display()
-    );
+    let path = path.display();
+    let mut note = match language {
+        Language::English => format!(
+            "'{name}' is checked out in the worktree at {path}. Checkout existing opens that worktree; overwriting applies there and opens it."
+        ),
+        Language::TraditionalChinese => format!(
+            "「{name}」已在 {path} 的工作樹中切換。選擇「切換到現有分支」會開啟該工作樹。選擇覆寫會在該工作樹套用變更並開啟它。"
+        ),
+    };
     if let BranchExistsPromptOperation::RenameBranch { old_name } = operation
         && matches!(&repo.head_branch, Loadable::Ready(head) if head == old_name)
     {
-        note.push_str(" This tab is left on a detached HEAD at the same commit.");
+        note.push_str(language.text(
+            " This tab is left on a detached HEAD at the same commit.",
+            "此分頁會停留在同一筆提交，並進入 detached HEAD 狀態。",
+        ));
     }
     Some(note)
 }
@@ -41,6 +51,7 @@ pub(super) fn panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
 
     let (source_label, show_full_text_tooltip, overwrite_label, overwrite_note): (
         SharedString,
@@ -52,32 +63,51 @@ pub(super) fn panel(
             let display = display_target(&target);
             let abbreviated = display.as_ref() != target.as_str();
             (
-                format!("Target: {display}").into(),
+                format!("{} {display}", language.text("Target:", "目標：")).into(),
                 !abbreviated,
-                "Overwrite and checkout",
-                "Overwriting moves the branch to the target commit, clears its upstream tracking, and checks it out.".to_string(),
+                language.text("Overwrite and checkout", "覆寫並切換"),
+                language
+                    .text(
+                        "Overwriting moves the branch to the target commit, clears its upstream tracking, and checks it out.",
+                        "覆寫會將分支移至目標提交、清除上游追蹤設定，並切換到該分支。",
+                    )
+                    .to_owned(),
             )
         }
         BranchExistsPromptOperation::CheckoutRemoteBranch { .. } => {
             let display = display_target(&target);
             let abbreviated = display.as_ref() != target.as_str();
             (
-                format!("Target: {display}").into(),
+                format!("{} {display}", language.text("Target:", "目標：")).into(),
                 !abbreviated,
-                "Overwrite and checkout",
-                "Overwriting moves the local branch to the remote commit, configures it to track that remote branch, and checks it out.".to_string(),
+                language.text("Overwrite and checkout", "覆寫並切換"),
+                language
+                    .text(
+                        "Overwriting moves the local branch to the remote commit, configures it to track that remote branch, and checks it out.",
+                        "覆寫會將本機分支移至遠端提交、設定追蹤該遠端分支，並切換到此本機分支。",
+                    )
+                    .to_owned(),
             )
         }
         BranchExistsPromptOperation::RenameBranch { old_name } => (
-            format!("Renaming: {old_name} → {name}").into(),
-            true,
-            "Overwrite",
             format!(
-                "Overwriting deletes the existing '{name}' and renames '{old_name}' to '{name}'."
-            ),
+                "{} {old_name} → {name}",
+                language.text("Renaming:", "重新命名：")
+            )
+            .into(),
+            true,
+            language.text("Overwrite", "覆寫"),
+            match language {
+                Language::English => format!(
+                    "Overwriting deletes the existing '{name}' and renames '{old_name}' to '{name}'."
+                ),
+                Language::TraditionalChinese => {
+                    format!("覆寫會刪除現有的「{name}」，並將「{old_name}」重新命名為「{name}」。")
+                }
+            },
         ),
     };
-    let worktree_note = worktree_note(this, repo_id, &name, &operation);
+    let worktree_note = worktree_note(this, repo_id, &name, &operation, language);
 
     let mut source_text = components::TruncatedText::new(source_label, theme.ui_text(14.0))
         .id("branch_exists_target_text")
@@ -86,21 +116,27 @@ pub(super) fn panel(
         source_text = source_text.full_text_tooltip(this.tooltip_host.clone());
     }
 
-    let mut dialog = ConfirmDialog::new("Branch already exists", DIALOG_540_WIDTH)
-        .text(
-            theme,
-            format!("A local branch named '{name}' already exists."),
-        )
-        .section(
-            div()
-                .debug_selector(|| "branch_exists_target".to_string())
-                .px_2()
-                .py_1()
-                .min_w(px(0.0))
-                .font_family(crate::font_preferences::EDITOR_MONOSPACE_FONT_FAMILY)
-                .child(source_text.render(cx)),
-        )
-        .note(theme, overwrite_note);
+    let mut dialog = ConfirmDialog::new(
+        language.text("Branch already exists", "分支已存在"),
+        DIALOG_540_WIDTH,
+    )
+    .text(
+        theme,
+        match language {
+            Language::English => format!("A local branch named '{name}' already exists."),
+            Language::TraditionalChinese => format!("名為「{name}」的本機分支已存在。"),
+        },
+    )
+    .section(
+        div()
+            .debug_selector(|| "branch_exists_target".to_string())
+            .px_2()
+            .py_1()
+            .min_w(px(0.0))
+            .font_family(crate::font_preferences::EDITOR_MONOSPACE_FONT_FAMILY)
+            .child(source_text.render(cx)),
+    )
+    .note(theme, overwrite_note);
     if let Some(note) = worktree_note {
         dialog = dialog.section(
             div()
@@ -115,28 +151,31 @@ pub(super) fn panel(
 
     dialog.render(
         theme,
-        cancel_button("branch_exists_cancel", "branch_exists_cancel_hint", theme).on_click(
+        cancel_button_labeled(
+            "branch_exists_cancel",
+            "branch_exists_cancel_hint",
+            language.text("Cancel", "取消"),
             theme,
-            cx,
-            |this, _e, _w, cx| {
-                this.resolve_open_branch_exists_prompt(BranchExistsChoice::Cancel);
-                this.close_popover(cx);
-            },
-        ),
+        )
+        .on_click(theme, cx, |this, _e, _w, cx| {
+            this.resolve_open_branch_exists_prompt(BranchExistsChoice::Cancel);
+            this.close_popover(cx);
+        }),
         div()
             .flex()
             .items_center()
             .gap_1()
             .child(
-                components::Button::new("branch_exists_checkout_existing", "Checkout existing")
-                    .style(components::ButtonStyle::Outlined)
-                    .on_click(theme, cx, |this, _e, _w, cx| {
-                        this.resolve_open_branch_exists_prompt(
-                            BranchExistsChoice::CheckoutExisting,
-                        );
-                        this.close_popover(cx);
-                    })
-                    .debug_selector(|| "branch_exists_checkout_existing".to_string()),
+                components::Button::new(
+                    "branch_exists_checkout_existing",
+                    language.text("Checkout existing", "切換到現有分支"),
+                )
+                .style(components::ButtonStyle::Outlined)
+                .on_click(theme, cx, |this, _e, _w, cx| {
+                    this.resolve_open_branch_exists_prompt(BranchExistsChoice::CheckoutExisting);
+                    this.close_popover(cx);
+                })
+                .debug_selector(|| "branch_exists_checkout_existing".to_string()),
             )
             .child(
                 components::Button::new("branch_exists_overwrite", overwrite_label)

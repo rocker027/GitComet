@@ -47,6 +47,7 @@ impl LanePaint {
     /// The HEAD lane above anything that reaches it: kept free for the
     /// uncommitted-changes row, and only drawn while that row is shown.
     const RESERVED: u8 = 1 << 3;
+    const STASH: u8 = 1 << 4;
 
     /// No lane occupies this column on this row.
     pub const HOLE: Self = Self {
@@ -80,6 +81,22 @@ impl LanePaint {
         } else {
             self
         }
+    }
+
+    #[inline]
+    pub(in crate::view) const fn with_stash(mut self, stash: bool) -> Self {
+        if stash {
+            self.flags |= Self::STASH;
+        } else {
+            self.flags &= !Self::STASH;
+        }
+        self
+    }
+
+    /// This segment connects a stash tip to its first parent.
+    #[inline]
+    pub const fn is_stash(self) -> bool {
+        self.flags & Self::STASH != 0
     }
 
     #[inline]
@@ -143,7 +160,7 @@ pub(in crate::view) fn from_node_cols_of(lanes_next: &[LanePaint]) -> FromNodeCo
         .collect()
 }
 
-trait GraphCommitLike {
+pub(in crate::view) trait GraphCommitLike {
     fn id_str(&self) -> &str;
     fn parent_ids(&self) -> &[CommitId];
 }
@@ -270,9 +287,20 @@ fn compute_linear_visible_history_fast_path<C: GraphCommitLike>(
     Some(rows)
 }
 
-fn compute_graph_impl<'a, C, I>(
+/// Only the first parent records the stash's base. Slice before resolving
+/// visible rows so a missing base never promotes an index or untracked parent.
+pub(in crate::view) fn graph_parents<T>(parents: &[T], stash: bool) -> &[T] {
+    if stash {
+        parents.get(..1).unwrap_or(parents)
+    } else {
+        parents
+    }
+}
+
+pub(in crate::view) fn compute_graph_with_stashes<'a, C, I>(
     commits: &[C],
     _theme: AppTheme,
+    stash_rows: &[usize],
     branch_heads: I,
     active_head_target: Option<&str>,
 ) -> Vec<GraphRow>
@@ -282,8 +310,9 @@ where
 {
     let branch_heads: SmallVec<[&str; 8]> = branch_heads.into_iter().collect();
     let has_branch_heads = !branch_heads.is_empty();
-    if let Some(graph) =
-        compute_linear_visible_history_fast_path(commits, has_branch_heads, active_head_target)
+    if stash_rows.is_empty()
+        && let Some(graph) =
+            compute_linear_visible_history_fast_path(commits, has_branch_heads, active_head_target)
     {
         return graph;
     }
@@ -353,7 +382,9 @@ where
     for (commit_ix, commit) in commits.iter().enumerate() {
         let is_merge = commit.parent_ids().len() > 1;
         parent_ixs.clear();
-        for (parent_pos, parent) in commit.parent_ids().iter().enumerate() {
+        let stash = stash_rows.binary_search(&commit_ix).is_ok();
+        let parents = graph_parents(commit.parent_ids(), stash);
+        for (parent_pos, parent) in parents.iter().enumerate() {
             let parent_ix = if parent_pos == 0 {
                 resolve_first_parent_ix(commits, &id_to_index, commit_ix, parent.as_ref())
             } else {
@@ -363,12 +394,17 @@ where
                 parent_ixs.push(parent_ix);
             }
         }
-        rows.push(walk.step(
-            commit_ix,
-            &parent_ixs,
-            is_merge,
-            branch_head_mask.get(commit_ix).copied().unwrap_or(false),
-        ));
+        rows.push(
+            walk.transition(
+                commit_ix,
+                &parent_ixs,
+                is_merge,
+                branch_head_mask.get(commit_ix).copied().unwrap_or(false),
+                stash,
+                true,
+            )
+            .paint,
+        );
     }
     rows
 }
@@ -389,19 +425,7 @@ pub fn compute_graph<'a, I>(
 where
     I: IntoIterator<Item = &'a str>,
 {
-    compute_graph_impl(commits, theme, branch_heads, active_head_target)
-}
-
-pub fn compute_graph_refs<'a, 'commit, I>(
-    commits: &[&'commit Commit],
-    theme: AppTheme,
-    branch_heads: I,
-    active_head_target: Option<&str>,
-) -> Vec<GraphRow>
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    compute_graph_impl(commits, theme, branch_heads, active_head_target)
+    compute_graph_with_stashes(commits, theme, &[], branch_heads, active_head_target)
 }
 
 fn resolve_first_parent_ix<C: GraphCommitLike>(
@@ -433,6 +457,48 @@ mod tests {
             author: "".into(),
             time: SystemTime::UNIX_EPOCH,
         }
+    }
+
+    #[test]
+    fn stash_lanes_stop_at_the_base_and_keep_parallel_merges_solid() {
+        let commits = [
+            commit("tip", vec!["merge"]),
+            commit("stash", vec!["base", "index"]),
+            commit("merge", vec!["other", "base"]),
+            commit("second-stash", vec!["base"]),
+            commit("other", vec!["base"]),
+            commit("base", vec!["root"]),
+            commit("index", vec![]),
+            commit("root", vec![]),
+            commit("missing-base-stash", vec!["outside", "untracked"]),
+            commit("untracked", vec![]),
+        ];
+        let rows = compute_graph_with_stashes(
+            &commits,
+            AppTheme::gitcomet_dark(),
+            &[1, 3, 8],
+            ["tip"],
+            Some("tip"),
+        );
+        let stash_col = usize::from(rows[1].node_col);
+        assert!(!rows[1].lanes_now[stash_col].is_stash());
+        assert!(rows[1].lanes_next[stash_col].is_stash());
+        let merge = &rows[2];
+        assert!(merge.lanes_next[stash_col].is_stash());
+        assert!(merge.lanes_next.iter().enumerate().any(|(col, lane)| {
+            col != usize::from(merge.node_col) && lane.starts_at_node() && !lane.is_stash()
+        }));
+        let base = &rows[5];
+        assert!(!base.lanes_now[usize::from(base.node_col)].is_stash());
+        assert_eq!(
+            base.joins_in
+                .iter()
+                .filter(|edge| { base.lanes_now[usize::from(edge.from_col)].is_stash() })
+                .count(),
+            2
+        );
+        assert!(base.lanes_next.iter().all(|lane| !lane.is_stash()));
+        assert!(rows[8].lanes_next.is_empty());
     }
 
     #[test]

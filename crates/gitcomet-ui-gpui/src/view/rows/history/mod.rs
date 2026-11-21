@@ -1,10 +1,16 @@
 use super::diff_canvas;
 use super::diff_text::*;
 use super::history_canvas;
+use super::sidebar::{RemoteBranchDoubleClickAction, remote_branch_double_click_action};
 use super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
 use crate::kit::interaction_paint::InteractionPaint;
+use crate::localization::{Language, text};
 use crate::view::caches::{HistoryListRow, HistoryWorktreeChip};
+use crate::view::panes::history::{
+    HISTORY_WORKTREE_ROW_MENU_PREFIX, HistoryClickTarget, HistoryPointerClick,
+    history_worktree_menu_invoker,
+};
 use palette::IntoColor;
 
 use crate::view::markdown_preview::{
@@ -81,6 +87,8 @@ impl HistoryView {
         let col_sha = this.history_col_sha;
         let ui_scale = this.ui_scale();
         let (show_graph, show_author, show_date, show_sha) = this.history_visible_columns();
+        let message_width =
+            this.history_message_content_width((show_graph, show_author, show_date, show_sha));
         let display_key = HistoryDisplayKey::new(
             this.date_time_format,
             this.timezone,
@@ -137,6 +145,18 @@ impl HistoryView {
                             list_ix,
                             graph_start,
                         );
+                        let menu_open =
+                            this.active_context_menu_invoker
+                                .as_ref()
+                                .is_some_and(|invoker| {
+                                    invoker.starts_with(HISTORY_WORKTREE_ROW_MENU_PREFIX)
+                                        && *invoker
+                                            == history_worktree_menu_invoker(
+                                                repo.id,
+                                                repo.lifetime(),
+                                                &summary.path,
+                                            )
+                                });
                         return Some(worktree_uncommitted_history_row(
                             theme,
                             ui_scale,
@@ -158,8 +178,10 @@ impl HistoryView {
                             show_graph_color_marker,
                             graph_fade_opacity,
                             repo.id,
+                            repo.lifetime(),
                             list_ix,
                             selected,
+                            menu_open,
                             find_query.is_some() && !selected,
                             (summary.added, summary.modified, summary.deleted),
                             summary,
@@ -269,6 +291,14 @@ impl HistoryView {
                             )
                         })
                         .unwrap_or_default();
+                    let branch_worktrees = match &repo.worktrees {
+                        Loadable::Ready(worktrees)
+                            if !decoration_row_vm.branch_chips.is_empty() =>
+                        {
+                            Some(Arc::clone(worktrees))
+                        }
+                        _ => None,
+                    };
                     let (find_dimmed, find_highlights) =
                         crate::view::panes::history::find::history_find_row_marks(
                             find_query.as_ref(),
@@ -304,6 +334,7 @@ impl HistoryView {
                         Arc::clone(&decoration_row_vm.tag_names),
                         Arc::clone(&decoration_row_vm.branch_chips),
                         Arc::clone(&decoration_row_vm.ref_items),
+                        branch_worktrees,
                         selected_branch,
                         selected_lane,
                         lane_branch_name,
@@ -321,6 +352,7 @@ impl HistoryView {
                         this.history_row(repo, commit, cx),
                         worktree_chips,
                         comparison_mark_label(repo, &commit.id),
+                        message_width,
                         cx,
                     ))
                 })()
@@ -379,7 +411,11 @@ impl HistoryView {
             .items_center()
             .px_3()
             .text_color(self.theme.colors.foreground.secondary)
-            .child("Could not load commits. Click to retry.")
+            .child(text(
+                cx,
+                "Could not load commits. Click to retry.",
+                "無法載入提交。點擊重試。",
+            ))
             .when(failed, |row| {
                 row.control_interaction(
                     controls::InteractionStyle::new(self.theme),
@@ -464,6 +500,8 @@ const HISTORY_ROW_HEIGHT_PX: f32 = 28.0;
 /// Widest a worktree row's badge may grow before its branch label truncates.
 /// Matches the sidebar's branch-row worktree pill.
 const HISTORY_WORKTREE_BADGE_MAX_W_PX: f32 = 200.0;
+/// Space needed for the worktree label alongside its icon and a possible +N.
+const HISTORY_WORKTREE_LABEL_BUDGET_PX: f32 = 96.0;
 
 fn history_worktree_node_color_ix(
     graph_rows: Option<&[history_graph::GraphRow]>,
@@ -543,6 +581,7 @@ fn history_table_row(
     tag_names: Arc<[HistoryTextVm]>,
     branch_chips: Arc<[HistoryBranchChipVm]>,
     ref_items: Arc<[HistoryRefListItem]>,
+    branch_worktrees: Option<Arc<Vec<gitcomet_core::domain::Worktree>>>,
     selected_branch: Option<SelectedHistoryBranch>,
     // Colour index of the lane the selection sits on; every other lane washes
     // out. A property of the lane, not of this row.
@@ -566,6 +605,7 @@ fn history_table_row(
     // Other worktrees that have this commit checked out and no changes.
     worktree_chips: SmallVec<[HistoryWorktreeChip; 1]>,
     comparison_mark: Option<SharedString>,
+    message_width: Pixels,
     cx: &mut gpui::Context<HistoryView>,
 ) -> AnyElement {
     let crate::view::panes::history::annotations::RowAnnotation {
@@ -587,6 +627,9 @@ fn history_table_row(
     // Where the first worktree chip starts, so the canvas can end the message
     // there. The chips' layer prepaints before the canvas paints.
     let worktree_chips_left = (!worktree_chips.is_empty()).then(Default::default);
+    let ref_hit_targets = std::rc::Rc::new(std::cell::RefCell::new(
+        history_canvas::HistoryRefHitTargets::default(),
+    ));
     let commit_row = history_canvas::history_commit_row_canvas(
         theme,
         cx.entity(),
@@ -614,6 +657,7 @@ fn history_table_row(
         tag_names,
         branch_chips,
         ref_items,
+        branch_worktrees,
         selected_branch,
         selected_lane,
         lane_branch_name,
@@ -629,6 +673,7 @@ fn history_table_row(
         annotation.clone(),
         comparison_mark,
         worktree_chips_left.clone(),
+        ref_hit_targets.clone(),
         mark_menus,
         mark_menus
             .iter()
@@ -660,8 +705,108 @@ fn history_table_row(
         .on_activate(
             false,
             controls::ControlActivation::Composite,
-            cx.listener(move |this, e: &ClickEvent, _w, cx| {
+            cx.listener(move |this, e: &ClickEvent, window, cx| {
+                if matches!(e, ClickEvent::Mouse(_))
+                    && std::mem::take(&mut this.history_branch_drag_click_suppressed)
+                {
+                    this.history_first_pointer_click = None;
+                    cx.stop_propagation();
+                    return;
+                }
                 let modifiers = e.modifiers();
+                if e.standard_click()
+                    && modifiers.number_of_modifiers() == 0
+                    && let ClickEvent::Mouse(click) = e
+                    && let Some(overflow_bounds) = ref_hit_targets.borrow().overflow
+                    && ref_hit_targets
+                        .borrow()
+                        .overflow_clicked(click.down.position, e.position())
+                {
+                    let invoker: SharedString = format!(
+                        "{}{}_{}",
+                        crate::view::history_refs_hover::HISTORY_REFS_PICKER_MENU_INVOKER_PREFIX,
+                        repo_id.0,
+                        commit_id.as_ref()
+                    )
+                    .into();
+                    this.open_popover_at(
+                        PopoverKind::CommitMenu {
+                            repo_id,
+                            commit_id: commit_id.clone(),
+                            refs: CommitMenuRefs::Chooser,
+                        }
+                        .invoked_by(invoker),
+                        overflow_bounds.bottom_left(),
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                    return;
+                }
+                if e.standard_click()
+                    && modifiers.number_of_modifiers() == 0
+                    && let ClickEvent::Mouse(click) = e
+                    && let Some((pressed, lifetime, target)) =
+                        ref_hit_targets.borrow_mut().released_branch.take()
+                    && pressed == click.down.position
+                    && this
+                        .active_repo()
+                        .is_some_and(|repo| repo.id == repo_id && repo.lifetime() == lifetime)
+                {
+                    let clicked = HistoryPointerClick {
+                        repo_id,
+                        lifetime,
+                        target: HistoryClickTarget::Branch {
+                            commit_id: commit_id.clone(),
+                            target: target.clone(),
+                        },
+                    };
+                    if this.complete_history_double_click(click, clicked)
+                        && let Some(action) = this
+                            .active_repo()
+                            .and_then(|repo| history_double_click_branch(repo, &target))
+                    {
+                        match action {
+                            HistoryBranchActivation::Checkout(name) => {
+                                this.store.dispatch(Msg::CheckoutBranch { repo_id, name });
+                            }
+                            HistoryBranchActivation::Open(path) => {
+                                crate::app::open_repository_from_view(
+                                    cx,
+                                    window.window_handle().window_id(),
+                                    path,
+                                );
+                            }
+                            HistoryBranchActivation::CreateTracking {
+                                remote,
+                                branch,
+                                local_branch,
+                            } => {
+                                this.store.dispatch(Msg::CheckoutRemoteBranch {
+                                    repo_id,
+                                    remote,
+                                    branch,
+                                    local_branch,
+                                    mode: gitcomet_core::services::CheckoutRemoteBranchMode::Create,
+                                });
+                            }
+                            HistoryBranchActivation::PromptForTrackingName { remote, branch } => {
+                                this.open_popover_at(
+                                    PopoverKind::CheckoutRemoteBranchPrompt {
+                                        repo_id,
+                                        remote,
+                                        branch,
+                                    },
+                                    e.position(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                        cx.notify();
+                        return;
+                    }
+                }
                 let mode = if modifiers.shift {
                     CommitSelectMode::Range
                 } else if modifiers.secondary() || modifiers.control || modifiers.platform {
@@ -689,8 +834,11 @@ fn history_table_row(
 
     if let Some(chips_left) = worktree_chips_left {
         // A layer over the canvas, with the row's columns, puts the chips at the
-        // end of the message cell as the worktree rows do. One chip, and "+N" for
-        // a menu of them all, in at most half the cell.
+        // end of the message cell. Spend room beyond the summary's minimum on
+        // names. In narrow columns keep the open-worktree icon and +N menu.
+        let chip_budget = (message_width - ui_scale.px(crate::view::HISTORY_COL_MESSAGE_MIN_PX))
+            .min(message_width * 0.5);
+        let compact = chip_budget < ui_scale.px(HISTORY_WORKTREE_LABEL_BUDGET_PX);
         let more = worktree_chips.len() - 1;
         let more_anchor = std::rc::Rc::new(std::cell::Cell::new(None));
         let mut chips = worktree_chips.into_iter();
@@ -701,6 +849,7 @@ fn history_table_row(
                 ui_scale,
                 chip.label,
                 chip.path,
+                compact,
                 cx,
             )
             .debug_selector(move || format!("history_worktree_chip_{ix}"))
@@ -718,7 +867,15 @@ fn history_table_row(
                 ui_scale.px(6.0),
             )
             .debug_selector(move || format!("history_worktree_more_{ix}"))
-            .gitcomet_tooltip(theme, "All worktrees on this commit".into())
+            .gitcomet_tooltip(
+                theme,
+                text(
+                    cx,
+                    "All worktrees on this commit",
+                    "使用這筆提交的所有工作樹",
+                )
+                .into(),
+            )
             .on_activate(
                 false,
                 controls::ControlActivation::Nested,
@@ -763,6 +920,7 @@ fn history_table_row(
                                 .gap_1()
                                 .min_w(px(0.0))
                                 .max_w(gpui::relative(0.5))
+                                .when(!compact, |chips| chips.max_w(chip_budget))
                                 .on_children_prepainted(move |bounds, _, _| {
                                     chips_left.set(bounds.first().map(|chip| chip.left()));
                                     more_anchor.set(bounds.get(1).copied());
@@ -784,23 +942,32 @@ fn history_table_row(
     place_history_row(row, row_top).into_any_element()
 }
 
-/// A worktree's chip in the log, naming its branch and folder. Clicking it opens
-/// that worktree.
+/// A worktree's chip in the log. The label is in the tooltip even when the
+/// column only has room for the icon. Clicking it opens that worktree.
 fn history_worktree_chip(
     id: impl Into<gpui::ElementId>,
     theme: AppTheme,
     ui_scale: ui_scale::UiScale,
     label: SharedString,
     path: std::path::PathBuf,
+    compact: bool,
     cx: &mut gpui::Context<HistoryView>,
 ) -> gpui::Stateful<gpui::Div> {
     let scaled_px = crate::ui_scale::scaler(ui_scale);
-    let tooltip: SharedString = format!("Open this worktree\n{}", path.display()).into();
+    let tooltip: SharedString = match Language::current(cx) {
+        Language::English => format!("Open this worktree\n{label}\n{}", path.display()),
+        Language::TraditionalChinese => format!("開啟此工作樹\n{label}\n{}", path.display()),
+    }
+    .into();
     super::sidebar::worktree_origin_chip(
         id,
         theme,
-        label,
-        scaled_px(9.0),
+        if compact {
+            SharedString::default()
+        } else {
+            label
+        },
+        scaled_px(if compact { 12.0 } else { 9.0 }),
         super::sidebar::worktree_badge_height(ui_scale),
         scaled_px(HISTORY_WORKTREE_BADGE_MAX_W_PX),
         scaled_px(6.0),
@@ -859,8 +1026,10 @@ fn worktree_uncommitted_history_row(
     show_graph_color_marker: bool,
     graph_fade_opacity: f32,
     repo_id: RepoId,
+    lifetime: u64,
     list_ix: usize,
     selected: bool,
+    menu_open: bool,
     find_dimmed: bool,
     counts: (usize, usize, usize),
     summary: &gitcomet_core::domain::WorktreeDirtySummary,
@@ -898,7 +1067,8 @@ fn worktree_uncommitted_history_row(
     // The node's middle is opaque, so it has to be filled in what the row is
     // painted over rather than in the list's bare surface.
     let row_state = controls::InteractionState::default()
-        .selected(selected, theme.colors.accent.subtle_background);
+        .selected(selected, theme.colors.accent.subtle_background)
+        .open(menu_open);
     let row_style = controls::InteractionStyle::new(theme);
     let row_paint = InteractionPaint::new(row_style, row_state);
     let paint = row_paint.clone();
@@ -986,15 +1156,18 @@ fn worktree_uncommitted_history_row(
             &summary.path,
         ),
         summary.path.clone(),
+        false,
         cx,
     );
 
     let select_path = summary.path.clone();
+    let menu_path = summary.path.clone();
     // These cells share the canvas graph's column offsets. Keep every fixed
     // column non-shrinking so a long worktree label can only clip its summary,
     // never move this row's graph lane away from the commit rows below it.
     let row = div()
         .id(row_identity)
+        .debug_selector(move || format!("history_worktree_row_{list_ix}"))
         .when(find_dimmed, |row| row.opacity(HISTORY_FIND_DIMMED_OPACITY))
         .h(history_row_height(ui_scale))
         .flex()
@@ -1006,8 +1179,22 @@ fn worktree_uncommitted_history_row(
         .on_activate(
             false,
             controls::ControlActivation::Composite,
-            cx.listener(move |this, e: &ClickEvent, _w, cx| {
+            cx.listener(move |this, e: &ClickEvent, window, cx| {
                 if !e.standard_click() {
+                    return;
+                }
+                if let ClickEvent::Mouse(click) = e
+                    && this.complete_history_double_click(
+                        click,
+                        HistoryPointerClick {
+                            repo_id,
+                            lifetime,
+                            target: HistoryClickTarget::Worktree(select_path.clone()),
+                        },
+                    )
+                    && this.open_history_worktree_row(repo_id, lifetime, &select_path, window, cx)
+                {
+                    cx.stop_propagation();
                     return;
                 }
                 this.cancel_history_find_navigation();
@@ -1025,6 +1212,20 @@ fn worktree_uncommitted_history_row(
                 cx.notify();
             }),
         )
+        .on_aux_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+            if e.is_right_click()
+                && this.open_history_worktree_menu(
+                    repo_id,
+                    lifetime,
+                    &menu_path,
+                    e.position(),
+                    window,
+                    cx,
+                )
+            {
+                cx.stop_propagation();
+            }
+        }))
         .child(
             div()
                 .w(col_branch)
@@ -1065,12 +1266,22 @@ fn worktree_uncommitted_history_row(
                 });
             summary = summary.child(
                 div()
+                    .id("history_worktree_changes_label")
+                    .gitcomet_tooltip(
+                        theme,
+                        text(
+                            cx,
+                            "Click to preview changes. Double-click to open the worktree.",
+                            "點一下預覽變更，點兩下開啟工作樹。",
+                        )
+                        .into(),
+                    )
                     .flex_shrink_0()
                     .text_size(theme.ui_text(14.0))
                     .text_color(label_color)
                     .line_clamp(1)
                     .whitespace_nowrap()
-                    .child("Worktree changes"),
+                    .child(text(cx, "Worktree changes", "工作樹的變更")),
             );
             if !parts.is_empty() {
                 summary = summary.child(div().flex().items_center().gap_2().children(parts));
@@ -1280,7 +1491,7 @@ fn working_tree_summary_history_row(
                     .text_color(label_color)
                     .line_clamp(1)
                     .whitespace_nowrap()
-                    .child("Uncommitted changes"),
+                    .child(text(cx, "Uncommitted changes", "未提交的變更")),
             );
             if !parts.is_empty() {
                 summary = summary.child(div().flex().items_center().gap_2().children(parts));
@@ -1302,7 +1513,7 @@ fn working_tree_summary_history_row(
                     .font_family(UI_MONOSPACE_FONT_FAMILY)
                     .text_color(theme.colors.foreground.secondary)
                     .whitespace_nowrap()
-                    .child("Click to review"),
+                    .child(text(cx, "Click to review", "點擊檢視")),
             )
         })
         .when(show_sha, |row| row.child(div().w(col_sha).flex_none()))
@@ -1315,6 +1526,57 @@ fn working_tree_summary_history_row(
         );
 
     place_history_row(row, row_top).into_any_element()
+}
+
+#[derive(Debug, PartialEq)]
+pub(in crate::view) enum HistoryBranchActivation {
+    Checkout(String),
+    Open(std::path::PathBuf),
+    CreateTracking {
+        remote: String,
+        branch: String,
+        local_branch: String,
+    },
+    PromptForTrackingName {
+        remote: String,
+        branch: String,
+    },
+}
+
+/// Activate the exact branch label under the completed double-click.
+pub(in crate::view) fn history_double_click_branch(
+    repo: &RepoState,
+    target: &BranchMenuTarget,
+) -> Option<HistoryBranchActivation> {
+    if repo.is_bare() || super::sidebar::branch_commit_id(repo, target).is_none() {
+        return None;
+    }
+    let name = match target {
+        BranchMenuTarget::Local { name } => name.clone(),
+        BranchMenuTarget::Remote { remote, branch } => {
+            let branches = repo.branches.ready().map(|branches| branches.as_slice());
+            match remote_branch_double_click_action(branches, remote, branch) {
+                RemoteBranchDoubleClickAction::CheckoutTracking { name } => name,
+                RemoteBranchDoubleClickAction::CreateTracking { name } => {
+                    return Some(HistoryBranchActivation::CreateTracking {
+                        remote: remote.clone(),
+                        branch: branch.clone(),
+                        local_branch: name,
+                    });
+                }
+                RemoteBranchDoubleClickAction::PromptForName => {
+                    return Some(HistoryBranchActivation::PromptForTrackingName {
+                        remote: remote.clone(),
+                        branch: branch.clone(),
+                    });
+                }
+            }
+        }
+    };
+    if let Some(path) = crate::view::rows::branch_checked_out_at(repo, &name) {
+        return (path != repo.spec.workdir).then_some(HistoryBranchActivation::Open(path));
+    }
+    Some(HistoryBranchActivation::Checkout(name))
 }
 
 mod markdown_preview_rows;

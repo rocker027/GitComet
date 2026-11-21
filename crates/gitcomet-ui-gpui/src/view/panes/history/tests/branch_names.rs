@@ -1,10 +1,59 @@
 use super::*;
+use crate::view::panels::HistoryMenuRef;
+use palette::IntoColor as _;
+
+const REPEATED_AUTHOR_PX: f32 = 16.0;
+const EXPANDED_AUTHOR_PX: f32 = 22.0;
 
 fn redraw(cx: &mut gpui::VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, app| {
         let _ = window.draw(app);
     });
+}
+
+fn graph_node_at(
+    quads: &[gpui::Quad],
+    graph: Bounds<Pixels>,
+    row_y: Pixels,
+    scale: f32,
+) -> Option<&gpui::Quad> {
+    quads.iter().find(|quad| {
+        let center = quad.bounds.center();
+        center.x.0 >= f32::from(graph.left()) * scale
+            && center.x.0 < f32::from(graph.right()) * scale
+            && (center.y.0 - f32::from(row_y) * scale).abs() < 0.6
+            && !quad.background.is_transparent()
+            && quad.border_widths.top.0 > 0.0
+            && quad.bounds.size.width == quad.bounds.size.height
+            && (quad.corner_radii.top_left.0 * 2.0 - quad.bounds.size.width.0).abs() < 0.1
+    })
+}
+
+/// Compare solid scene colours in RGB because a channel's interpolation can
+/// round at the endpoint before GPUI converts the result to HSLA.
+fn solid_color_error(a: gpui::Background, b: gpui::Background) -> f32 {
+    let a: gpui::Rgba = a.as_solid().expect("solid color").into_color();
+    let b: gpui::Rgba = b.as_solid().expect("solid color").into_color();
+    [
+        (a.red - b.red).abs(),
+        (a.green - b.green).abs(),
+        (a.blue - b.blue).abs(),
+        (a.alpha - b.alpha).abs(),
+    ]
+    .into_iter()
+    .fold(0.0, f32::max)
+}
+
+fn tip_ref_marker(mode: HistoryBranchNamesMode) -> Bounds<Pixels> {
+    HistoryView::painted_ref_bounds_for_test(
+        RepoId(1),
+        "tip",
+        mode,
+        &HistoryMenuRef::Branch(BranchMenuTarget::local("main")),
+    )
+    .or_else(|| HistoryView::painted_overflow_bounds_for_test(RepoId(1), "tip", mode))
+    .unwrap_or_else(|| panic!("{mode:?}: the tip must paint a branch or an overflow marker"))
 }
 
 /// Inspect the production canvas output: a leader must use the node's actual
@@ -18,6 +67,9 @@ fn assert_ref_node_paint(
     let author = cx
         .debug_bounds("history_author_header_cell")
         .expect("visible author column");
+    let graph = cx.debug_bounds("history_graph_header_cell");
+    assert_eq!(graph.is_some(), graph_visible);
+    let message = cx.debug_bounds("history_message_header_cell").unwrap();
     cx.update(|window, app| {
         window.refresh();
         let _ = window.draw(app);
@@ -26,24 +78,58 @@ fn assert_ref_node_paint(
         let at_row = |q: &&gpui::Quad| {
             (q.bounds.center().y.0 - f32::from(row.center().y) * scale).abs() < 0.6
         };
-        let node = quads.iter().filter(at_row).find(|q| {
-            q.corner_radii.top_left.0 > 0.0
-                && !q.background.is_transparent()
-                && (q.bounds.size.width.0 - 22.0 * scale).abs() < 0.1
-                && (q.bounds.size.height.0 - 22.0 * scale).abs() < 0.1
-        });
-        assert_eq!(node.is_some(), graph_visible);
-        if let Some(node) = node {
+        if let Some(graph) = graph {
+            let node = graph_node_at(&quads, graph, row.center().y, scale)
+                .expect("the graph column contains the tip's author node");
+            assert_eq!(node.bounds.size.width.0 / scale, EXPANDED_AUTHOR_PX);
+            let marker = tip_ref_marker(mode);
+            let lane_marker = quads
+                .iter()
+                .filter(at_row)
+                .find(|quad| {
+                    (quad.bounds.left().0 - f32::from(message.left()) * scale).abs() < 0.6
+                        && (quad.bounds.size.width.0
+                            - crate::view::HISTORY_MESSAGE_BORDER_W_PX * scale)
+                            .abs() < 0.6
+                        && (quad.bounds.size.height.0 - f32::from(row.size.height) * scale)
+                            .abs() < 0.6
+                })
+                .expect("the message edge shows this row's lane color");
+            let left = f32::from(graph.left().min(marker.left())) * scale;
+            let right = f32::from(graph.right().max(marker.right())) * scale;
             let dots: Vec<_> = quads
                 .iter()
                 .filter(at_row)
-                .filter(|q| {
-                    q.bounds.size.width == q.bounds.size.height
-                        && q.bounds.size.width.0 <= 1.5 * scale + 1.0
-                        && q.background == node.border_color
+                .filter(|quad| {
+                    let bounds = quad.bounds;
+                    bounds.left().0 >= left
+                        && bounds.right().0 <= right
+                        && (bounds.right() <= node.bounds.left()
+                            || bounds.left() >= node.bounds.right())
+                        && bounds.size.width == bounds.size.height
+                        && bounds.size.width.0 <= 1.5 * scale + 1.0
+                        && quad.corner_radii.top_left.0 > 0.0
+                        && quad.border_widths.top.0 == 0.0
                 })
                 .collect();
-            assert!(!dots.is_empty(), "the ref group has a leader");
+            assert!(
+                !dots.is_empty(),
+                "{mode:?}: no leader between ref marker {marker:?} and node {:?}",
+                node.bounds
+            );
+            assert!(
+                dots.iter().all(|dot| dot.background == lane_marker.background),
+                "{mode:?}: the leader and message edge show the same lane color"
+            );
+            let ring_error = solid_color_error(node.border_color, lane_marker.background);
+            assert!(
+                ring_error < 1.0 / 255.0,
+                "{mode:?}: tip ring and leader colors diverged ({ring_error})"
+            );
+            println!(
+                "{mode:?}: graph={:?}, ref={marker:?}, node={:?}, dots={}, ring_exact={}, max_ring_channel_delta={ring_error}",
+                graph.size, node.bounds, dots.len(), node.border_color == lane_marker.background,
+            );
             match mode {
                 HistoryBranchNamesMode::SeparateColumn => {
                     let nearest = dots.iter().map(|dot| dot.bounds.right()).max().unwrap();
@@ -156,6 +242,12 @@ fn history_repeated_author_dot_animates_with_cached_selection_frames(
     let (view, cx) =
         cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
     cx.simulate_resize(size(px(1400.0), px(900.0)));
+    cx.update(|_, app| {
+        let history = view.read(app).main_pane.read(app).history_view.clone();
+        history.update(app, |history, cx| {
+            history.set_history_column_preferences(true, true, true, false, cx);
+        });
+    });
     let page = Arc::new(log_page(
         (0..5)
             .map(|ix| commit(&format!("c{ix}"), &[&format!("c{}", ix + 1)], "Same author"))
@@ -183,10 +275,7 @@ fn history_repeated_author_dot_animates_with_cached_selection_frames(
     });
     // Cached views may skip selector registration during animation-only frames.
     let base_row = cx.debug_bounds("history_row_2").unwrap();
-    let graph_right = cx
-        .debug_bounds("history_message_header_cell")
-        .unwrap()
-        .left();
+    let graph = cx.debug_bounds("history_graph_header_cell").unwrap();
     let node_width = |cx: &mut gpui::VisualTestContext, row_ix: usize| {
         let mut row = base_row;
         row.origin.y += row.size.height * (row_ix as f32 - 2.0);
@@ -194,22 +283,13 @@ fn history_repeated_author_dot_animates_with_cached_selection_frames(
             let scale = window.scale_factor();
             // Cached frames replay their quads, so the scene holds the node a
             // reused row last painted; a progressing animation must replace it.
-            let node = window
-                .painted_quads()
-                .into_iter()
-                .find(|q| {
-                    q.corner_radii.top_left.0 > 0.0
-                        && !q.background.is_transparent()
-                        && (q.bounds.center().y.0 / scale - f32::from(row.center().y)).abs() < 0.6
-                        && q.bounds.right().0 / scale < f32::from(graph_right)
-                        && q.bounds.size.width == q.bounds.size.height
-                        && q.bounds.size.width.0 / scale >= 7.0
-                })
-                .expect("author dot/disc");
+            let quads = window.painted_quads();
+            let node = graph_node_at(&quads, graph, row.center().y, scale)
+                .expect("author node in its lane");
             node.bounds.size.width.0 / scale
         })
     };
-    assert_eq!(node_width(cx, 2), 7.0);
+    assert_eq!(node_width(cx, 2), REPEATED_AUTHOR_PX);
     // Pane animations only run under the live runtime.
     crate::ui_runtime::with_override(crate::ui_runtime::UiRuntime::live(), || {
         let _cache_guard = crate::view::enable_stable_cached_views_for_test();
@@ -217,17 +297,29 @@ fn history_repeated_author_dot_animates_with_cached_selection_frames(
         selected.repos[0].history_state.selected_commit = Some(CommitId("c2".into()));
         set_history_view_state_for_tests(cx, &view, Arc::new(selected.clone()));
         redraw(cx);
-        assert_eq!(node_width(cx, 2), 7.0, "selection starts from the dot");
+        assert_eq!(
+            node_width(cx, 2),
+            REPEATED_AUTHOR_PX,
+            "selection starts from the smaller author node"
+        );
         let mut row_ix = 2;
-        for (frame, elapsed) in [90, 90].into_iter().enumerate() {
+        // At 90ms, even-pixel snapping can already reach the full diameter.
+        for (frame, elapsed) in [45, 135].into_iter().enumerate() {
             cx.executor().advance_clock(Duration::from_millis(elapsed));
             cx.update(|window, app| {
                 window.simulate_next_frame(app);
             });
             redraw(cx);
             let width = node_width(cx, row_ix);
-            assert!(width > 7.0 && width <= 22.0);
+            assert!(width > REPEATED_AUTHOR_PX && width <= EXPANDED_AUTHOR_PX);
             if frame == 0 {
+                assert!(
+                    width < EXPANDED_AUTHOR_PX,
+                    "an intermediate frame grows the node"
+                );
+                println!(
+                    "repeated author: start={REPEATED_AUTHOR_PX}px, intermediate={width}px, end={EXPANDED_AUTHOR_PX}px"
+                );
                 selected.repos[0].worktree_status =
                     Loadable::Ready(Arc::new(vec![gitcomet_core::domain::FileStatus {
                         path: PathBuf::from("README.md"),
@@ -245,14 +337,14 @@ fn history_repeated_author_dot_animates_with_cached_selection_frames(
                 );
             }
         }
-        assert_eq!(node_width(cx, row_ix), 22.0);
+        assert_eq!(node_width(cx, row_ix), EXPANDED_AUTHOR_PX);
         selected.repos[0].worktree_status = Loadable::Ready(Arc::new(Vec::new()));
         selected.repos[0].worktree_status_rev += 1;
         set_history_view_state_for_tests(cx, &view, Arc::new(selected));
         redraw(cx);
         assert_eq!(
             node_width(cx, 2),
-            22.0,
+            EXPANDED_AUTHOR_PX,
             "removing WIP retains the selected node"
         );
     });
@@ -288,17 +380,21 @@ fn history_repeated_author_dot_animates_with_cached_selection_frames(
         );
         assert_eq!(
             node_width(cx, 2),
-            7.0,
+            REPEATED_AUTHOR_PX,
             "another repository must not inherit selection for the same commit"
         );
         let mut returning = (*state).clone();
         returning.repos[0].history_state.selected_commit = Some(CommitId("c2".into()));
         show_repo(cx, returning);
-        assert_eq!(node_width(cx, 2), 22.0);
+        assert_eq!(node_width(cx, 2), EXPANDED_AUTHOR_PX);
         cx.update(|_, app| app.set_reduce_motion(true));
         set_history_view_state_for_tests(cx, &view, state);
         redraw(cx);
-        assert_eq!(node_width(cx, 2), 7.0, "reduced motion settles immediately");
+        assert_eq!(
+            node_width(cx, 2),
+            REPEATED_AUTHOR_PX,
+            "reduced motion settles immediately"
+        );
     });
 }
 
@@ -311,6 +407,11 @@ fn history_branch_names_repositions_headers_and_separates_hover_regions(
     let (view, cx) =
         cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
     cx.simulate_resize(size(px(1400.0), px(900.0)));
+    cx.update(|_, app| {
+        view.update(app, |view, cx| {
+            view.set_history_branch_names(HistoryBranchNamesMode::SeparateColumn, cx);
+        });
+    });
     let page = Arc::new(log_page(
         vec![
             commit("tip", &["base"], "Tip message"),
@@ -422,7 +523,7 @@ fn history_branch_names_repositions_headers_and_separates_hover_regions(
         redraw(cx);
         let row = cx.debug_bounds("history_row_0").unwrap();
         cx.simulate_mouse_move(
-            point(message.left() + px(16.0), row.center().y),
+            tip_ref_marker(HistoryBranchNamesMode::Inline).center(),
             None,
             gpui::Modifiers::default(),
         );

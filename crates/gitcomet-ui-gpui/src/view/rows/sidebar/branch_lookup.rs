@@ -28,8 +28,8 @@ pub(in crate::view) fn listed_worktree_paths_by_branch(
     worktree_paths
 }
 
-/// The first listed worktree other than this one that has `branch` checked out,
-/// as `listed_worktree_paths_by_branch` would map it.
+/// A worktree other than this one that has `branch` checked out. When multiple
+/// records claim the branch, prefer the one matching the loaded tip.
 pub(in crate::view) fn branch_held_elsewhere(
     repo: &RepoState,
     branch: &str,
@@ -37,14 +37,31 @@ pub(in crate::view) fn branch_held_elsewhere(
     let Loadable::Ready(worktrees) = &repo.worktrees else {
         return None;
     };
-    worktrees
-        .iter()
-        .find(|worktree| {
-            !worktree.bare
-                && worktree.path != repo.spec.workdir
-                && worktree.branch.as_deref() == Some(branch)
+    let mut candidates = worktrees.iter().filter(|worktree| {
+        !worktree.bare
+            && !worktree.detached
+            && worktree.path != repo.spec.workdir
+            && worktree.branch.as_deref() == Some(branch)
+    });
+    let first = candidates.next()?;
+    let Some(second) = candidates.next() else {
+        return Some(first.path.clone());
+    };
+    let branch_tip = repo.branches.ready().and_then(|branches| {
+        branches
+            .iter()
+            .find(|candidate| candidate.name == branch)
+            .map(|candidate| &candidate.target)
+    });
+    let worktree = branch_tip
+        .and_then(|tip| {
+            [first, second]
+                .into_iter()
+                .chain(candidates)
+                .find(|worktree| worktree.head.as_ref() == Some(tip))
         })
-        .map(|worktree| worktree.path.clone())
+        .unwrap_or(first);
+    Some(worktree.path.clone())
 }
 
 /// Where `branch` is checked out: this repository's own HEAD, or a listed worktree.
@@ -133,6 +150,46 @@ pub(super) fn local_branch_double_click_action(
         None => LocalBranchDoubleClickAction::CheckoutBranch {
             name: branch.to_string(),
         },
+    }
+}
+
+/// What double-clicking a remote branch does, as in GitKraken: check out the
+/// local branch already tracking it, or create one of the same name, and only
+/// ask for a name when that name is taken by an unrelated branch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::view) enum RemoteBranchDoubleClickAction {
+    CheckoutTracking { name: String },
+    CreateTracking { name: String },
+    PromptForName,
+}
+
+pub(in crate::view) fn remote_branch_double_click_action(
+    branches: Option<&[gitcomet_core::domain::Branch]>,
+    remote: &str,
+    branch: &str,
+) -> RemoteBranchDoubleClickAction {
+    // Without the local branch list the name check cannot be made; the
+    // prompt makes it when the user submits.
+    let Some(branches) = branches else {
+        return RemoteBranchDoubleClickAction::PromptForName;
+    };
+    let tracking = branches.iter().find(|local| {
+        local
+            .upstream
+            .as_ref()
+            .is_some_and(|upstream| upstream.remote == remote && upstream.branch == branch)
+    });
+    if let Some(local) = tracking {
+        return RemoteBranchDoubleClickAction::CheckoutTracking {
+            name: local.name.clone(),
+        };
+    }
+    if branches.iter().any(|local| local.name == branch) {
+        RemoteBranchDoubleClickAction::PromptForName
+    } else {
+        RemoteBranchDoubleClickAction::CreateTracking {
+            name: branch.to_string(),
+        }
     }
 }
 

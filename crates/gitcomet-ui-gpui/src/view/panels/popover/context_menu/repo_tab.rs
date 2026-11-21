@@ -1,8 +1,9 @@
 use super::*;
 
 use crate::kit::components::secondary_shortcut;
+use crate::localization::Language;
 
-pub(super) fn model(host: &PopoverHost, repo_id: RepoId) -> ContextMenuModel {
+pub(super) fn model(host: &PopoverHost, repo_id: RepoId, language: Language) -> ContextMenuModel {
     let workdir = host
         .state
         .repos
@@ -16,6 +17,7 @@ pub(super) fn model(host: &PopoverHost, repo_id: RepoId) -> ContextMenuModel {
         &host.cached_workspaces,
         host.cached_workspace_id,
         host.external_editor_available(),
+        language,
     );
     if !host.extension_repo_tab_menu.is_empty() && !model.items.is_empty() {
         // Above the Close group, which stays last.
@@ -60,6 +62,7 @@ fn model_for_state(
         workspaces,
         current_workspace,
         crate::external_editor::configured_setting().is_some(),
+        Language::English,
     )
 }
 
@@ -70,6 +73,7 @@ fn model_for_state_with_editor(
     workspaces: &[session::Workspace],
     current_workspace: Option<session::WorkspaceId>,
     editor_available: bool,
+    language: Language,
 ) -> ContextMenuModel {
     let Some(repo_ix) = state.repos.iter().position(|repo| repo.id == repo_id) else {
         return ContextMenuModel::new(Vec::new());
@@ -93,7 +97,7 @@ fn model_for_state_with_editor(
         .map(|_| repo_id);
 
     let mut items = vec![ContextMenuItem::Entry {
-        label: "Activate".into(),
+        label: language.text("Activate", "切換至儲存庫").into(),
         icon: Some("icons/check.svg".into()),
         shortcut: None,
         disabled: state.active_repo == Some(repo_id),
@@ -103,7 +107,9 @@ fn model_for_state_with_editor(
     if let Some(ref workdir) = workdir {
         items.push(ContextMenuItem::Separator);
         items.push(ContextMenuItem::Entry {
-            label: "Open repository location".into(),
+            label: language
+                .text("Open repository location", "開啟儲存庫所在位置")
+                .into(),
             icon: Some("icons/folder.svg".into()),
             shortcut: None,
             disabled: false,
@@ -115,7 +121,9 @@ fn model_for_state_with_editor(
 
     if editor_available && let Some(ref workdir) = workdir {
         items.push(ContextMenuItem::Entry {
-            label: "Open in code editor".into(),
+            label: language
+                .text("Open in code editor", "在程式碼編輯器中開啟")
+                .into(),
             icon: Some("icons/open_external.svg".into()),
             shortcut: Some(secondary_shortcut("Shift+E").into()),
             disabled: false,
@@ -129,7 +137,7 @@ fn model_for_state_with_editor(
     if let Some(ref workdir) = workdir {
         items.push(ContextMenuItem::Separator);
         items.push(ContextMenuItem::Entry {
-            label: "Move to new window".into(),
+            label: language.text("Move to new window", "移至新視窗").into(),
             icon: Some("icons/swap.svg".into()),
             shortcut: None,
             disabled: move_disabled,
@@ -147,8 +155,13 @@ fn model_for_state_with_editor(
         other_workspaces
             .sort_by_key(|workspace| std::cmp::Reverse(workspace.last_activation_order));
         for workspace in other_workspaces {
+            let name = workspace.display_name();
             items.push(ContextMenuItem::Entry {
-                label: format!("Move to {}", workspace.display_name()).into(),
+                label: match language {
+                    Language::English => format!("Move to {name}"),
+                    Language::TraditionalChinese => format!("移至 {name}"),
+                }
+                .into(),
                 icon: Some("icons/swap.svg".into()),
                 shortcut: None,
                 disabled: move_disabled,
@@ -164,14 +177,16 @@ fn model_for_state_with_editor(
     items.push(ContextMenuItem::Separator);
     items.extend_from_slice(&[
         ContextMenuItem::Entry {
-            label: "Close".into(),
+            label: language.text("Close", "關閉").into(),
             icon: Some("icons/repo_tab_close.svg".into()),
             shortcut: None,
             disabled: false,
             action: Box::new(ContextMenuAction::CloseRepo { repo_id }),
         },
         ContextMenuItem::Entry {
-            label: "Close repositories to the right".into(),
+            label: language
+                .text("Close repositories to the right", "關閉右側儲存庫")
+                .into(),
             icon: Some("icons/arrow_right.svg".into()),
             shortcut: None,
             disabled: close_to_right.is_empty(),
@@ -181,7 +196,9 @@ fn model_for_state_with_editor(
             }),
         },
         ContextMenuItem::Entry {
-            label: "Close other repositories".into(),
+            label: language
+                .text("Close other repositories", "關閉其他儲存庫")
+                .into(),
             icon: Some("icons/swap.svg".into()),
             shortcut: None,
             disabled: close_others.is_empty(),
@@ -410,6 +427,35 @@ mod tests {
         let state = state_with_repo_tabs(RepoId(1), 3);
 
         assert!(test_model(&state, RepoId(99), None).items.is_empty());
+    }
+
+    #[test]
+    fn traditional_chinese_repo_tab_menu_preserves_workspace_name_and_targets() {
+        let repo_id = RepoId(1);
+        let state = state_with_repo_tabs(repo_id, 2);
+        let source = PathBuf::from("/repos/產品");
+        let mut target = session::Workspace::new(vec!["/repos/other".into()]);
+        target.custom_name = Some("Release 工具".to_string());
+        let target_id = target.id;
+        let model = model_for_state_with_editor(
+            &state,
+            repo_id,
+            Some(source.clone()),
+            &[target],
+            None,
+            true,
+            Language::TraditionalChinese,
+        );
+        let (disabled, action) = entry_action(&model, "移至 Release 工具");
+        assert!(!disabled);
+        assert!(matches!(
+            action,
+            ContextMenuAction::MoveRepoToWorkspace {
+                repo_id: moved_repo,
+                path,
+                target_workspace: Some(workspace_id),
+            } if *moved_repo == repo_id && *workspace_id == target_id && path == &source
+        ));
     }
 
     #[test]

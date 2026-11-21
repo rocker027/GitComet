@@ -323,6 +323,169 @@ fn worktree_add_new_branch_from_a_remote_branch_sets_no_upstream() {
 }
 
 #[test]
+fn remote_worktree_modes_resolve_live_custom_refspecs_without_tracking_or_local_name_guessing() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let root = dir.path();
+    let repo = cloned_repo(root);
+    run_git(&repo, &["branch", "feature"]);
+    let local_feature = git_stdout(&repo, &["rev-parse", "refs/heads/feature"]);
+    let opened = GixBackend.open(&repo).expect("open before refspec changes");
+    let origin = root.join("origin");
+    run_git(&origin, &["checkout", "feature"]);
+    fs::write(origin.join("seed.txt"), "remote feature commit\n").unwrap();
+    run_git(
+        &origin,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-am",
+            "remote feature",
+        ],
+    );
+    run_git(
+        &repo,
+        &[
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/custom/origin/*",
+        ],
+    );
+    run_git(&repo, &["fetch", "origin"]);
+    run_git(&repo, &["config", "branch.autoSetupMerge", "always"]);
+    let remote = git_stdout(&repo, &["rev-parse", "refs/custom/origin/feature"]).unwrap();
+    assert_ne!(Some(remote.clone()), local_feature);
+    let refs_before = git_stdout(&repo, &["show-ref"]).unwrap();
+    let head_before = git_stdout(&repo, &["symbolic-ref", "HEAD"]);
+    let status_before = git_stdout(
+        &repo,
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+    );
+    let index_before = fs::read(repo.join(".git/index")).unwrap();
+    let upstream = Upstream {
+        remote: "origin".into(),
+        branch: "feature".into(),
+    };
+    for (folder, checkout, branch) in [
+        (
+            "renamed",
+            WorktreeCheckout::NewBranchFromRemote {
+                name: "renamed-feature".into(),
+                upstream: upstream.clone(),
+            },
+            Some("renamed-feature"),
+        ),
+        (
+            "detached",
+            WorktreeCheckout::ExistingRemote {
+                upstream: upstream.clone(),
+            },
+            None,
+        ),
+    ] {
+        let linked = root.join(folder);
+        opened
+            .add_worktree_with_output(&linked, &checkout)
+            .expect("add remote worktree");
+        assert_eq!(
+            git_stdout(&linked, &["rev-parse", "HEAD"]).as_deref(),
+            Some(remote.as_str())
+        );
+        assert_eq!(
+            git_stdout(&linked, &["symbolic-ref", "--short", "HEAD"]).as_deref(),
+            branch
+        );
+        assert_eq!(
+            git_stdout(&linked, &["rev-parse", "--abbrev-ref", "@{u}"]),
+            None,
+            "new modes must not track"
+        );
+        assert_eq!(
+            fs::read_to_string(linked.join("seed.txt")).unwrap(),
+            "remote feature commit\n"
+        );
+    }
+    let refs_after = git_stdout(&repo, &["show-ref"]).unwrap();
+    assert_eq!(
+        refs_after
+            .lines()
+            .filter(|line| !line.ends_with(" refs/heads/renamed-feature"))
+            .collect::<Vec<_>>(),
+        refs_before.lines().collect::<Vec<_>>(),
+        "only the requested local branch may be created"
+    );
+    assert_eq!(
+        git_stdout(&repo, &["rev-parse", "refs/heads/feature"]),
+        local_feature
+    );
+    assert_eq!(git_stdout(&repo, &["symbolic-ref", "HEAD"]), head_before);
+    assert_eq!(
+        git_stdout(
+            &repo,
+            &["status", "--porcelain=v1", "--untracked-files=all"]
+        ),
+        status_before
+    );
+    assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index_before);
+
+    // Missing branches and ambiguous live fetch mappings must fail before
+    // either creating a branch or registering a worktree directory.
+    for failure in ["missing-branch", "missing-remote", "ambiguous"] {
+        if failure == "ambiguous" {
+            run_git(
+                &repo,
+                &[
+                    "config",
+                    "--add",
+                    "remote.origin.fetch",
+                    "+refs/heads/*:refs/second/origin/*",
+                ],
+            );
+            run_git(&repo, &["fetch", "origin"]);
+        }
+        let refs = git_stdout(&repo, &["show-ref"]);
+        let worktrees = git_stdout(&repo, &["worktree", "list", "--porcelain"]);
+        let upstream = Upstream {
+            remote: if failure == "missing-remote" {
+                "missing"
+            } else {
+                "origin"
+            }
+            .into(),
+            branch: if failure == "missing-branch" {
+                "missing"
+            } else {
+                "feature"
+            }
+            .into(),
+        };
+        for (ix, checkout) in [
+            WorktreeCheckout::NewBranchFromRemote {
+                name: "must-not-exist".into(),
+                upstream: upstream.clone(),
+            },
+            WorktreeCheckout::ExistingRemote { upstream },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let path = root.join(format!("refused-{failure}-{ix}"));
+            opened
+                .add_worktree_with_output(&path, &checkout)
+                .expect_err("invalid remote reference refused");
+            assert!(!path.exists(), "refusal must precede directory creation");
+            assert_eq!(git_stdout(&repo, &["show-ref"]), refs);
+            assert_eq!(
+                git_stdout(&repo, &["worktree", "list", "--porcelain"]),
+                worktrees
+            );
+            assert_eq!(fs::read(repo.join(".git/index")).unwrap(), index_before);
+        }
+    }
+}
+
+#[test]
 fn worktree_add_new_branch_starts_from_a_tag() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let repo = cloned_repo(dir.path());

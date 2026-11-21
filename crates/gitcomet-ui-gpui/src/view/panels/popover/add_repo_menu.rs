@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 
 fn push_entry(
     items: &mut Vec<ContextMenuItem>,
@@ -21,7 +22,7 @@ fn push_entry(
 
 /// Menu behind the "+" button after the repository tabs: open, clone, or
 /// initialize a repository.
-pub(super) fn model() -> ContextMenuModel {
+pub(super) fn model(language: Language) -> ContextMenuModel {
     let mut items = Vec::with_capacity(3);
     let mut debug_selectors = FxHashMap::with_capacity_and_hasher(3, Default::default());
     push_entry(
@@ -29,7 +30,7 @@ pub(super) fn model() -> ContextMenuModel {
         &mut debug_selectors,
         "add_repo_menu_open",
         "icons/disk.svg",
-        crate::menu_labels::OPEN_REPOSITORY,
+        language.text(crate::menu_labels::OPEN_REPOSITORY, "開啟儲存庫"),
         AddRepoMenuAction::Open,
     );
     push_entry(
@@ -37,7 +38,7 @@ pub(super) fn model() -> ContextMenuModel {
         &mut debug_selectors,
         "add_repo_menu_clone",
         "icons/cloud.svg",
-        crate::menu_labels::CLONE_REPOSITORY,
+        language.text(crate::menu_labels::CLONE_REPOSITORY, "複製儲存庫"),
         AddRepoMenuAction::Clone,
     );
     push_entry(
@@ -45,7 +46,7 @@ pub(super) fn model() -> ContextMenuModel {
         &mut debug_selectors,
         "add_repo_menu_init",
         "icons/git_branch.svg",
-        crate::menu_labels::INITIALIZE_REPOSITORY,
+        language.text(crate::menu_labels::INITIALIZE_REPOSITORY, "初始化儲存庫"),
         AddRepoMenuAction::Initialize,
     );
 

@@ -1,4 +1,6 @@
 use super::*;
+use crate::localization::Language;
+use std::hash::Hash;
 use std::rc::Rc;
 
 /// What activating a row in the workspace picker does.
@@ -38,7 +40,12 @@ fn create_base_ref(repo: &RepoState) -> String {
 /// Takes the repository rather than the host so the result is a pure function of
 /// its inputs, which is what lets [`rows_cache`](super::rows_cache) memoise it
 /// across frames.
+#[cfg(feature = "benchmarks")]
 pub(super) fn rows(repo: &RepoState, query: &str) -> WorktreeBadgeRows {
+    rows_for_language(repo, query, Language::English)
+}
+
+fn rows_for_language(repo: &RepoState, query: &str, language: Language) -> WorktreeBadgeRows {
     let capacity = repo
         .worktrees
         .ready()
@@ -58,26 +65,27 @@ pub(super) fn rows(repo: &RepoState, query: &str) -> WorktreeBadgeRows {
     // block instead of a short row stacked on tall ones.
     let create_item = if query.is_empty() {
         components::PickerPromptItem::from_parts([components::PickerPromptItemPart::new(
-            "Create new worktree",
+            language.text("Create new worktree", "新增工作樹"),
         )
         .flexible(false)
         .searchable(false)
         .tooltip(false)])
     } else {
         components::PickerPromptItem::from_parts([
-            components::PickerPromptItemPart::new("Create worktree ")
+            components::PickerPromptItemPart::new(language.text("Create worktree ", "新增工作樹 "))
                 .flexible(false)
                 .searchable(false)
                 .tooltip(false),
             components::PickerPromptItemPart::new(query.to_string()).flexible(false),
         ])
     };
+    let based_on = match language {
+        Language::English => format!("Based off {base}"),
+        Language::TraditionalChinese => format!("起始參照 {base}"),
+    };
     items.push(
         create_item
-            .secondary_parts([
-                components::PickerPromptItemPart::new(format!("Based off {base}"))
-                    .searchable(false),
-            ])
+            .secondary_parts([components::PickerPromptItemPart::new(based_on).searchable(false)])
             .icon("icons/plus.svg"),
     );
     rows.push(WorktreeBadgeRow::CreateNew);
@@ -102,7 +110,9 @@ pub(super) fn rows(repo: &RepoState, query: &str) -> WorktreeBadgeRows {
         );
 
         if let Some(branch) = &worktree.branch {
-            primary.push(components::PickerPromptItemPart::separator("  on  "));
+            primary.push(components::PickerPromptItemPart::separator(
+                language.text("  on  ", "  ·  "),
+            ));
             primary.push(
                 components::PickerPromptItemPart::new(branch.clone())
                     .profile(components::TextTruncationProfile::End)
@@ -111,7 +121,7 @@ pub(super) fn rows(repo: &RepoState, query: &str) -> WorktreeBadgeRows {
         } else if worktree.detached {
             primary.push(components::PickerPromptItemPart::separator("  "));
             primary.push(
-                components::PickerPromptItemPart::new("detached")
+                components::PickerPromptItemPart::new(language.text("detached", "分離 HEAD"))
                     .flexible(false)
                     .searchable(false)
                     .dim()
@@ -122,6 +132,17 @@ pub(super) fn rows(repo: &RepoState, query: &str) -> WorktreeBadgeRows {
         // Detail line: where it is on disk, and which commit it sits on. The path
         // stays searchable so a path query still finds its row.
         let mut secondary = Vec::with_capacity(3);
+        if let Some(primary) = worktrees.first()
+            && primary.path != worktree.path
+        {
+            secondary.push(
+                components::PickerPromptItemPart::new(format!(
+                    "{} / ",
+                    crate::view::path_display::repo_path_name(&primary.path)
+                ))
+                .flexible(false),
+            );
+        }
         if let Some(head) = &worktree.head {
             let sha = head.as_ref();
             secondary.push(
@@ -155,15 +176,14 @@ pub(super) fn rows(repo: &RepoState, query: &str) -> WorktreeBadgeRows {
     }
 }
 
-/// Everything [`rows`] reads, digested for the cache. Mirrors the
+/// Everything [`rows_for_language`] reads, digested for the cache. Mirrors the
 /// `RepoPopoverKind::Worktree` arm of [`super::fingerprint`], which tracks HEAD
 /// as well because the create row names the ref it would branch from. No
 /// relative dates on these rows, so the clock stays out of it: they say what is
 /// checked out and where, not when.
-pub(super) fn rows_signature(repo: &RepoState) -> u64 {
-    use std::hash::Hash;
-
+pub(super) fn rows_signature(repo: &RepoState, language: Language) -> u64 {
     super::rows_cache::signature(|hasher| {
+        language.key().hash(hasher);
         repo.id.hash(hasher);
         repo.head_branch_rev.hash(hasher);
         repo.worktrees_rev.hash(hasher);
@@ -180,18 +200,19 @@ pub(super) fn cached(
     this: &PopoverHost,
     repo_id: RepoId,
     query: &str,
+    language: Language,
 ) -> Rc<super::rows_cache::CachedRows<WorktreeBadgeRow>> {
     let Some(repo) = this.state.repos.iter().find(|r| r.id == repo_id) else {
         return super::rows_cache::CachedRows::empty();
     };
     let key = super::rows_cache::RowsCacheKey::new(
         super::rows_cache::RowsCacheOwner::Workspace,
-        rows_signature(repo),
+        rows_signature(repo, language),
         query,
     )
     .with_query_dependent_model();
     super::rows_cache::get_or_build(&this.worktree_badge_picker_rows_cache, key, |_now| {
-        let built = rows(repo, query);
+        let built = rows_for_language(repo, query, language);
         (built.items, built.rows, built.marked_index)
     })
 }
@@ -202,8 +223,9 @@ pub(super) fn nav_targets(
     this: &PopoverHost,
     repo_id: RepoId,
     query: &str,
+    language: Language,
 ) -> Vec<WorktreeBadgeRow> {
-    cached(this, repo_id, query).filtered_payloads()
+    cached(this, repo_id, query, language).filtered_payloads()
 }
 
 /// Activates a row: opens the worktree, or hands the query to the Add dialog.
@@ -237,12 +259,16 @@ pub(super) fn activate(
                 return;
             };
             // A new branch off the base the row's "based on <head>" label names.
-            this.pending_worktree_add_prefill = Some(WorktreeAddPrefill {
-                source: create_base_ref(repo),
-                create_branch: true,
-                new_branch: query.trim().to_string(),
-                open_after: false,
-            });
+            this.pending_worktree_add_prefill = Some((
+                repo_id,
+                WorktreeAddPrefill {
+                    source: create_base_ref(repo),
+                    source_upstream: None,
+                    create_branch: true,
+                    new_branch: query.trim().to_string(),
+                    open_after: false,
+                },
+            ));
             this.open_popover_centered(
                 PopoverKind::worktree(repo_id, WorktreePopoverKind::AddPrompt),
                 window,
@@ -252,12 +278,20 @@ pub(super) fn activate(
     }
 }
 
+pub(super) fn search_placeholder(language: Language) -> &'static str {
+    language.text(
+        "Select or type to create a worktree",
+        "選擇工作樹或輸入名稱以新增",
+    )
+}
+
 pub(super) fn panel(
     this: &mut PopoverHost,
     repo_id: RepoId,
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let ui_scale = super::popover_ui_scale(cx);
     let ui_scale_percent = ui_scale.percent();
     let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
@@ -267,16 +301,20 @@ pub(super) fn panel(
         return components::context_menu_label(
             theme,
             ui_scale_percent,
-            "Search input not initialized",
+            language.text("Search input not initialized", "搜尋欄尚未初始化"),
             Some(this.tooltip_host.clone()),
             cx,
         );
     };
 
+    let placeholder = search_placeholder(language);
+    if search.read(cx).placeholder() != placeholder {
+        search.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+    }
     // Read the query from the same input `PickerPrompt::render` filters with,
     // so the rows built here match the rows it displays.
     let query = search.read_with(cx, |input, _| input.text().trim().to_string());
-    let built = cached(this, repo_id, &query);
+    let built = cached(this, repo_id, &query, language);
     let row_payloads = Rc::clone(&built.payloads);
     let menu_payloads = Rc::clone(&built.payloads);
 
@@ -291,7 +329,7 @@ pub(super) fn panel(
             .tooltip_host(this.tooltip_host.clone())
             // Only reachable when the repo is gone: the create row always
             // matches, so a present repo never yields an empty list.
-            .empty_text("No repository")
+            .empty_text(language.text("No repository", "沒有儲存庫"))
             .max_height(scaled_px(components::PICKER_LIST_MAX_HEIGHT_PX))
             .selected_index(
                 // While a row menu is open the arrow keys walk its entries, so

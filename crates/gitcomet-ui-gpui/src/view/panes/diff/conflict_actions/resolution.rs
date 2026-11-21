@@ -1063,6 +1063,29 @@ impl DiffRenderer {
             .unwrap_or_default()
     }
 
+    /// Ctrl/Cmd-`digit` while the conflict resolver is shown picks that side
+    /// for the active conflict. Returns whether the resolver claims the key,
+    /// so the window's Cmd-1…3 repository-tab shortcut yields to it.
+    pub(in crate::view) fn conflict_resolver_claims_digit_pick(
+        &mut self,
+        digit: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        if !self.is_conflict_resolver_active() {
+            return false;
+        }
+        if self.conflict_resolver_has_active_pick_target()
+            && let Some(choice) = conflict_resolver::conflict_ctrl_pick_choice_for_key(
+                &digit.to_string(),
+                self.conflict_resolver.view_mode,
+            )
+        {
+            self.conflict_resolver_pick_active_conflict(choice, cx);
+        }
+        // `conflict_ctrl_pick_choice_for_key` maps 1…3 only.
+        digit <= 3
+    }
+
     pub(in crate::view) fn conflict_resolver_has_active_pick_target(&self) -> bool {
         self.conflict_resolver_active_pick_state().is_some()
     }

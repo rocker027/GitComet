@@ -177,7 +177,7 @@ fn review_sidebar_requests_follow_the_visible_top_level_sections() {
     let (_, hidden) = active_sidebar_data_request(&state, &empty, false).unwrap();
     assert!(!hidden.submodules && !hidden.stashes);
     let (_, visible) = active_sidebar_data_request(&state, &empty, true).unwrap();
-    let rows = branch_sidebar::expanded_sidebar_rows(&state.repos[0], &BTreeSet::new(), "");
+    let rows = branch_sidebar::expanded_sidebar_rows(&state.repos[0], &BTreeSet::new(), false);
     assert!(rows.iter().any(|row| matches!(
         row,
         BranchSidebarRow::SubmodulesHeader {
@@ -219,13 +219,16 @@ fn scoped_flyout_keeps_nested_folder_state_and_shares_section_rows() {
     let scope = branch_sidebar::local_section_storage_key();
     let collapsed = BTreeMap::from([(
         PathBuf::from("/tmp/repo"),
-        BTreeSet::from([scope.to_owned(), "group:local:feat".into()]),
+        BTreeSet::from([
+            branch_sidebar::sidebar_section_collapse_key(scope),
+            "group:local:feat".into(),
+        ]),
     )]);
     let empty = BTreeMap::new();
     let mut cache = SidebarPresentationCache::default();
     let expanded = build_sidebar_presentation(&mut cache, &state, &collapsed, &empty, "").unwrap();
     assert!(
-        expanded
+        !expanded
             .rows
             .iter()
             .any(|row| matches!(row, BranchSidebarRow::Branch { name, .. } if name == "main"))
@@ -264,18 +267,27 @@ fn scoped_flyout_keeps_nested_folder_state_and_shares_section_rows() {
     )
     .unwrap();
     assert!(Rc::ptr_eq(&scoped.rows, &cached.rows));
-    let expanded = build_sidebar_presentation(&mut cache, &state, &collapsed, &empty, "").unwrap();
+    let restored = build_sidebar_presentation(&mut cache, &state, &collapsed, &empty, "").unwrap();
+    assert_eq!(restored.rows, expanded.rows);
+    let searched =
+        build_sidebar_presentation(&mut cache, &state, &collapsed, &empty, "feat/A").unwrap();
     assert!(
-        expanded
+        searched
             .rows
             .iter()
-            .any(|row| matches!(row, BranchSidebarRow::Branch { name, .. } if name == "main"))
+            .any(|row| matches!(row, BranchSidebarRow::Branch { name, .. } if name == "feat/A"))
     );
+    let expanded = build_sidebar_presentation(&mut cache, &state, &collapsed, &empty, "").unwrap();
+    assert!(expanded.rows.iter().any(|row| matches!(
+        row,
+        BranchSidebarRow::SectionHeader { collapse_key, collapsed: true, .. }
+            if collapse_key.as_ref() == scope
+    )));
     assert!(
         !expanded
             .rows
             .iter()
-            .any(|row| matches!(row, BranchSidebarRow::Branch { name, .. } if name == "feat/A"))
+            .any(|row| matches!(row, BranchSidebarRow::Branch { name, .. } if name == "feat/A" || name == "main"))
     );
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 use crate::view::rows::FileListId;
 use gitcomet_core::domain::{ApplyChangeSource, ApplyChangeTarget};
 
@@ -18,6 +19,7 @@ pub(super) fn model(
     this: &PopoverHost,
     folder: FolderMenu<'_>,
     cx: &gpui::Context<PopoverHost>,
+    language: Language,
 ) -> ContextMenuModel {
     let FolderMenu {
         repo_id,
@@ -54,7 +56,12 @@ pub(super) fn model(
     ));
     items.push(ContextMenuItem::Separator);
     items.push(ContextMenuItem::Entry {
-        label: if collapsed { "Expand" } else { "Collapse" }.into(),
+        label: if collapsed {
+            language.text("Expand", "展開")
+        } else {
+            language.text("Collapse", "收合")
+        }
+        .into(),
         icon: Some(
             if collapsed {
                 "icons/chevron_right.svg"
@@ -68,14 +75,18 @@ pub(super) fn model(
         action: collapse_action(!collapsed, false),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Expand all under here".into(),
+        label: language
+            .text("Expand all under here", "展開下方所有資料夾")
+            .into(),
         icon: Some("icons/arrow_down_to_line.svg".into()),
         shortcut: None,
         disabled: false,
         action: collapse_action(false, true),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Collapse all under here".into(),
+        label: language
+            .text("Collapse all under here", "收合下方所有資料夾")
+            .into(),
         icon: Some("icons/arrow_up_to_line.svg".into()),
         shortcut: None,
         disabled: false,
@@ -88,10 +99,16 @@ pub(super) fn model(
             let staged = section.diff_area() == DiffArea::Staged;
             items.push(ContextMenuItem::Separator);
             items.push(ContextMenuItem::Entry {
-                label: format!(
-                    "{} folder ({count})",
-                    if staged { "Unstage" } else { "Stage" }
-                )
+                label: match (language, staged) {
+                    (Language::English, true) => format!("Unstage folder ({count})"),
+                    (Language::English, false) => format!("Stage folder ({count})"),
+                    (Language::TraditionalChinese, true) => {
+                        format!("取消暫存資料夾變更（{count}）")
+                    }
+                    (Language::TraditionalChinese, false) => {
+                        format!("暫存資料夾變更（{count}）")
+                    }
+                }
                 .into(),
                 icon: Some(
                     if staged {
@@ -110,7 +127,7 @@ pub(super) fn model(
                 }),
             });
             items.push(ContextMenuItem::Entry {
-                label: "Discard changes…".into(),
+                label: language.text("Discard changes…", "捨棄變更…").into(),
                 icon: Some("icons/refresh.svg".into()),
                 shortcut: None,
                 disabled: count == 0,
@@ -124,7 +141,9 @@ pub(super) fn model(
             });
             items.push(ContextMenuItem::Separator);
             items.push(ContextMenuItem::Entry {
-                label: "Open folder location".into(),
+                label: language
+                    .text("Open folder location", "開啟資料夾位置")
+                    .into(),
                 icon: Some("icons/folder.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -135,7 +154,9 @@ pub(super) fn model(
             });
             if this.external_editor_available() {
                 items.push(ContextMenuItem::Entry {
-                    label: "Open in code editor".into(),
+                    label: language
+                        .text("Open in code editor", "在程式碼編輯器中開啟")
+                        .into(),
                     icon: Some("icons/open_external.svg".into()),
                     shortcut: None,
                     disabled: false,
@@ -160,6 +181,7 @@ pub(super) fn model(
                         source: source.clone(),
                         paths: files,
                     },
+                    language,
                 ));
             }
         }
@@ -171,7 +193,7 @@ pub(super) fn model(
         // Its paths are relative to the other worktree, which an absolute
         // path resolved against this repository would get wrong.
         items.push(ContextMenuItem::Entry {
-            label: "Copy relative path".into(),
+            label: language.text("Copy relative path", "複製相對路徑").into(),
             icon: Some("icons/copy.svg".into()),
             shortcut: Some("C".into()),
             disabled: false,
@@ -180,7 +202,7 @@ pub(super) fn model(
             }),
         });
     } else {
-        push_copy_path_entries(&mut items, this, repo_id, path, Some("C".into()));
+        push_copy_path_entries(&mut items, this, repo_id, path, Some("C".into()), language);
     }
 
     ContextMenuModel::new(items)

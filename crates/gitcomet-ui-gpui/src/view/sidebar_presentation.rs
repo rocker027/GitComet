@@ -258,6 +258,13 @@ pub(in crate::view) fn build_sidebar_presentation_scoped(
         cache.search = Some(search);
     }
     let search = Rc::clone(cache.search.as_ref().unwrap());
+    if cache
+        .projection
+        .as_ref()
+        .is_some_and(|cached| cached.scope.is_some() != scope.is_some())
+    {
+        cache.branch_rows = None;
+    }
     let repo_id = state.active_repo?;
     let repo = state.repos.iter().find(|repo| repo.id == repo_id)?;
     let empty = BTreeSet::new();
@@ -274,7 +281,13 @@ pub(in crate::view) fn build_sidebar_presentation_scoped(
     } else {
         &empty
     };
-    let tree = branch_sidebar_rows_cached(&mut cache.branch_rows, repo, collapsed_items);
+    let reveal_sections = scope.is_some() || !search.matcher.is_empty();
+    let tree = branch_sidebar_rows_cached(
+        &mut cache.branch_rows,
+        repo,
+        collapsed_items,
+        reveal_sections,
+    );
     // The base tree already tracks content, including identical repo refreshes.
     // Its identity also tells us whether the unfiltered pinned rows can be reused.
     let raw_pins = cache
@@ -380,6 +393,7 @@ pub(in crate::view) fn build_sidebar_presentation_scoped(
                     | BranchSidebarRow::SubmoduleItem { .. }
                     | BranchSidebarRow::AnnexRepositoryItem { .. }
                     | BranchSidebarRow::StashItem { .. }
+                    | BranchSidebarRow::TagItem { .. }
             )
         })
         .count();
@@ -405,6 +419,7 @@ fn branch_sidebar_rows_cached(
     cache: &mut Option<BranchSidebarCache>,
     repo: &RepoState,
     collapsed_items: &BTreeSet<String>,
+    reveal_sections: bool,
 ) -> Rc<[BranchSidebarRow]> {
     let fingerprint = BranchSidebarFingerprint::from_repo(repo);
     if let Some(rows) = branch_sidebar_cache_lookup(cache, repo.id, fingerprint) {
@@ -434,7 +449,7 @@ fn branch_sidebar_rows_cached(
     }
 
     let rows: Rc<[BranchSidebarRow]> =
-        branch_sidebar::expanded_sidebar_rows(repo, collapsed_items, "").into();
+        branch_sidebar::expanded_sidebar_rows(repo, collapsed_items, reveal_sections).into();
 
     branch_sidebar_cache_store(
         cache,

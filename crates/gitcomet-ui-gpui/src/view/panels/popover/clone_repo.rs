@@ -1,7 +1,9 @@
 use super::*;
+use crate::localization::Language;
 
 pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let can_clone = this.can_submit_clone_repo(cx);
     let scaled_px = super::popover_scaled_px_fn(cx);
 
@@ -9,9 +11,15 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
         .flex()
         .flex_col()
         .w(scaled_px(420.0))
-        .child(popover_title(theme, "Clone repository"))
+        .child(popover_title(
+            theme,
+            language.text("Clone repository", "複製儲存庫"),
+        ))
         .child(super::popover_rule(theme))
-        .child(input_label(theme, "Repository URL / Path"))
+        .child(input_label(
+            theme,
+            language.text("Repository URL / Path", "儲存庫網址或路徑"),
+        ))
         .child(
             div()
                 .px_2()
@@ -20,7 +28,10 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 .min_w(px(0.0))
                 .child(this.clone_repo_url_input.clone()),
         )
-        .child(input_label(theme, "Destination parent folder"))
+        .child(input_label(
+            theme,
+            language.text("Destination parent folder", "目的地的上層資料夾"),
+        ))
         .child(
             div()
                 .px_2()
@@ -37,7 +48,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                         .child(this.clone_repo_parent_dir_input.clone()),
                 )
                 .child(
-                    components::Button::new("clone_repo_browse", "Browse")
+                    components::Button::new("clone_repo_browse", language.text("Browse", "瀏覽"))
                         .focus_handle(this.clone_repo_browse_focus_handle.clone())
                         .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, window, cx| {
@@ -51,7 +62,11 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                                 files: false,
                                 directories: true,
                                 multiple: false,
-                                prompt: Some("Clone into folder".into()),
+                                prompt: Some(
+                                    Language::current(cx)
+                                        .text("Clone into folder", "複製到資料夾")
+                                        .into(),
+                                ),
                                 directory,
                             });
 
@@ -81,14 +96,19 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
         .child(
             super::prompt_footer_row()
                 .child(
-                    cancel_button("clone_repo_cancel", "clone_repo_cancel_hint", theme)
-                        .focus_handle(this.clone_repo_focus.cancel.clone())
-                        .on_click(theme, cx, |this, _e, window, cx| {
-                            this.dismiss_prompt_popover(window, cx);
-                        }),
+                    cancel_button_labeled(
+                        "clone_repo_cancel",
+                        "clone_repo_cancel_hint",
+                        language.text("Cancel", "取消"),
+                        theme,
+                    )
+                    .focus_handle(this.clone_repo_focus.cancel.clone())
+                    .on_click(theme, cx, |this, _e, window, cx| {
+                        this.dismiss_prompt_popover(window, cx);
+                    }),
                 )
                 .child(
-                    components::Button::new("clone_repo_go", "Clone")
+                    components::Button::new("clone_repo_go", language.text("Clone", "複製"))
                         .focus_handle(this.clone_repo_focus.submit.clone())
                         .separated_end_slot(super::hotkey_hint(
                             theme,

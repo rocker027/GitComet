@@ -20,7 +20,6 @@ impl SidebarPaneView {
         } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
-        let is_collapsed_popover = ctx.is_collapsed_popover;
         let context_menu_invoker: SharedString = format!("annex_section_menu_{}", repo_id.0).into();
         let context_menu_active =
             this.active_context_menu_invoker.as_ref() == Some(&context_menu_invoker);
@@ -32,13 +31,13 @@ impl SidebarPaneView {
             .relative()
             .h(ctx.row_height())
             .w_full()
-            .pl(ctx.indent_px(0))
+            .pl(ctx.header_indent_px())
             .pr(ctx.trailing_pad())
             .flex()
             .items_center()
             .gap(ctx.px(BRANCH_TREE_GAP_PX))
             .interactive_row(row_style, row_state)
-            .child(ctx.tree_toggle_slot(is_collapsed_popover.then_some(collapsed)))
+            .child(ctx.section_toggle_slot(ix, collapsed, &collapse_key, cx))
             .child(ctx.tree_icon_slot("icons/disk.svg", ctx.icon_primary, 14.0))
             .child(
                 div()
@@ -62,22 +61,9 @@ impl SidebarPaneView {
             })
             .gitcomet_tooltip(
                 theme,
-                "git-annex repositories and special remotes (right-click for sync, remotes and more)".into(),
+                text(cx, "git-annex repositories and special remotes (right-click for sync, remotes and more)", "git-annex 儲存庫與特殊遠端（按右鍵查看同步等操作）").into(),
             )
-            .on_activate(
-                false,
-                ctx.header_activation,
-                cx.listener(move |this, e: &ClickEvent, _w, cx| {
-                    if !e.standard_click() || e.click_count() != 1 {
-                        return;
-                    }
-                    if is_collapsed_popover {
-                        this.toggle_active_repo_collapse_key(collapse_key.clone(), cx);
-                    } else {
-                        this.navigate_sidebar_row(ix, cx);
-                    }
-                }),
-            )
+            .map(|row| ctx.activate_section_header(row, slot, collapse_key, cx))
             .on_pointer_click(
                 MouseButton::Right,
                 cx.listener(move |this, e: &MouseDownEvent, window, cx| {
@@ -119,7 +105,7 @@ impl SidebarPaneView {
                 row.child(
                     components::Button::new(
                         format!("annex_placeholder_init_{}", repo_id.0),
-                        "Initialize",
+                        text(cx, "Initialize", "初始化"),
                     )
                     .borderless()
                     .on_click(theme, cx, move |this, _e, _window, _cx| {
@@ -136,7 +122,7 @@ impl SidebarPaneView {
                 row.child(
                     components::Button::new(
                         format!("annex_placeholder_restage_{}", repo_id.0),
-                        "Refresh",
+                        text(cx, "Refresh", "重新整理"),
                     )
                     .borderless()
                     .on_click(theme, cx, move |this, _e, _window, _cx| {

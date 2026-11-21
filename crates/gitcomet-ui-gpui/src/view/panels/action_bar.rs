@@ -1,6 +1,7 @@
 use super::bar_items::{self, BarItemOwner, BarItems, ExtensionBarItem, RelocatedBarItems};
 use super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
+use crate::localization::Language;
 use crate::view::repository_views::{MORE_VIEWS_INVOKER, RoutedArea, ViewTabs};
 use gitcomet_extension_api::{BarItemLocation, BuiltinBarItem};
 use rustc_hash::FxHasher;
@@ -10,14 +11,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 const ACTION_BAR_HEIGHT_PX: f32 = components::CONTROL_HEIGHT_PX + 12.0;
+const TOOLBAR_TILE_MIN_WIDTH_PX: f32 = 850.0;
 
 // The main window supports widths down to 820 design pixels. At that size the
-// branch/upstream run and the fixed actions on the right cannot all retain full
-// text. Pull/Push retain their labels because they describe the remote
-// operation beside the upstream badge, except in compact mode at Comfortable or
-// Spacious density, where every control is wider and only icons still fit.
-// Only compact mode hides the remaining action labels; condensed mode keeps
-// them while using tighter spacing.
+// branch name and fixed actions cannot all retain full text. Compact mode uses
+// icon-only Pull and Push at Comfortable and Spacious densities. Condensed
+// mode keeps action labels while using tighter spacing.
 // Tooltips keep omitted labels available in compact mode.
 const COMPACT_ACTION_BAR_MAX_WIDTH_PX: f32 = 1120.0;
 const CONDENSED_ACTION_BAR_MAX_WIDTH_PX: f32 = 1400.0;
@@ -106,11 +105,62 @@ fn secondary_action_label(
     }
 }
 
+/// What the toolbar Pop button would restore: the newest stash
+/// (`stash@{0}`), or why there is nothing it can pop. The list only shapes
+/// the tooltip: it loads with the sidebar, and `stash@{0}` is the newest
+/// stash whether or not the list has loaded, so only a loaded empty list
+/// disables the button.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum StashPopTarget {
+    Ready { index: usize, tooltip: String },
+    Unavailable(&'static str),
+}
+
+fn stash_pop_target(repo: Option<&RepoState>, language: Language) -> StashPopTarget {
+    let empty = StashPopTarget::Unavailable(language.text("No stashes to pop", "沒有可取出的貯藏"));
+    let Some(repo) = repo else {
+        return empty;
+    };
+    if repo.is_bare() {
+        return StashPopTarget::Unavailable(language.text(
+            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE,
+            "這項操作需要工作樹。",
+        ));
+    }
+    let Loadable::Ready(stashes) = &repo.stashes else {
+        return StashPopTarget::Ready {
+            index: 0,
+            tooltip: language
+                .text("Pop the newest stash", "取出最新一筆貯藏")
+                .to_string(),
+        };
+    };
+    match stashes.iter().min_by_key(|entry| entry.index) {
+        Some(entry) => {
+            let reference = format!("stash@{{{}}}", entry.index);
+            let pop = language.text("Pop", "取出");
+            let tooltip = if entry.message.is_empty() {
+                format!("{pop} {reference}")
+            } else {
+                format!("{pop} {reference}: {}", entry.message)
+            };
+            StashPopTarget::Ready {
+                index: entry.index,
+                tooltip,
+            }
+        }
+        None => empty,
+    }
+}
+
 pub(in super::super) fn action_bar_height<C>(cx: &mut C) -> Pixels
 where
     C: std::borrow::BorrowMut<gpui::App>,
 {
-    crate::ui_scale::UiScale::current(cx).row_height(ACTION_BAR_HEIGHT_PX, 44.0)
+    let scale = crate::ui_scale::UiScale::current(cx);
+    scale
+        .row_height(ACTION_BAR_HEIGHT_PX, 44.0)
+        .max(components::toolbar_tile_height(scale) + scale.px(6.0))
 }
 
 /// Longest badge label offered to layout. Badges can shrink further when the
@@ -129,27 +179,30 @@ struct SequencerBanner {
     continue_tooltip: &'static str,
 }
 
-fn sequencer_banner(state: gitcomet_core::services::SequencerState) -> Option<SequencerBanner> {
+fn sequencer_banner(
+    state: gitcomet_core::services::SequencerState,
+    language: Language,
+) -> Option<SequencerBanner> {
     use gitcomet_core::services::SequencerState;
     let (label, abort_id, continue_id, continue_tooltip) = match state {
         SequencerState::None => return None,
         SequencerState::RebaseOrApply => (
-            "APPLY/REBASE",
+            language.text("APPLY/REBASE", "套用／變基中"),
             "abort_rebase_or_apply",
             "continue_rebase_or_apply",
-            "Continue the in-progress rebase or apply",
+            language.text("Continue the in-progress rebase or apply", "繼續變基或套用"),
         ),
         SequencerState::CherryPick => (
-            "CHERRY-PICKING",
+            language.text("CHERRY-PICKING", "揀選提交中"),
             "abort_cherry_pick",
             "continue_cherry_pick",
-            "Continue the in-progress cherry-pick",
+            language.text("Continue the in-progress cherry-pick", "繼續揀選提交"),
         ),
         SequencerState::Revert => (
-            "REVERTING",
+            language.text("REVERTING", "正在還原提交"),
             "abort_revert",
             "continue_revert",
-            "Continue the in-progress revert",
+            language.text("Continue the in-progress revert", "繼續還原提交"),
         ),
     };
     Some(SequencerBanner {
@@ -204,37 +257,33 @@ fn head_branch_tracking_upstream_name(
         .map(|upstream| format!("{}/{}", upstream.remote, upstream.branch))
 }
 
-/// Returns the local branch that owns the upstream badge and its optional
-/// tracking target. Badge visibility intentionally depends only on having a
-/// checked-out local branch: an absent (or not-yet-loaded) upstream is the
-/// state in which the badge offers to configure one, not a reason to hide it.
-fn upstream_badge_state<'a>(
-    head_branch: &'a Loadable<String>,
-    branches: &Loadable<Arc<Vec<Branch>>>,
-) -> Option<(&'a str, Option<String>)> {
-    let Loadable::Ready(branch) = head_branch else {
-        return None;
+fn pull_tooltip_text(
+    pull_count: usize,
+    tracking_branch_name: Option<&str>,
+    language: Language,
+) -> SharedString {
+    let summary = match language {
+        Language::English => format!("Pull {pull_count} behind"),
+        Language::TraditionalChinese => format!("拉取 · 落後 {pull_count} 筆提交"),
     };
-    if branch.is_empty() || branch == "HEAD" {
-        return None;
-    }
-    Some((
-        branch.as_str(),
-        head_branch_tracking_upstream_name(head_branch, branches),
-    ))
-}
-
-fn pull_tooltip_text(pull_count: usize, tracking_branch_name: Option<&str>) -> SharedString {
     match tracking_branch_name {
-        Some(name) => format!("Pull {pull_count} behind\n{name}").into(),
-        None => format!("Pull {pull_count} behind").into(),
+        Some(name) => format!("{summary}\n{name}").into(),
+        None => summary.into(),
     }
 }
 
-fn push_tooltip_text(push_count: usize, tracking_branch_name: Option<&str>) -> SharedString {
+fn push_tooltip_text(
+    push_count: usize,
+    tracking_branch_name: Option<&str>,
+    language: Language,
+) -> SharedString {
+    let summary = match language {
+        Language::English => format!("Push {push_count} ahead"),
+        Language::TraditionalChinese => format!("推送 · 領先 {push_count} 筆提交"),
+    };
     match tracking_branch_name {
-        Some(name) => format!("Push {push_count} ahead\n{name}").into(),
-        None => format!("Push {push_count} ahead").into(),
+        Some(name) => format!("{summary}\n{name}").into(),
+        None => summary.into(),
     }
 }
 
@@ -285,6 +334,12 @@ impl ActionBarView {
             repo.upstream_divergence_rev.hash(&mut hasher);
             repo.merge_message_rev.hash(&mut hasher);
             repo.ops_rev.hash(&mut hasher);
+            // Undo / Redo follow the operation journal.
+            repo.git_undo.summary().hash(&mut hasher);
+            // Stash controls follow the selected worktree, list and local operations.
+            repo.history_state.worktree_selection.hash(&mut hasher);
+            repo.stashes_rev.hash(&mut hasher);
+            (repo.local_actions_in_flight > 0).hash(&mut hasher);
             repo.status_cache_rev().hash(&mut hasher);
             // The historical-browse badge keys off the file browser source. Not
             // `file_browser_rev`: that moves on every sidebar search keystroke.
@@ -293,6 +348,18 @@ impl ActionBarView {
             // Global back/forward buttons enable/disable with nav stack position.
             repo.navigation.main_history.cursor.hash(&mut hasher);
             repo.navigation.main_history.entries.len().hash(&mut hasher);
+        }
+
+        state.worktree_finish_runs.len().hash(&mut hasher);
+        for run in &state.worktree_finish_runs {
+            run.id.hash(&mut hasher);
+            run.origin_repo_id.hash(&mut hasher);
+            std::mem::discriminant(&run.phase).hash(&mut hasher);
+            run.sources.len().hash(&mut hasher);
+            for src in &run.sources {
+                std::mem::discriminant(&src.phase).hash(&mut hasher);
+                std::mem::discriminant(&src.cleanup).hash(&mut hasher);
+            }
         }
 
         hasher.finish()
@@ -565,6 +632,17 @@ impl ActionBarView {
         self.state.repos.iter().find(|r| r.id == repo_id)
     }
 
+    fn selected_stash_worktree(&self) -> Option<&std::path::Path> {
+        if self.active_view != gitcomet_extension_api::ViewTarget::History {
+            return None;
+        }
+        let repo = self.active_repo()?;
+        repo.history_state
+            .worktree_selection
+            .as_deref()
+            .filter(|path| *path != repo.spec.workdir.as_path())
+    }
+
     fn open_popover_at(
         &mut self,
         kind: impl Into<PopoverRequest>,
@@ -590,6 +668,18 @@ impl ActionBarView {
             root.open_popover_for_bounds(kind, anchor_bounds, window, cx);
         });
     }
+
+    fn open_popover_centered(
+        &mut self,
+        kind: impl Into<PopoverRequest>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let kind: PopoverRequest = kind.into();
+        let _ = self.root_view.update(cx, |root, cx| {
+            root.open_popover_centered(kind, window, cx);
+        });
+    }
 }
 
 impl BarItemOwner for ActionBarView {
@@ -601,8 +691,30 @@ impl BarItemOwner for ActionBarView {
     ) -> BarItems {
         let mut items = BarItems::new(cx);
         let theme = self.theme;
+        let language = Language::current(cx);
+        let worktree_required = language.text(
+            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE,
+            "這項操作需要工作樹。",
+        );
         let ui_scale_percent = crate::ui_scale::current(cx).percent;
         let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
+        let scale =
+            crate::ui_scale::UiScale::from_percent(ui_scale_percent).with_appearance(theme.metrics);
+        let show_toolbar_tiles = action_bar
+            && action_bar_width_budget(window.viewport_size().width, theme.metrics)
+                >= scale.px(TOOLBAR_TILE_MIN_WIDTH_PX);
+        let tile_height = show_toolbar_tiles.then(|| components::toolbar_tile_height(scale));
+        let git_button = |id: &'static str, caption: &'static str, fallback: &'static str| {
+            components::Button::new(
+                id,
+                if show_toolbar_tiles {
+                    caption
+                } else {
+                    fallback
+                },
+            )
+            .toolbar_tile(show_toolbar_tiles)
+        };
         let density = action_bar_density(
             window.viewport_size().width,
             ui_scale_percent,
@@ -612,7 +724,7 @@ impl BarItemOwner for ActionBarView {
         // Comfortable and Spacious widen every control, so the narrowest
         // tier, which just fits at Compact, has to shed more.
         let tight = tight_action_bar(density, theme.metrics.density);
-        let badge_label_max_chars = match density {
+        let worktree_label_max_chars = match density {
             ActionBarDensity::Compact if tight => {
                 tight_badge_label_max_chars(theme.metrics.density)
             }
@@ -647,13 +759,13 @@ impl BarItemOwner for ActionBarView {
         };
         let action_group_gap = gap(4.0, 8.0, 6.0);
         let tracking_action_gap = gap(2.0, 4.0, 6.0);
-        // Text in the three picker badges gives way before actions do. Keep
-        // enough room for the icon and an ellipsis even at the narrowest size.
+        // Let the picker labels take the available width, down to room for
+        // an icon and ellipsis in a narrow window.
         let badge_min_width = scaled_px(theme.metrics.row_height(22.0, 32.0) + 28.0);
         let merge_abort_label = if dense_spacing {
-            "Abort"
+            language.text("Abort", "中止")
         } else {
-            "Abort merge"
+            language.text("Abort merge", "中止合併")
         };
         let icon_primary = theme.colors.accent.foreground;
         let icon_muted = with_alpha(
@@ -717,7 +829,7 @@ impl BarItemOwner for ActionBarView {
         let sequencer_banner = self
             .active_repo()
             .map(active_sequencer_state)
-            .and_then(sequencer_banner);
+            .and_then(|state| sequencer_banner(state, language));
         let rebase_has_unstaged_conflicts =
             self.active_repo().is_some_and(|r| r.has_unstaged_conflicts);
         // A revert shows REVERT_HEAD while its commit step still runs; the
@@ -726,7 +838,10 @@ impl BarItemOwner for ActionBarView {
         let sequencer_step_busy = self
             .active_repo()
             .is_some_and(|r| r.sequencer_actions_in_flight > 0);
-        const SEQUENCER_BUSY_TOOLTIP: &str = "Wait for the running Git operation to finish";
+        let sequencer_busy_tooltip = language.text(
+            "Wait for the running Git operation to finish",
+            "請等待目前的 Git 操作完成",
+        );
 
         let (pull_count, push_count) = self
             .active_repo()
@@ -744,18 +859,6 @@ impl BarItemOwner for ActionBarView {
             .and_then(|repo| head_branch_tracking_upstream_name(&repo.head_branch, &repo.branches));
         let active_repo_key = self.active_repo_id().map(|id| id.0).unwrap_or(0);
         let is_bare = self.active_repo().is_some_and(RepoState::is_bare);
-        let can_stash = self
-            .active_repo()
-            .map(|repo| {
-                !repo.is_bare()
-                    && (repo
-                        .worktree_status_entries()
-                        .is_some_and(|entries| !entries.is_empty())
-                        || repo
-                            .staged_status_entries()
-                            .is_some_and(|entries| !entries.is_empty()))
-            })
-            .unwrap_or(false);
 
         // Global back/forward navigation, mirroring the mouse side-buttons and
         // Alt+Left / Alt+Right (Option on macOS). Sits at the very start of the action bar.
@@ -832,6 +935,93 @@ impl BarItemOwner for ActionBarView {
                 )
                 .into(),
             );
+        // Undo / Redo of Git operations, as in GitKraken's toolbar.
+        let git_undo_repo = self.active_repo_id();
+        let git_undo_button = |id: &'static str,
+                               direction: gitcomet_state::model::GitUndoDirection,
+                               cx: &mut gpui::Context<Self>| {
+            let (icon_path, keys) = match direction {
+                gitcomet_state::model::GitUndoDirection::Undo => ("icons/undo.svg", "Z"),
+                gitcomet_state::model::GitUndoDirection::Redo => ("icons/redo.svg", "Shift+Z"),
+            };
+            let repo = self.active_repo();
+            let finish_busy = repo.is_some_and(|repo| {
+                self.state.worktree_finish_blocks_workdir_mutation(repo.id)
+                    || repo.git_undo.next(direction).is_some_and(|entry| {
+                        entry.changes.iter().any(|change| {
+                            self.state
+                                .worktree_finish_protects_branch(repo.id, &change.reference)
+                        })
+                    })
+            });
+            let unavailable = if finish_busy {
+                Some(language.text(
+                    "Worktree is protected by an active Worktree Finish run",
+                    "此工作樹正由進行中的工作樹收尾任務保護",
+                ))
+            } else {
+                repo.map_or(
+                    Some(language.text("Open a repository first", "請先開啟儲存庫")),
+                    |repo| crate::view::git_undo_unavailable(repo, direction),
+                )
+            };
+            let label = repo
+                .and_then(|repo| repo.git_undo.next(direction))
+                .map(|entry| entry.label.clone());
+            let verb = match direction {
+                gitcomet_state::model::GitUndoDirection::Undo => language.text("Undo", "復原"),
+                gitcomet_state::model::GitUndoDirection::Redo => language.text("Redo", "重做"),
+            };
+            let tooltip: SharedString = match (unavailable, label) {
+                (Some(reason), _) => reason.into(),
+                (None, Some(label)) => format!(
+                    "{verb} {label} ({})",
+                    crate::kit::components::secondary_shortcut(keys)
+                )
+                .into(),
+                (None, None) => verb.into(),
+            };
+            div().debug_selector(move || id.to_string()).child(
+                git_button(id, verb, "")
+                    .start_slot(icon(
+                        icon_path,
+                        if unavailable.is_none() {
+                            theme.colors.foreground.primary
+                        } else {
+                            theme.colors.foreground.secondary
+                        },
+                    ))
+                    .style(components::ButtonStyle::Transparent)
+                    .disabled(unavailable.is_some())
+                    .on_click(theme, cx, move |this, e, _w, cx| {
+                        if e.click_count() > 1 {
+                            return;
+                        }
+                        if let Some(repo_id) = git_undo_repo {
+                            this.store.dispatch(match direction {
+                                gitcomet_state::model::GitUndoDirection::Undo => {
+                                    Msg::UndoGitOperation { repo_id }
+                                }
+                                gitcomet_state::model::GitUndoDirection::Redo => {
+                                    Msg::RedoGitOperation { repo_id }
+                                }
+                            });
+                            cx.notify();
+                        }
+                    })
+                    .gitcomet_tooltip(theme, tooltip),
+            )
+        };
+        let git_undo = git_undo_button(
+            "git_undo",
+            gitcomet_state::model::GitUndoDirection::Undo,
+            cx,
+        );
+        let git_redo = git_undo_button(
+            "git_redo",
+            gitcomet_state::model::GitUndoDirection::Redo,
+            cx,
+        );
         let global_nav = div()
             .id("global_nav")
             .debug_selector(|| "global_nav".to_string())
@@ -840,17 +1030,27 @@ impl BarItemOwner for ActionBarView {
             .gap(scaled_px(2.0))
             .flex_none()
             .child(nav_back)
-            .child(nav_forward);
+            .child(nav_forward)
+            .child(git_undo)
+            .child(git_redo);
 
         // Workspace (worktree) and branch badges show the current state at a
         // glance, with each opening a filterable picker.
         let worktree_badge = self.active_repo().map(|repo| {
             let repo_id = repo.id;
             let label = truncate_badge_label_to(
-                &crate::view::path_display::repo_path_name(&repo.spec.workdir),
-                badge_label_max_chars,
+                &super::repo_tabs_bar::workdir_label(repo, &self.state.repos),
+                worktree_label_max_chars,
             );
             let workdir = repo.spec.workdir.display().to_string();
+            let repository = crate::view::path_display::repo_path_name(
+                super::repo_tabs_bar::primary_workdir(repo),
+            );
+            let worktree = crate::view::path_display::repo_path_name(&repo.spec.workdir);
+            let identity = match repo.head_branch.ready() {
+                Some(branch) => format!("{repository} / {worktree} · {branch}"),
+                None => format!("{repository} / {worktree}"),
+            };
             let invoker: SharedString = "worktree_badge".into();
             let is_active = active_invoker
                 .as_ref()
@@ -872,7 +1072,14 @@ impl BarItemOwner for ActionBarView {
                 })
                 .min_w(badge_min_width)
                 .debug_selector(|| "worktree_badge".to_string())
-                .gitcomet_tooltip(theme, format!("Switch worktree\n{workdir}").into())
+                .gitcomet_tooltip(
+                    theme,
+                    format!(
+                        "{}\n{identity}\n{workdir}",
+                        language.text("Switch worktree", "切換工作樹")
+                    )
+                    .into(),
+                )
         });
 
         let branch_badge = self.active_repo().and_then(|repo| {
@@ -886,24 +1093,27 @@ impl BarItemOwner for ActionBarView {
             // commits made here propagate to the base via git-annex.
             let adjusted = gitcomet_core::annex::adjusted_branch(head);
             let label: SharedString = if detached {
-                "detached".into()
+                language.text("detached", "分離狀態").into()
             } else if let Some((base, mode)) = adjusted {
-                truncate_badge_label_to(&format!("{base} · adjusted ({mode})"), badge_label_max_chars)
+                format!("{base} · adjusted ({mode})").into()
             } else {
-                truncate_badge_label_to(head, badge_label_max_chars)
+                head.as_str().into()
             };
             let invoker: SharedString = "branch_badge".into();
             let is_active = active_invoker
                 .as_ref()
                 .is_some_and(|id| id.as_ref() == invoker.as_ref());
             let tooltip: SharedString = if repo.is_bare() {
-                format!("HEAD: {head}\n{}", gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE).into()
+                format!("HEAD: {head}\n{}", worktree_required).into()
             } else if detached {
-                "Detached HEAD — click to check out a branch".into()
+                language.text("Detached HEAD — click to check out a branch", "HEAD 處於分離狀態。點選以切換分支。").into()
             } else if let Some((base, _)) = adjusted {
                 format!("On git-annex adjusted branch {head}; commits propagate to {base} through git-annex sync, pull and push").into()
             } else {
-                format!("On branch {head} — click to switch").into()
+                match language {
+                    Language::English => format!("On branch {head} — click to switch"),
+                    Language::TraditionalChinese => format!("目前分支為 {head}。點選以切換。"),
+                }.into()
             };
             Some(
                 components::Button::new("branch_badge", label)
@@ -930,85 +1140,24 @@ impl BarItemOwner for ActionBarView {
             )
         });
 
-        let upstream_badge = self.active_repo().and_then(|repo| {
-            let (branch, upstream) = upstream_badge_state(&repo.head_branch, &repo.branches)?;
-            let has_upstream = upstream.is_some();
-            let repo_id = repo.id;
-            let local_branch = branch.to_string();
-            let label = upstream
-                .as_deref()
-                .map(|upstream| truncate_badge_label_to(upstream, badge_label_max_chars))
-                .unwrap_or_else(|| "No upstream".into());
-            let badge_color = if has_upstream {
-                icon_primary
-            } else {
-                theme.colors.foreground.secondary
-            };
-            let tooltip: SharedString = upstream.as_deref().map_or_else(
-                || "No upstream branch configured\nClick to select one".into(),
-                |upstream| {
-                    format!("Tracking upstream {upstream}\nClick to change or unlink").into()
-                },
-            );
-            let invoker: SharedString = "upstream_badge".into();
-            let is_active = active_invoker
-                .as_ref()
-                .is_some_and(|id| id.as_ref() == invoker.as_ref());
-            Some(
-                components::Button::new("upstream_badge", label)
-                    .truncate_label()
-                    .start_slot(icon("icons/cloud.svg", badge_color))
-                    .style(components::ButtonStyle::Subtle)
-                    .text_color(if has_upstream {
-                        theme.colors.foreground.primary
-                    } else {
-                        theme.colors.foreground.secondary
-                    })
-                    .open(is_active)
-                    .selected_bg(menu_selected_bg)
-                    .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
-                        this.open_popover_for_bounds(
-                            (PopoverKind::UpstreamPicker {
-                                repo_id,
-                                branch: local_branch.clone(),
-                            })
-                            .invoked_by(invoker.clone()),
-                            bounds,
-                            window,
-                            cx,
-                        );
-                    })
-                    .min_w(badge_min_width)
-                    .debug_selector(|| "upstream_badge".to_string())
-                    .gitcomet_tooltip(theme, tooltip),
-            )
-        });
-        let upstream_arrow = upstream_badge.is_some().then(|| {
-            div()
-                .debug_selector(|| "upstream_arrow".to_string())
-                .flex()
-                .flex_none()
-                .items_center()
-                .child(svg_icon(
-                    "icons/arrow_right.svg",
-                    theme.colors.foreground.secondary,
-                    scaled_px(12.0),
-                ))
-        });
-
         let pull_color = if pull_count > 0 {
             theme.colors.status.warning.foreground
         } else {
             icon_muted
         };
-        let mut pull_main = components::Button::new("pull_main", if tight { "" } else { "Pull" })
-            .busy(pull_loading)
-            .start_slot(if pull_loading {
-                spinner(("pull_spinner", active_repo_key), pull_color)
-            } else {
-                icon("icons/arrow_down.svg", pull_color).into()
-            })
-            .style(components::ButtonStyle::Subtle);
+        let pull_caption = language.text("Pull", "拉取");
+        let mut pull_main = git_button(
+            "pull_main",
+            pull_caption,
+            if tight { "" } else { pull_caption },
+        )
+        .busy(pull_loading)
+        .start_slot(if pull_loading {
+            spinner(("pull_spinner", active_repo_key), pull_color)
+        } else {
+            icon("icons/arrow_down_to_line.svg", pull_color).into()
+        })
+        .style(components::ButtonStyle::Subtle);
         if pull_count > 0 {
             pull_main = pull_main.end_slot(count_badge(pull_count, pull_color));
         }
@@ -1018,16 +1167,20 @@ impl BarItemOwner for ActionBarView {
             .as_ref()
             .is_some_and(|id| id.as_ref() == pull_picker_invoker.as_ref());
         let pull_tracking_branch_name = tracking_branch_name.clone();
+        let finish_owns_active_repo = self
+            .active_repo()
+            .is_some_and(|repo| self.state.worktree_finish_blocks_workdir_mutation(repo.id));
         let pull_unavailable = self
             .active_repo()
             .and_then(|repo| pull_unavailable_reason(repo, &self.state.large_file_settings));
-        let pull_available = self.active_repo().is_some() && pull_unavailable.is_none();
+        let pull_available =
+            self.active_repo().is_some() && pull_unavailable.is_none() && !finish_owns_active_repo;
         let pull_menu_icon_color = if pull_picker_active {
             theme.colors.accent.foreground
         } else {
             icon_muted
         };
-        let pull_menu = components::Button::new("pull_menu", "")
+        let pull_menu = git_button("pull_menu", "", "")
             .start_slot(icon("icons/chevron_down.svg", pull_menu_icon_color))
             .style(components::ButtonStyle::Subtle)
             .open(pull_picker_active)
@@ -1048,7 +1201,9 @@ impl BarItemOwner for ActionBarView {
                             return;
                         };
                         let repo_id = repo.id;
-                        if pull_unavailable_reason(repo, &this.state.large_file_settings).is_none()
+                        if !this.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                            && pull_unavailable_reason(repo, &this.state.large_file_settings)
+                                .is_none()
                         {
                             this.store.dispatch(Msg::Pull {
                                 repo_id,
@@ -1066,13 +1221,18 @@ impl BarItemOwner for ActionBarView {
                     },
                 )
                 .style(components::SplitButtonStyle::Borderless)
-                .render(theme, ui_scale_percent),
+                .render(theme, ui_scale_percent)
+                .when_some(tile_height, |split, height| split.h(height)),
             )
             .gitcomet_tooltip(
                 theme,
                 match pull_unavailable {
-                    Some(reason) => reason.into(),
-                    None => pull_tooltip_text(pull_count, pull_tracking_branch_name.as_deref()),
+                    Some(reason) => localized_action_reason(reason, language).into(),
+                    None => pull_tooltip_text(
+                        pull_count,
+                        pull_tracking_branch_name.as_deref(),
+                        language,
+                    ),
                 },
             );
 
@@ -1081,14 +1241,19 @@ impl BarItemOwner for ActionBarView {
         } else {
             icon_muted
         };
-        let mut push_main = components::Button::new("push_main", if tight { "" } else { "Push" })
-            .busy(push_loading)
-            .start_slot(if push_loading {
-                spinner(("push_spinner", active_repo_key), push_color)
-            } else {
-                icon("icons/arrow_up.svg", push_color).into()
-            })
-            .style(components::ButtonStyle::Subtle);
+        let push_caption = language.text("Push", "推送");
+        let mut push_main = git_button(
+            "push_main",
+            push_caption,
+            if tight { "" } else { push_caption },
+        )
+        .busy(push_loading)
+        .start_slot(if push_loading {
+            spinner(("push_spinner", active_repo_key), push_color)
+        } else {
+            icon("icons/arrow_up_to_line.svg", push_color).into()
+        })
+        .style(components::ButtonStyle::Subtle);
         if push_count > 0 {
             push_main = push_main.end_slot(count_badge(push_count, push_color));
         }
@@ -1107,7 +1272,7 @@ impl BarItemOwner for ActionBarView {
         } else {
             icon_muted
         };
-        let push_menu = components::Button::new("push_menu", "")
+        let push_menu = git_button("push_menu", "", "")
             .start_slot(icon("icons/chevron_down.svg", push_menu_icon_color))
             .style(components::ButtonStyle::Subtle)
             .open(push_picker_active)
@@ -1134,7 +1299,7 @@ impl BarItemOwner for ActionBarView {
                                 PopoverKind::PushSetUpstreamPrompt {
                                     repo_id,
                                     remote,
-                                    configure_only_for: None,
+                                    mode: PushUpstreamMode::CurrentBranch,
                                 },
                                 e.position(),
                                 window,
@@ -1153,92 +1318,260 @@ impl BarItemOwner for ActionBarView {
                     },
                 )
                 .style(components::SplitButtonStyle::Borderless)
-                .render(theme, ui_scale_percent),
+                .render(theme, ui_scale_percent)
+                .when_some(tile_height, |split, height| split.h(height)),
             )
             .gitcomet_tooltip(
                 theme,
                 match push_unavailable {
-                    Some(reason) => reason.into(),
-                    None => push_tooltip_text(push_count, push_tracking_branch_name.as_deref()),
+                    Some(reason) => localized_action_reason(reason, language).into(),
+                    None => push_tooltip_text(
+                        push_count,
+                        push_tracking_branch_name.as_deref(),
+                        language,
+                    ),
                 },
             );
 
-        let stash_prompt_invoker: SharedString = "stash_btn".into();
-        let stash_prompt_active = self
-            .active_context_menu_invoker
-            .as_ref()
-            .is_some_and(|id| id.as_ref() == stash_prompt_invoker.as_ref());
-        let stash = div().debug_selector(|| "stash".to_string()).child(
-            components::Button::new("stash", action_label("Stash"))
+        let stash = if let Some(path) = self.selected_stash_worktree() {
+            let path = path.to_path_buf();
+            let label = language.text("Open worktree", "開啟工作樹");
+            let tooltip = format!("{label}\n{}", path.display());
+            div().child(
+                components::Button::new("stash_open_worktree", if action_bar { label } else { "" })
+                    .start_slot(icon("icons/git_worktree.svg", icon_primary))
+                    .style(components::ButtonStyle::Subtle)
+                    .on_click(theme, cx, move |this, _, window, cx| {
+                        if this.selected_stash_worktree() == Some(path.as_path()) {
+                            crate::app::open_repository_from_view(
+                                cx,
+                                window.window_handle().window_id(),
+                                path.clone(),
+                            );
+                        }
+                    })
+                    .debug_selector(|| "stash_open_worktree".to_string())
+                    .gitcomet_tooltip(theme, tooltip.into()),
+            )
+        } else {
+            let repo = self.active_repo();
+            let workdir = repo.map(|repo| repo.spec.workdir.display().to_string());
+            let target_tooltip = |label: &str| -> SharedString {
+                match &workdir {
+                    Some(workdir) => format!("{label}\n{workdir}").into(),
+                    None => label.to_owned().into(),
+                }
+            };
+            let busy = repo.is_some_and(|repo| {
+                repo.local_actions_in_flight > 0
+                    || self.state.worktree_finish_blocks_workdir_mutation(repo.id)
+            });
+            let busy_text = language.text(
+                "Wait for the running Git operation to finish",
+                "請等待目前的 Git 操作完成",
+            );
+            let has_changes = repo.is_some_and(|repo| {
+                repo.worktree_status_entries()
+                    .is_some_and(|entries| !entries.is_empty())
+                    || repo
+                        .staged_status_entries()
+                        .is_some_and(|entries| !entries.is_empty())
+            });
+            let can_stash = has_changes && !is_bare && !busy;
+            let stash_help = if is_bare {
+                worktree_required
+            } else if busy {
+                busy_text
+            } else if can_stash {
+                language.text("Create stash", "新增貯藏")
+            } else {
+                language.text("No changes to stash", "沒有可貯藏的變更")
+            };
+            let stash_invoker: SharedString = "stash_btn".into();
+            let stash_caption = language.text("Stash", "貯藏");
+            let stash_button = git_button("stash", stash_caption, action_label(stash_caption))
                 .start_slot(icon(crate::view::icons::STASH_ICON_PATH, icon_primary))
                 .style(components::ButtonStyle::Subtle)
-                .open(stash_prompt_active)
+                .open(active_invoker.as_ref() == Some(&stash_invoker))
                 .selected_bg(menu_selected_bg)
                 .disabled(!can_stash)
                 .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
-                    this.open_popover_for_bounds(
-                        PopoverKind::StashPrompt.invoked_by(stash_prompt_invoker.clone()),
-                        bounds,
-                        window,
-                        cx,
-                    );
-                })
-                .gitcomet_tooltip(
-                    theme,
-                    if is_bare {
-                        gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE.into()
-                    } else if can_stash {
-                        "Create stash".into()
-                    } else {
-                        "No changes to stash".into()
-                    },
-                ),
-        );
-
-        let create_branch_invoker: SharedString = "create_branch_btn".into();
-        let create_branch_active = self
-            .active_context_menu_invoker
-            .as_ref()
-            .is_some_and(|id| id.as_ref() == create_branch_invoker.as_ref());
-        let create_branch = div().debug_selector(|| "create_branch".to_string()).child(
-            components::Button::new("create_branch", action_label("Branch"))
-                .start_slot(icon("icons/git_branch.svg", icon_primary))
-                .style(components::ButtonStyle::Subtle)
-                .open(create_branch_active)
-                .selected_bg(menu_selected_bg)
-                .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
-                    if let Some(repo_id) = this.state.active_repo {
-                        let target = this
-                            .active_repo()
-                            .and_then(|repo| {
-                                if let Loadable::Ready(head) = &repo.head_branch {
-                                    Some(head.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_else(|| "HEAD".to_string());
+                    if this.selected_stash_worktree().is_none() {
                         this.open_popover_for_bounds(
-                            (PopoverKind::CreateBranchFromRefPrompt {
-                                repo_id,
-                                target,
-                                source_selectable: true,
-                                name_prefix: String::new(),
-                            })
-                            .invoked_by(create_branch_invoker.clone()),
+                            PopoverKind::StashPrompt.invoked_by(stash_invoker.clone()),
                             bounds,
                             window,
                             cx,
                         );
                     }
                 })
-                .gitcomet_tooltip(theme, "Create branch".into()),
+                .gitcomet_tooltip(theme, target_tooltip(stash_help));
+
+            let (pop_index, pop_help) = match stash_pop_target(repo, language) {
+                StashPopTarget::Ready { index, tooltip } => (Some(index), tooltip),
+                StashPopTarget::Unavailable(reason) => (None, reason.to_owned()),
+            };
+            let repo_id = self.active_repo_id();
+            let can_pop = pop_index.is_some() && repo_id.is_some() && !busy;
+            // A linked worktree can add a stash after this tab last read the list.
+            let can_choose_stash = !is_bare
+                && !busy
+                && repo.is_some_and(|repo| matches!(repo.open, Loadable::Ready(())));
+            let pop_tooltip = target_tooltip(if busy { busy_text } else { &pop_help });
+            let menu_tooltip = if can_choose_stash {
+                target_tooltip(
+                    language.text("Choose a stash to apply or pop", "選擇要套用或取出的貯藏"),
+                )
+            } else {
+                pop_tooltip.clone()
+            };
+            let restore_invoker: SharedString = "stash_restore_menu".into();
+            let pop_caption = language.text("Pop", "取出");
+            let pop_button = git_button("stash_pop", pop_caption, action_label(pop_caption))
+                .start_slot(icon("icons/stash_pop.svg", icon_primary))
+                .style(components::ButtonStyle::Subtle)
+                .disabled(!can_pop);
+            let menu_button = git_button("stash_restore_menu", "", "")
+                .start_slot(icon("icons/chevron_down.svg", icon_muted))
+                .style(components::ButtonStyle::Subtle)
+                .open(active_invoker.as_ref() == Some(&restore_invoker))
+                .selected_bg(menu_selected_bg)
+                .disabled(!can_choose_stash);
+            let restore_buttons = components::SplitButton::from_buttons(
+                pop_button,
+                menu_button,
+                cx,
+                |button, cx| {
+                    button
+                        .on_click(theme, cx, move |this, e, _window, cx| {
+                            // A double click must not pop twice before the list reloads.
+                            if e.click_count() > 1 || this.selected_stash_worktree().is_some() {
+                                return;
+                            }
+                            if let (Some(repo_id), Some(index)) = (repo_id, pop_index)
+                                && this.active_repo().is_some_and(|repo| {
+                                    repo.id == repo_id && repo.local_actions_in_flight == 0
+                                })
+                            {
+                                this.store.dispatch(Msg::PopStash { repo_id, index });
+                                this.store.dispatch(Msg::LoadStashes { repo_id });
+                                cx.notify();
+                            }
+                        })
+                        .debug_selector(|| "stash_pop".to_string())
+                        .gitcomet_tooltip(theme, pop_tooltip)
+                },
+                |button, cx| {
+                    button
+                        .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
+                            if let Some(repo_id) = repo_id
+                                && this.active_repo_id() == Some(repo_id)
+                                && this.selected_stash_worktree().is_none()
+                            {
+                                this.open_popover_for_bounds(
+                                    (PopoverKind::StashRestoreMenu { repo_id })
+                                        .invoked_by(restore_invoker.clone()),
+                                    bounds,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .debug_selector(|| "stash_restore_menu".to_string())
+                        .gitcomet_tooltip(theme, menu_tooltip)
+                },
+            )
+            .style(components::SplitButtonStyle::Borderless)
+            .render(theme, ui_scale_percent)
+            .when_some(tile_height, |split, height| split.h(height));
+
+            let finish_caption = language.text("Finish", "收尾");
+            let finish_button = git_button(
+                "finish_worktrees",
+                finish_caption,
+                action_label(finish_caption),
+            )
+            .start_slot(icon("icons/swap.svg", icon_primary))
+            .style(components::ButtonStyle::Subtle)
+            .disabled(repo_id.is_none())
+            .on_click(theme, cx, move |this, _e, window, cx| {
+                if let Some(repo_id) = this.active_repo_id() {
+                    this.open_popover_centered(
+                        PopoverKind::worktree(
+                            repo_id,
+                            crate::view::WorktreePopoverKind::FinishSetup {
+                                preselected: Vec::new(),
+                                target: None,
+                                mode: None,
+                            },
+                        ),
+                        window,
+                        cx,
+                    );
+                }
+            })
+            .debug_selector(|| "finish_worktrees".to_string())
+            .gitcomet_tooltip(
+                theme,
+                language.text("Finish worktrees…", "收尾工作樹…").into(),
+            );
+
+            div()
+                .flex()
+                .items_center()
+                .gap(tracking_action_gap)
+                .child(stash_button)
+                .child(restore_buttons)
+                .child(finish_button)
+        }
+        .flex_none()
+        .debug_selector(|| "stash".to_string());
+
+        let create_branch_invoker: SharedString = "create_branch_btn".into();
+        let create_branch_active = self
+            .active_context_menu_invoker
+            .as_ref()
+            .is_some_and(|id| id.as_ref() == create_branch_invoker.as_ref());
+        let branch_caption = language.text("Branch", "分支");
+        let create_branch = div().debug_selector(|| "create_branch".to_string()).child(
+            git_button(
+                "create_branch",
+                branch_caption,
+                action_label(branch_caption),
+            )
+            .start_slot(icon("icons/git_branch.svg", icon_primary))
+            .style(components::ButtonStyle::Subtle)
+            .open(create_branch_active)
+            .selected_bg(menu_selected_bg)
+            .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
+                if let Some(repo_id) = this.state.active_repo {
+                    let target = this
+                        .active_repo()
+                        .and_then(|repo| {
+                            if let Loadable::Ready(head) = &repo.head_branch {
+                                Some(head.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| "HEAD".to_string());
+                    this.open_popover_for_bounds(
+                        (PopoverKind::CreateBranchFromRefPrompt {
+                            repo_id,
+                            target,
+                            source_selectable: true,
+                            name_prefix: String::new(),
+                        })
+                        .invoked_by(create_branch_invoker.clone()),
+                        bounds,
+                        window,
+                        cx,
+                    );
+                }
+            })
+            .gitcomet_tooltip(theme, language.text("Create branch", "建立分支").into()),
         );
 
-        // Keep the branch, its tracking target, and the operations that use
-        // that target together. Pull/Push stay in this run even before the
-        // branch has an upstream, so the action bar does not jump around after
-        // the first push.
         let tracking_actions = div()
             .id("tracking_actions")
             .debug_selector(|| "tracking_actions".to_string())
@@ -1247,8 +1580,6 @@ impl BarItemOwner for ActionBarView {
             .items_center()
             .gap(tracking_action_gap)
             .children(branch_badge)
-            .children(upstream_arrow)
-            .children(upstream_badge)
             .child(pull)
             .child(push);
 
@@ -1313,13 +1644,78 @@ impl BarItemOwner for ActionBarView {
             }
         } else {
             items.push(BuiltinBarItem::Tracking, tracking_actions);
+        }
+        items.push(BuiltinBarItem::CreateBranch, create_branch.flex_none());
+        items.push(BuiltinBarItem::Stash, stash);
+        if self.extension_navigation.is_none() {
             if let Some(badge) = historical_badge {
                 items.push(BuiltinBarItem::HistoricalBrowse, badge);
             }
+            let active_finish_run = self
+                .active_repo_id()
+                .and_then(|repo_id| self.state.worktree_finish_run_for_repo(repo_id))
+                .cloned();
+
+            let has_active_finish_run = active_finish_run.is_some();
             let operation_controls = div()
                 .flex()
                 .items_center()
                 .gap(action_group_gap)
+                .when_some(active_finish_run, |d, run| {
+                    let run_id = run.id;
+                    let total = run.sources.len();
+                    let done_count = run.sources.iter().filter(|s| s.phase.is_terminal()).count();
+                    let banner_label = match run.phase {
+                        gitcomet_state::model::RunPhase::Previewing => language
+                            .text("Finish · Re-previewing", "收尾 · 重新預覽中")
+                            .to_string(),
+                        gitcomet_state::model::RunPhase::AwaitingConfirm { .. } => language
+                            .text("Finish · Confirm preview", "收尾 · 待重新確認")
+                            .to_string(),
+                        gitcomet_state::model::RunPhase::Running { current } => match language {
+                            Language::English => format!("Finish {}/{total}", current + 1),
+                            Language::TraditionalChinese => format!("收尾 {}/{total}", current + 1),
+                        },
+                        gitcomet_state::model::RunPhase::Paused { current } => match language {
+                            Language::English => {
+                                format!("Finish {}/{total} · Paused", current + 1)
+                            }
+                            Language::TraditionalChinese => {
+                                format!("收尾 {}/{total} · 已暫停", current + 1)
+                            }
+                        },
+                        gitcomet_state::model::RunPhase::CleanupCheck
+                        | gitcomet_state::model::RunPhase::CleaningUp => language
+                            .text("Finish · Cleaning up", "收尾 · 清理中")
+                            .to_string(),
+                        gitcomet_state::model::RunPhase::Finished => match language {
+                            Language::English => format!("Finish {done_count}/{total} · Done"),
+                            Language::TraditionalChinese => {
+                                format!("收尾 {done_count}/{total} · 已完成")
+                            }
+                        },
+                        gitcomet_state::model::RunPhase::Aborted => language
+                            .text("Finish · Aborted", "收尾 · 已中止")
+                            .to_string(),
+                    };
+                    let repo_id = run.origin_repo_id;
+                    d.child(
+                        components::Button::new("worktree_finish_banner", banner_label)
+                            .style(components::ButtonStyle::Outlined)
+                            .on_click(theme, cx, move |this, e: &ClickEvent, window, cx| {
+                                this.open_popover_at(
+                                    PopoverKind::worktree(
+                                        repo_id,
+                                        WorktreePopoverKind::FinishQueue { run_id },
+                                    ),
+                                    e.position(),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .debug_selector(|| "worktree_finish_banner".to_string()),
+                    )
+                })
                 .when(is_merging, |d| {
                     d.child(
                         div()
@@ -1333,7 +1729,7 @@ impl BarItemOwner for ActionBarView {
                                     .text_size(theme.ui_text(12.0))
                                     .text_color(theme.colors.status.warning.foreground)
                                     .font_weight(FontWeight::BOLD)
-                                    .child("MERGING"),
+                                    .child(language.text("MERGING", "合併中")),
                             )
                             .child(
                                 components::Button::new("abort_merge", merge_abort_label)
@@ -1350,11 +1746,7 @@ impl BarItemOwner for ActionBarView {
                                         }
                                     })
                                     .when(is_bare, |button| {
-                                        button.gitcomet_tooltip(
-                                            theme,
-                                            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE
-                                                .into(),
-                                        )
+                                        button.gitcomet_tooltip(theme, worktree_required.into())
                                     }),
                             ),
                     )
@@ -1374,61 +1766,71 @@ impl BarItemOwner for ActionBarView {
                                     .child(banner.label),
                             )
                             .child(
-                                components::Button::new(banner.abort_id, "Abort")
-                                    .style(components::ButtonStyle::Danger)
-                                    .disabled(is_bare || sequencer_step_busy)
-                                    .on_click(theme, cx, |this, e: &ClickEvent, window, cx| {
-                                        if let Some(repo_id) = this.active_repo_id() {
-                                            this.open_popover_at(
-                                                PopoverKind::MergeAbortConfirm { repo_id },
-                                                e.position(),
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    })
-                                    .when(is_bare || sequencer_step_busy, |button| {
+                                components::Button::new(
+                                    banner.abort_id,
+                                    language.text("Abort", "中止"),
+                                )
+                                .style(components::ButtonStyle::Danger)
+                                .disabled(is_bare || sequencer_step_busy)
+                                .on_click(theme, cx, |this, e: &ClickEvent, window, cx| {
+                                    if let Some(repo_id) = this.active_repo_id() {
+                                        this.open_popover_at(
+                                            PopoverKind::MergeAbortConfirm { repo_id },
+                                            e.position(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                })
+                                .when(
+                                    is_bare || sequencer_step_busy,
+                                    |button| {
                                         button.gitcomet_tooltip(
                                             theme,
                                             if is_bare {
-                                                gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE
-                                                    .into()
+                                                worktree_required.into()
                                             } else {
-                                                SEQUENCER_BUSY_TOOLTIP.into()
+                                                sequencer_busy_tooltip.into()
                                             },
                                         )
-                                    }),
+                                    },
+                                ),
                             )
                             .child(
-                                components::Button::new(banner.continue_id, "Continue")
-                                    .style(components::ButtonStyle::Outlined)
-                                    .disabled(
-                                        is_bare
-                                            || rebase_has_unstaged_conflicts
-                                            || sequencer_step_busy,
-                                    )
-                                    .on_click(theme, cx, |this, _e, _w, _cx| {
-                                        if let Some(repo_id) = this.active_repo_id() {
-                                            this.store.dispatch(Msg::RebaseContinue { repo_id });
-                                        }
-                                    })
-                                    .gitcomet_tooltip(
-                                        theme,
-                                        if is_bare {
-                                            gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE
-                                                .into()
-                                        } else if sequencer_step_busy {
-                                            SEQUENCER_BUSY_TOOLTIP.into()
-                                        } else if rebase_has_unstaged_conflicts {
-                                            "Resolve all conflicts before continuing".into()
-                                        } else {
-                                            banner.continue_tooltip.into()
-                                        },
-                                    ),
+                                components::Button::new(
+                                    banner.continue_id,
+                                    language.text("Continue", "繼續"),
+                                )
+                                .style(components::ButtonStyle::Outlined)
+                                .disabled(
+                                    is_bare || rebase_has_unstaged_conflicts || sequencer_step_busy,
+                                )
+                                .on_click(theme, cx, |this, _e, _w, _cx| {
+                                    if let Some(repo_id) = this.active_repo_id() {
+                                        this.store.dispatch(Msg::RebaseContinue { repo_id });
+                                    }
+                                })
+                                .gitcomet_tooltip(
+                                    theme,
+                                    if is_bare {
+                                        worktree_required.into()
+                                    } else if sequencer_step_busy {
+                                        sequencer_busy_tooltip.into()
+                                    } else if rebase_has_unstaged_conflicts {
+                                        language
+                                            .text(
+                                                "Resolve all conflicts before continuing",
+                                                "請先解決所有衝突再繼續",
+                                            )
+                                            .into()
+                                    } else {
+                                        banner.continue_tooltip.into()
+                                    },
+                                ),
                             ),
                     )
                 });
-            if is_merging || sequencer_banner.is_some() {
+            if has_active_finish_run || is_merging || sequencer_banner.is_some() {
                 items.push(BuiltinBarItem::OperationControls, operation_controls);
             }
         }
@@ -1462,31 +1864,34 @@ impl BarItemOwner for ActionBarView {
                 .active_repo_id()
                 .is_some_and(|repo| self.open_terminal_repo_ids.contains(&repo));
         let terminal = div().debug_selector(|| "terminal".to_string()).child(
-            components::Button::new("terminal", action_label("Terminal"))
-                .start_slot(icon("icons/terminal.svg", icon_primary))
-                .style(components::ButtonStyle::Subtle)
-                .selected(terminal_is_open)
-                .selected_bg(menu_selected_bg)
-                .disabled(self.active_repo_id().is_none())
-                .on_click(theme, cx, |this, _, window, cx| {
-                    let _ = this.root_view.update(cx, |root, cx| {
-                        root.activate_terminal_button_for_active_repo(window, cx);
-                    });
-                })
-                .gitcomet_tooltip(
-                    theme,
-                    if terminal_opens_external {
-                        "Open external terminal".into()
-                    } else if terminal_is_open {
-                        "Hide terminal".into()
-                    } else {
-                        "Show terminal".into()
-                    },
-                ),
+            components::Button::new(
+                "terminal",
+                action_label(language.text("Terminal", "終端機")),
+            )
+            .start_slot(icon("icons/terminal.svg", icon_primary))
+            .style(components::ButtonStyle::Subtle)
+            .selected(terminal_is_open)
+            .selected_bg(menu_selected_bg)
+            .disabled(self.active_repo_id().is_none())
+            .on_click(theme, cx, |this, _, window, cx| {
+                let _ = this.root_view.update(cx, |root, cx| {
+                    root.activate_terminal_button_for_active_repo(window, cx);
+                });
+            })
+            .gitcomet_tooltip(
+                theme,
+                if terminal_opens_external {
+                    language
+                        .text("Open external terminal", "開啟外部終端機")
+                        .into()
+                } else if terminal_is_open {
+                    language.text("Hide terminal", "隱藏終端機").into()
+                } else {
+                    language.text("Show terminal", "顯示終端機").into()
+                },
+            ),
         );
         items.push(BuiltinBarItem::Terminal, terminal);
-        items.push(BuiltinBarItem::CreateBranch, create_branch);
-        items.push(BuiltinBarItem::Stash, stash);
         items.extensions(&self.extension_items, &self.active_view);
         items
     }
@@ -1555,11 +1960,81 @@ mod tests {
     use gitcomet_core::domain::Upstream;
     use std::path::PathBuf;
 
+    fn stash_entry(index: usize, message: &str) -> gitcomet_core::domain::StashEntry {
+        gitcomet_core::domain::StashEntry {
+            index,
+            id: gitcomet_core::domain::CommitId(format!("{index:040x}").into()),
+            message: message.into(),
+            created_at: None,
+        }
+    }
+
+    fn repo_with_stashes(
+        stashes: Loadable<Arc<Vec<gitcomet_core::domain::StashEntry>>>,
+    ) -> RepoState {
+        let mut repo = RepoState::new_opening(
+            RepoId(7),
+            RepoSpec {
+                workdir: PathBuf::from("/tmp/stash-pop"),
+            },
+        );
+        repo.stashes = stashes;
+        repo
+    }
+
+    #[test]
+    fn stash_pop_targets_the_newest_stash() {
+        let repo = repo_with_stashes(Loadable::Ready(Arc::new(vec![
+            stash_entry(1, "older"),
+            stash_entry(0, "WIP on main"),
+        ])));
+        assert_eq!(
+            stash_pop_target(Some(&repo), Language::English),
+            StashPopTarget::Ready {
+                index: 0,
+                tooltip: "Pop stash@{0}: WIP on main".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn stash_pop_is_unavailable_without_stashes_or_a_working_tree() {
+        assert_eq!(
+            stash_pop_target(None, Language::English),
+            StashPopTarget::Unavailable("No stashes to pop")
+        );
+        let empty = repo_with_stashes(Loadable::Ready(Arc::new(Vec::new())));
+        assert_eq!(
+            stash_pop_target(Some(&empty), Language::English),
+            StashPopTarget::Unavailable("No stashes to pop")
+        );
+        // An unloaded list (the sidebar loads it) still pops stash@{0}.
+        for unloaded in [Loadable::Loading, Loadable::NotLoaded] {
+            let repo = repo_with_stashes(unloaded);
+            assert_eq!(
+                stash_pop_target(Some(&repo), Language::English),
+                StashPopTarget::Ready {
+                    index: 0,
+                    tooltip: "Pop the newest stash".to_string(),
+                }
+            );
+        }
+        let mut bare = repo_with_stashes(Loadable::Ready(Arc::new(vec![stash_entry(0, "WIP")])));
+        bare.repository_mode = Some(gitcomet_core::domain::RepositoryMode::Bare);
+        assert_eq!(
+            stash_pop_target(Some(&bare), Language::English),
+            StashPopTarget::Unavailable(gitcomet_core::domain::WORKING_TREE_REQUIRED_MESSAGE)
+        );
+    }
+
     #[test]
     fn sequencer_banner_names_each_paused_operation() {
         use gitcomet_core::services::SequencerState;
 
-        assert_eq!(sequencer_banner(SequencerState::None), None);
+        assert_eq!(
+            sequencer_banner(SequencerState::None, Language::English),
+            None
+        );
         for (state, label, abort_id, continue_id) in [
             (
                 SequencerState::RebaseOrApply,
@@ -1580,7 +2055,8 @@ mod tests {
                 "continue_revert",
             ),
         ] {
-            let banner = sequencer_banner(state).expect("paused operation has a banner");
+            let banner =
+                sequencer_banner(state, Language::English).expect("paused operation has a banner");
             assert_eq!(
                 (banner.label, banner.abort_id, banner.continue_id),
                 (label, abort_id, continue_id)
@@ -1729,27 +2205,6 @@ mod tests {
     }
 
     #[test]
-    fn upstream_badge_state_remains_present_without_tracking_upstream() {
-        let head_branch = Loadable::Ready("feat/no-upstream".to_string());
-        let branches = Loadable::Ready(Arc::new(vec![test_branch("feat/no-upstream", None)]));
-
-        assert_eq!(
-            upstream_badge_state(&head_branch, &branches),
-            Some(("feat/no-upstream", None))
-        );
-    }
-
-    #[test]
-    fn upstream_badge_state_remains_present_while_branch_metadata_loads() {
-        let head_branch = Loadable::Ready("feat/no-upstream".to_string());
-
-        assert_eq!(
-            upstream_badge_state(&head_branch, &Loadable::Loading),
-            Some(("feat/no-upstream", None))
-        );
-    }
-
-    #[test]
     fn head_branch_tracking_upstream_name_returns_remote_tracking_name() {
         let head_branch = Loadable::Ready("main".to_string());
         let branches = Loadable::Ready(Arc::new(vec![test_branch(
@@ -1769,19 +2224,61 @@ mod tests {
     #[test]
     fn pull_tooltip_text_includes_tracking_branch_on_second_line() {
         assert_eq!(
-            pull_tooltip_text(3, Some("origin/main")).as_ref(),
+            pull_tooltip_text(3, Some("origin/main"), Language::English).as_ref(),
             "Pull 3 behind\norigin/main"
         );
-        assert_eq!(pull_tooltip_text(0, None).as_ref(), "Pull 0 behind");
+        assert_eq!(
+            pull_tooltip_text(0, None, Language::English).as_ref(),
+            "Pull 0 behind"
+        );
     }
 
     #[test]
     fn push_tooltip_text_includes_tracking_branch_on_second_line() {
         assert_eq!(
-            push_tooltip_text(2, Some("origin/main")).as_ref(),
+            push_tooltip_text(2, Some("origin/main"), Language::English).as_ref(),
             "Push 2 ahead\norigin/main"
         );
-        assert_eq!(push_tooltip_text(0, None).as_ref(), "Push 0 ahead");
+        assert_eq!(
+            push_tooltip_text(0, None, Language::English).as_ref(),
+            "Push 0 ahead"
+        );
+    }
+
+    #[test]
+    fn traditional_chinese_action_bar_preserves_upstream_and_sequencer_controls() {
+        let language = Language::TraditionalChinese;
+        let upstream = "origin/release/2026";
+        assert_eq!(
+            pull_tooltip_text(3, Some(upstream), language).as_ref(),
+            "拉取 · 落後 3 筆提交\norigin/release/2026"
+        );
+        let banner = sequencer_banner(
+            gitcomet_core::services::SequencerState::RebaseOrApply,
+            language,
+        )
+        .unwrap();
+        assert_eq!(banner.label, "套用／變基中");
+        assert_eq!(banner.abort_id, "abort_rebase_or_apply");
+        assert_eq!(banner.continue_id, "continue_rebase_or_apply");
+    }
+
+    #[test]
+    fn notify_fingerprint_follows_the_stash_list() {
+        let repo_id = RepoId(1);
+        let mut state = AppState {
+            active_repo: Some(repo_id),
+            ..AppState::test_default()
+        };
+        state.repos.push(RepoState::new_opening(
+            repo_id,
+            RepoSpec {
+                workdir: PathBuf::from("/tmp/repo"),
+            },
+        ));
+        let before = ActionBarView::notify_fingerprint(&state);
+        state.repos[0].stashes_rev = state.repos[0].stashes_rev.wrapping_add(1);
+        assert_ne!(before, ActionBarView::notify_fingerprint(&state));
     }
 
     #[test]

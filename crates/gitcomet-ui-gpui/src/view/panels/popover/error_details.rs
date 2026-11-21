@@ -4,6 +4,7 @@
 use super::dialog_size::DialogSize;
 use super::*;
 use crate::kit::interaction as controls;
+use crate::localization::{Language, text as localized};
 use gitcomet_ui_terminal::{terminal_default_background, terminal_default_foreground};
 
 /// Selectable text fields, kept across renders so a selection survives.
@@ -238,7 +239,10 @@ fn detail(
     }
     meta.push(timestamp_label(this, notice.time));
     if notice.count > 1 {
-        meta.push(format!("happened {} times", notice.count));
+        meta.push(match Language::current(cx) {
+            Language::English => format!("happened {} times", notice.count),
+            Language::TraditionalChinese => format!("發生 {} 次", notice.count),
+        });
     }
 
     let mut body = div().w_full().min_w(px(0.0)).flex().flex_col().gap_3();
@@ -248,7 +252,7 @@ fn detail(
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(block_heading(theme, "Command"))
+                .child(block_heading(theme, localized(cx, "Command", "指令")))
                 .child(code_block(
                     theme,
                     text(this, format!("{id}_command"), command, true, cx),
@@ -257,9 +261,9 @@ fn detail(
     }
     if let Some(details) = notice.text.details.clone() {
         let heading = if notice.text.command.is_some() {
-            "Output"
+            localized(cx, "Output", "輸出")
         } else {
-            "Details"
+            localized(cx, "Details", "詳細資料")
         };
         body = body.child(
             div()
@@ -292,18 +296,20 @@ fn detail(
     let mut actions = div().w_full().flex_none().flex().items_center().gap_2();
     for (ix, (action, available)) in notice.actions.iter().zip(available).enumerate() {
         let action_for_click = action.clone();
-        let mut button =
-            components::Button::new(format!("error_details_action_{id}_{ix}"), action.label())
-                .style(if ix == 0 {
-                    components::ButtonStyle::Filled
-                } else {
-                    components::ButtonStyle::Outlined
-                })
-                .disabled(!available)
-                .on_click(theme, cx, move |this, _e, window, cx| {
-                    run_action(this, id, action_for_click.clone(), window, cx);
-                })
-                .debug_selector(move || format!("error_details_action_{ix}"));
+        let mut button = components::Button::new(
+            format!("error_details_action_{id}_{ix}"),
+            action.label(Language::current(cx)),
+        )
+        .style(if ix == 0 {
+            components::ButtonStyle::Filled
+        } else {
+            components::ButtonStyle::Outlined
+        })
+        .disabled(!available)
+        .on_click(theme, cx, move |this, _e, window, cx| {
+            run_action(this, id, action_for_click.clone(), window, cx);
+        })
+        .debug_selector(move || format!("error_details_action_{ix}"));
         if !available {
             button = button.gitcomet_tooltip(
                 theme,
@@ -315,34 +321,43 @@ fn detail(
     let copy = notice.details_for_copy();
     actions = actions
         .child(
-            components::Button::new(format!("error_details_copy_{id}"), "Copy details")
-                .style(components::ButtonStyle::Outlined)
-                .on_click(theme, cx, move |_this, _e, _window, cx| {
-                    crate::clipboard::write_text(
-                        cx,
-                        copy.clone(),
-                        crate::clipboard::CopySource::ErrorDetails,
-                    );
-                })
-                .debug_selector(|| "error_details_copy".to_string()),
+            components::Button::new(
+                format!("error_details_copy_{id}"),
+                localized(cx, "Copy details", "複製詳細資料"),
+            )
+            .style(components::ButtonStyle::Outlined)
+            .on_click(theme, cx, move |_this, _e, _window, cx| {
+                crate::clipboard::write_text(
+                    cx,
+                    copy.clone(),
+                    crate::clipboard::CopySource::ErrorDetails,
+                );
+            })
+            .debug_selector(|| "error_details_copy".to_string()),
         )
         .child(div().flex_1())
         .child(
-            components::Button::new(format!("error_details_dismiss_{id}"), "Dismiss")
-                .style(components::ButtonStyle::Subtle)
-                .on_click(theme, cx, move |this, _e, window, cx| {
-                    dismiss(this, Some(id), window, cx);
-                })
-                .debug_selector(|| "error_details_dismiss".to_string()),
+            components::Button::new(
+                format!("error_details_dismiss_{id}"),
+                localized(cx, "Dismiss", "清除"),
+            )
+            .style(components::ButtonStyle::Subtle)
+            .on_click(theme, cx, move |this, _e, window, cx| {
+                dismiss(this, Some(id), window, cx);
+            })
+            .debug_selector(|| "error_details_dismiss".to_string()),
         )
         .when(error_count > 1, |actions| {
             actions.child(
-                components::Button::new("error_details_dismiss_all", "Dismiss all")
-                    .style(components::ButtonStyle::Subtle)
-                    .on_click(theme, cx, move |this, _e, window, cx| {
-                        dismiss(this, None, window, cx);
-                    })
-                    .debug_selector(|| "error_details_dismiss_all".to_string()),
+                components::Button::new(
+                    "error_details_dismiss_all",
+                    localized(cx, "Dismiss all", "清除全部"),
+                )
+                .style(components::ButtonStyle::Subtle)
+                .on_click(theme, cx, move |this, _e, window, cx| {
+                    dismiss(this, None, window, cx);
+                })
+                .debug_selector(|| "error_details_dismiss_all".to_string()),
             )
         });
 
@@ -504,12 +519,16 @@ pub(super) fn panel(
         .error_details_selected
         .and_then(|selected| notices.iter().find(|(id, _)| *id == selected))
         .cloned();
+    let error = localized(cx, "Error", "錯誤");
     let title: SharedString = match (notices.len(), selected.as_ref()) {
         (0 | 1, Some((_, notice))) => match repo_name(this, notice.repo_id) {
-            Some(name) => format!("Error — {name}").into(),
-            None => "Error".into(),
+            Some(name) => format!("{error} — {name}").into(),
+            None => error.into(),
         },
-        (count, _) => format!("Errors ({count})").into(),
+        (count, _) => {
+            let errors = localized(cx, "Errors", "錯誤");
+            format!("{errors} ({count})").into()
+        }
     };
 
     let close_button = components::Button::new("error_details_close", "")
@@ -523,7 +542,15 @@ pub(super) fn panel(
             this.close_popover_and_restore_focus(window, cx);
         })
         .debug_selector(|| "error_details_close".to_string())
-        .gitcomet_tooltip(theme, "Close; the errors stay until dismissed".into());
+        .gitcomet_tooltip(
+            theme,
+            localized(
+                cx,
+                "Close; the errors stay until dismissed",
+                "關閉視窗，錯誤會保留到清除為止",
+            )
+            .into(),
+        );
 
     let body = match selected {
         Some((id, notice)) => {
@@ -551,7 +578,7 @@ pub(super) fn panel(
             .items_center()
             .justify_center()
             .text_color(theme.colors.foreground.secondary)
-            .child("No errors")
+            .child(localized(cx, "No errors", "沒有錯誤"))
             .into_any_element(),
     };
 

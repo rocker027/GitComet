@@ -206,6 +206,8 @@ mod repo_management;
 mod repo_monitor;
 mod repository_preferences;
 mod send_failures;
+mod worktree_finish;
+mod worktree_finish_abort_restore;
 mod worktree_redirect;
 mod worktree_scanning;
 

@@ -2130,3 +2130,54 @@ fn diff_search_query_edit_keeps_previous_matches_until_the_worker_publishes(
         assert_eq!(pane.diff_search_match_ix, Some(0));
     });
 }
+
+/// The palette's Search Commits always searches the graph, as GitKraken's
+/// commit search does, even with focus in the details pane where Cmd-F
+/// filters files instead.
+#[gpui::test]
+fn search_commits_opens_the_history_find_bar_from_the_details_pane(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    let repo_id = RepoId(70552);
+    let commit_id = CommitId("1111222233334446".into());
+    let workdir = std::env::temp_dir().join(format!(
+        "gitcomet_ui_test_{}_search_commits_command",
+        std::process::id()
+    ));
+    let path = std::path::PathBuf::from("src/lib.rs");
+    let mut repo = simple_worktree_repo(
+        repo_id,
+        &workdir,
+        &commit_id,
+        std::slice::from_ref(&path),
+        &path,
+    );
+    repo.diff_state.diff_target = None;
+    apply_state(cx, &view, app_state_with_active_repo(repo));
+    focus_commit_message_input(cx, &view);
+    cx.update(|window, app| {
+        window.activate();
+        let _ = window.draw(app);
+    });
+    let history_view =
+        cx.update(|_window, app| view.read(app).main_pane.read(app).history_view.clone());
+    assert!(!cx.update(|_window, app| history_view.read(app).history_find_is_open()));
+
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            this.execute_command("search-commits", Some(window), cx);
+        });
+    });
+    draw_and_drain_test_window(cx);
+
+    assert!(
+        cx.update(|_window, app| history_view.read(app).history_find_is_open()),
+        "Search Commits opens the history find bar"
+    );
+    assert!(
+        !commit_message_input_is_focused(cx, &view),
+        "the find bar takes the focus from the commit message"
+    );
+}

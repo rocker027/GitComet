@@ -1,5 +1,6 @@
 use super::super::worktree_badge_picker::{self, WorktreeBadgeRow};
 use super::*;
+use crate::localization::Language;
 use crate::view::panels::tests::{app_state_with_repo, opening_repo_state};
 use crate::view::test_support::{push_test_state, redraw};
 use gitcomet_core::domain::{
@@ -156,7 +157,7 @@ fn worktree_badge_picker_lists_every_worktree_and_marks_the_current_one(
 
     let built = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        let built = worktree_badge_picker::cached(host, repo_id, "");
+        let built = worktree_badge_picker::cached(host, repo_id, "", Language::English);
         (built.payloads.to_vec(), built.marked_index)
     });
     let (rows, marked_index) = built;
@@ -190,6 +191,43 @@ fn worktree_badge_picker_lists_every_worktree_and_marks_the_current_one(
 }
 
 #[gpui::test]
+fn worktree_badge_picker_switches_labels_without_changing_row_payloads(
+    cx: &mut gpui::TestAppContext,
+) {
+    let repo_id = RepoId(1);
+    let (view, cx) = open_worktree_badge_picker(cx, repo_with_worktrees(repo_id), repo_id);
+    cx.update(|_window, app| {
+        let host = view.read(app).popover_host.read(app);
+        let english = worktree_badge_picker::cached(host, repo_id, "", Language::English);
+        let chinese =
+            worktree_badge_picker::cached(host, repo_id, "", Language::TraditionalChinese);
+        assert_eq!(english.items[0].debug_display_text(), "Create new worktree");
+        assert_eq!(chinese.items[0].debug_display_text(), "新增工作樹");
+        assert_eq!(chinese.items[0].debug_secondary_text(), "起始參照 main");
+        assert!(english.items[2].debug_secondary_text().contains("main / "));
+        assert!(
+            english.items[2]
+                .debug_secondary_text()
+                .contains("/tmp/ws/feature")
+        );
+        assert_eq!(english.payloads, chinese.payloads);
+        assert_eq!(english.marked_index, chinese.marked_index);
+        assert_eq!(
+            worktree_badge_picker::nav_targets(
+                host,
+                repo_id,
+                "feat/badges",
+                Language::TraditionalChinese
+            ),
+            vec![
+                WorktreeBadgeRow::CreateNew,
+                WorktreeBadgeRow::Worktree(PathBuf::from("/tmp/ws/feature")),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 fn worktree_badge_picker_create_row_survives_a_query_matching_no_worktree(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -198,7 +236,7 @@ fn worktree_badge_picker_create_row_survives_a_query_matching_no_worktree(
 
     let targets = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        worktree_badge_picker::nav_targets(host, repo_id, "totally-new-thing")
+        worktree_badge_picker::nav_targets(host, repo_id, "totally-new-thing", Language::English)
     });
 
     // `match_items` drops rows whose match text lacks the query, so the create
@@ -218,9 +256,9 @@ fn worktree_badge_picker_nav_targets_follow_the_rendered_row_order(cx: &mut gpui
     let (targets, rendered) = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
         let query = "feat";
-        let targets = worktree_badge_picker::nav_targets(host, repo_id, query);
+        let targets = worktree_badge_picker::nav_targets(host, repo_id, query, Language::English);
         // What the panel renders, resolved exactly the way PickerPrompt does.
-        let built = worktree_badge_picker::cached(host, repo_id, query);
+        let built = worktree_badge_picker::cached(host, repo_id, query, Language::English);
         let layout = crate::view::components::picker_prompt_layout(&built.items, query);
         let rendered: Vec<_> = layout
             .item_indices
@@ -246,7 +284,7 @@ fn worktree_badge_picker_filters_worktrees_by_name_branch_and_path(cx: &mut gpui
 
     let by_branch = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        worktree_badge_picker::nav_targets(host, repo_id, "badges")
+        worktree_badge_picker::nav_targets(host, repo_id, "badges", Language::English)
     });
 
     assert_eq!(
@@ -261,7 +299,7 @@ fn worktree_badge_picker_filters_worktrees_by_name_branch_and_path(cx: &mut gpui
     // The path sits on the row's secondary line; it must still filter from there.
     let by_path = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        worktree_badge_picker::nav_targets(host, repo_id, "ws/detached")
+        worktree_badge_picker::nav_targets(host, repo_id, "ws/detached", Language::English)
     });
 
     assert_eq!(
@@ -411,20 +449,25 @@ mod badges {
     use super::*;
 
     fn repo_with_upstream(repo_id: RepoId) -> RepoState {
+        repo_tracking_branch(repo_id, "main")
+    }
+
+    fn repo_tracking_branch(repo_id: RepoId, branch: &str) -> RepoState {
         let mut repo = repo_with_worktrees(repo_id);
         let target = CommitId(Arc::from("1111111111111111111111111111111111111111"));
+        repo.head_branch = Loadable::Ready(branch.to_string());
         repo.branches = Loadable::Ready(Arc::new(vec![Branch {
-            name: "main".to_string(),
+            name: branch.to_string(),
             target: target.clone(),
             upstream: Some(Upstream {
                 remote: "origin".to_string(),
-                branch: "main".to_string(),
+                branch: branch.to_string(),
             }),
             divergence: None,
         }]));
         repo.remote_branches = Loadable::Ready(Arc::new(vec![RemoteBranch {
             remote: "origin".to_string(),
-            name: "main".to_string(),
+            name: branch.to_string(),
             target,
         }]));
         repo
@@ -489,52 +532,85 @@ mod badges {
     }
 
     #[gpui::test]
-    fn upstream_badge_arrow_pull_and_push_follow_the_local_branch(cx: &mut gpui::TestAppContext) {
+    fn pull_and_push_follow_the_local_branch_without_an_upstream_badge(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let repo_id = RepoId(1);
         let (_view, cx) = draw_with_repo(cx, repo_with_upstream(repo_id), repo_id);
 
         let branch = cx.debug_bounds("branch_badge").expect("branch badge");
-        let arrow = cx.debug_bounds("upstream_arrow").expect("upstream arrow");
-        let upstream = cx.debug_bounds("upstream_badge").expect("upstream badge");
         let pull = cx.debug_bounds("pull").expect("pull button");
         let push = cx.debug_bounds("push").expect("push button");
 
-        assert!(arrow.origin.x >= branch.origin.x + branch.size.width);
-        assert!(upstream.origin.x >= arrow.origin.x + arrow.size.width);
-        assert!(pull.origin.x >= upstream.origin.x + upstream.size.width);
-        assert!(push.origin.x >= pull.origin.x + pull.size.width);
+        assert!(cx.debug_bounds("upstream_arrow").is_none());
+        assert!(cx.debug_bounds("upstream_badge").is_none());
+        assert!(pull.left() >= branch.right() && pull.left() - branch.right() <= px(12.0));
+        assert!(push.left() >= pull.right());
     }
 
     #[gpui::test]
-    fn empty_upstream_badge_stays_between_the_branch_and_pull_push(cx: &mut gpui::TestAppContext) {
+    fn branch_badge_uses_available_width_for_the_name_suffix(cx: &mut gpui::TestAppContext) {
+        let widths_for = |cx: &mut gpui::TestAppContext, name: &str| {
+            let repo_id = RepoId(1);
+            let (_, cx) = draw_with_repo(cx, repo_tracking_branch(repo_id, name), repo_id);
+            cx.simulate_resize(gpui::size(px(1800.0), px(560.0)));
+            redraw(cx);
+            cx.debug_bounds("branch_badge")
+                .expect("branch badge")
+                .size
+                .width
+        };
+        // The prefix is already longer than the previous 28-character limit.
+        let prefix = "release/mobile-worktree-update";
+        let short = widths_for(cx, prefix);
+        let long = widths_for(cx, &format!("{prefix}-signing-and-provisioning"));
+        assert!(
+            long > short + px(100.0),
+            "a longer branch should show its suffix when space is available: {short:?}, {long:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn create_branch_and_stash_actions_sit_beside_push(cx: &mut gpui::TestAppContext) {
         let repo_id = RepoId(1);
-        let (_view, cx) = draw_with_repo(cx, repo_without_upstream(repo_id), repo_id);
+        let (_, cx) = draw_with_repo(cx, repo_with_upstream(repo_id), repo_id);
+        cx.simulate_resize(gpui::size(px(1280.0), px(560.0)));
+        redraw(cx);
 
-        let branch = cx.debug_bounds("branch_badge").expect("branch badge");
-        let arrow = cx.debug_bounds("upstream_arrow").expect("upstream arrow");
-        let upstream = cx
-            .debug_bounds("upstream_badge")
-            .expect("empty upstream badge");
-        let pull = cx.debug_bounds("pull").expect("pull button");
         let push = cx.debug_bounds("push").expect("push button");
+        let branch = cx
+            .debug_bounds("create_branch")
+            .expect("create branch button");
+        let stash = cx
+            .debug_bounds("stash_toolbar_caption")
+            .expect("stash caption");
+        let pop = cx.debug_bounds("stash_pop").expect("pop button");
+        let restore = cx
+            .debug_bounds("stash_restore_menu")
+            .expect("stash restore menu");
+        let terminal = cx.debug_bounds("terminal").expect("terminal button");
 
-        assert!(arrow.origin.x >= branch.origin.x + branch.size.width);
-        assert!(upstream.origin.x >= arrow.origin.x + arrow.size.width);
-        assert!(pull.origin.x >= upstream.origin.x + upstream.size.width);
-        assert!(push.origin.x >= pull.origin.x + pull.size.width);
+        assert!(branch.left() >= push.right() && branch.left() - push.right() <= px(12.0));
+        assert!(stash.left() >= branch.right());
+        assert!(pop.left() >= stash.right());
+        assert!(restore.left() >= pop.right());
+        assert!(terminal.left() >= restore.right());
     }
 
     #[gpui::test]
-    fn empty_upstream_badge_still_opens_its_picker(cx: &mut gpui::TestAppContext) {
+    fn pull_menu_opens_the_upstream_picker_for_an_untracked_branch(cx: &mut gpui::TestAppContext) {
         let repo_id = RepoId(1);
         let (view, cx) = draw_with_repo(cx, repo_without_upstream(repo_id), repo_id);
 
-        let center = cx.debug_bounds("upstream_badge").expect("badge").center();
-        cx.simulate_mouse_move(center, None, gpui::Modifiers::default());
-        cx.simulate_mouse_down(center, gpui::MouseButton::Left, gpui::Modifiers::default());
-        cx.simulate_mouse_up(center, gpui::MouseButton::Left, gpui::Modifiers::default());
-        cx.run_until_parked();
-        redraw(cx);
+        assert!(cx.debug_bounds("upstream_badge").is_none());
+        for selector in ["pull_menu", "context_menu_manage_upstream"] {
+            let center = cx.debug_bounds(selector).expect(selector).center();
+            cx.simulate_mouse_move(center, None, gpui::Modifiers::default());
+            cx.simulate_mouse_down(center, gpui::MouseButton::Left, gpui::Modifiers::default());
+            cx.simulate_mouse_up(center, gpui::MouseButton::Left, gpui::Modifiers::default());
+            cx.run_until_parked();
+            redraw(cx);
+        }
 
         let kind = cx.update(|_window, app| {
             view.read(app)
@@ -553,6 +629,60 @@ mod badges {
 
     /// Every density must fit: Comfortable and Spacious widen every control.
     const ALL_DENSITIES: [crate::appearance::UiDensity; 3] = crate::appearance::UiDensity::ALL;
+
+    #[gpui::test]
+    fn git_toolbar_shows_seven_captions_in_a_split_screen_window(cx: &mut gpui::TestAppContext) {
+        cx.update(|app| {
+            crate::appearance::pin_density_for_test(app, ALL_DENSITIES[1]);
+        });
+        let repo_id = RepoId(1);
+        let (_view, cx) = draw_with_repo(cx, repo_with_upstream(repo_id), repo_id);
+        let buttons = [
+            ("git_undo", "git_undo_toolbar_caption"),
+            ("git_redo", "git_redo_toolbar_caption"),
+            ("pull_main", "pull_main_toolbar_caption"),
+            ("push_main", "push_main_toolbar_caption"),
+            ("create_branch", "create_branch_toolbar_caption"),
+            ("stash", "stash_toolbar_caption"),
+            ("stash_pop", "stash_pop_toolbar_caption"),
+        ];
+
+        cx.simulate_resize(gpui::size(px(960.0), px(560.0)));
+        for language in crate::localization::Language::ALL {
+            cx.update(|window, app| {
+                app.set_global(language);
+                let _ = window.draw(app);
+            });
+            redraw(cx);
+            for (button, caption) in buttons {
+                let button = cx.debug_bounds(button).expect(button);
+                let label = cx.debug_bounds(caption).expect(caption);
+                assert!(label.top() >= button.top() + px(14.0), "{caption}");
+                assert!(label.bottom() <= button.bottom(), "{caption}");
+                assert!(label.left() >= button.left(), "{caption}");
+                assert!(label.right() <= button.right(), "{caption}");
+            }
+            for (main, menu) in [
+                ("pull_main", "pull_menu"),
+                ("push_main", "push_menu"),
+                ("stash_pop", "stash_restore_menu"),
+            ] {
+                let main = cx.debug_bounds(main).expect(main);
+                let menu = cx.debug_bounds(menu).expect(menu);
+                assert_eq!(main.top(), menu.top());
+                assert_eq!(main.bottom(), menu.bottom());
+                assert!(menu.left() >= main.right());
+            }
+        }
+
+        cx.simulate_resize(gpui::size(px(820.0), px(560.0)));
+        redraw(cx);
+        for (button, caption) in buttons {
+            let bounds = cx.debug_bounds(button).expect(button);
+            assert!(bounds.left() >= px(0.0) && bounds.right() <= px(820.0));
+            assert!(cx.debug_bounds(caption).is_none(), "{caption}");
+        }
+    }
 
     #[gpui::test]
     fn tracked_branch_actions_stay_reachable_at_supported_narrow_widths_compact(
@@ -581,18 +711,7 @@ mod badges {
     ) {
         cx.update(|app| crate::appearance::pin_density_for_test(app, density));
         let repo_id = RepoId(1);
-        let mut repo = repo_with_upstream(repo_id);
-        let branch = "feature/current-with-a-representative-name".to_string();
-        repo.head_branch = Loadable::Ready(branch.clone());
-        repo.branches = Loadable::Ready(Arc::new(vec![Branch {
-            name: branch.clone(),
-            target: CommitId(Arc::from("1111111111111111111111111111111111111111")),
-            upstream: Some(Upstream {
-                remote: "origin".to_string(),
-                branch,
-            }),
-            divergence: None,
-        }]));
+        let mut repo = repo_tracking_branch(repo_id, "feature/current-with-a-representative-name");
         repo.upstream_divergence = Loadable::Ready(Some(UpstreamDivergence {
             ahead: 999,
             behind: 999,
@@ -626,11 +745,13 @@ mod badges {
                 "global_nav",
                 "worktree_badge",
                 "branch_badge",
-                "upstream_badge",
                 "pull",
                 "push",
                 "create_branch",
                 "stash",
+                "stash_pop",
+                "stash_restore_menu",
+                "terminal",
             ] {
                 let bounds = cx
                     .debug_bounds(selector)
@@ -639,18 +760,10 @@ mod badges {
                     bounds.left() >= gpui::px(0.0) && bounds.right() <= viewport.width,
                     "{selector} must remain inside the {viewport:?} viewport at {width}px, got {bounds:?}"
                 );
-                let containing_group = if matches!(
-                    selector,
-                    "global_nav"
-                        | "worktree_badge"
-                        | "branch_badge"
-                        | "upstream_badge"
-                        | "pull"
-                        | "push"
-                ) {
-                    left_group
-                } else {
+                let containing_group = if selector == "terminal" {
                     right_group
+                } else {
+                    left_group
                 };
                 assert!(
                     bounds.left() >= containing_group.left()
@@ -870,7 +983,7 @@ mod badges {
                     .as_ref()
                     .expect("a menu should be open")
                     .clone();
-                let row = worktree_badge_picker::cached(host, repo_id, "")
+                let row = worktree_badge_picker::cached(host, repo_id, "", Language::English)
                     .filtered_payloads()
                     .into_iter()
                     .find_map(|row| match row {

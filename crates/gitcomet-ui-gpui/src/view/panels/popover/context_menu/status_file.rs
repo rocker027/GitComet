@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 
 use crate::kit::components::secondary_shortcut;
 
@@ -8,6 +9,7 @@ pub(super) fn model(
     area: DiffArea,
     path: &std::path::Path,
     cx: &gpui::Context<PopoverHost>,
+    language: Language,
 ) -> ContextMenuModel {
     let (use_selection, selected_count) = {
         let pane = this.details_pane.read(cx);
@@ -93,6 +95,7 @@ pub(super) fn model(
             selected_count,
             is_conflicted,
             submodule_menu_state,
+            language,
         );
     }
 
@@ -115,7 +118,7 @@ pub(super) fn model(
 
     if is_conflicted {
         items.push(ContextMenuItem::Entry {
-            label: "Resolve conflicts".into(),
+            label: language.text("Resolve conflicts", "解決衝突").into(),
             icon: Some("icons/pencil.svg".into()),
             shortcut: None,
             disabled: false,
@@ -127,7 +130,7 @@ pub(super) fn model(
     }
 
     items.push(ContextMenuItem::Entry {
-        label: "Open file".into(),
+        label: language.text("Open file", "開啟檔案").into(),
         icon: Some("icons/file.svg".into()),
         shortcut: None,
         disabled: false,
@@ -137,7 +140,7 @@ pub(super) fn model(
         }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Edit file".into(),
+        label: language.text("Edit file", "編輯檔案").into(),
         icon: Some("icons/pencil.svg".into()),
         shortcut: None,
         disabled: is_deleted || crate::view::should_bypass_text_file_preview_for_path(path),
@@ -154,7 +157,9 @@ pub(super) fn model(
         .file_edits_are_unsaved_for(repo_id, path)
     {
         items.push(ContextMenuItem::Entry {
-            label: "Discard unsaved edits".into(),
+            label: language
+                .text("Discard unsaved edits", "捨棄未儲存的編輯")
+                .into(),
             icon: Some("icons/undo.svg".into()),
             shortcut: None,
             disabled: false,
@@ -165,7 +170,7 @@ pub(super) fn model(
         });
     }
     items.push(ContextMenuItem::Entry {
-        label: "Open file location".into(),
+        label: language.text("Open file location", "開啟檔案位置").into(),
         icon: Some("icons/folder.svg".into()),
         shortcut: None,
         disabled: false,
@@ -176,7 +181,9 @@ pub(super) fn model(
     });
     if this.external_editor_available() {
         items.push(ContextMenuItem::Entry {
-            label: "Open in code editor".into(),
+            label: language
+                .text("Open in code editor", "在程式碼編輯器中開啟")
+                .into(),
             icon: Some("icons/open_external.svg".into()),
             shortcut: Some(secondary_shortcut("E").into()),
             disabled: false,
@@ -187,7 +194,7 @@ pub(super) fn model(
         });
     }
     items.push(ContextMenuItem::Entry {
-        label: "File history".into(),
+        label: language.text("File history", "檔案歷史").into(),
         icon: Some("icons/refresh.svg".into()),
         shortcut: Some(secondary_shortcut("H").into()),
         disabled: false,
@@ -206,14 +213,15 @@ pub(super) fn model(
             use_selection,
             selected_count,
             is_unstaged_conflicted,
+            language,
         );
     } else {
         match area {
             DiffArea::Unstaged => items.push(ContextMenuItem::Entry {
                 label: if use_selection {
-                    format!("Stage ({})", selected_count).into()
+                    format!("{} ({selected_count})", language.text("Stage", "暫存")).into()
                 } else {
-                    "Stage".into()
+                    language.text("Stage", "暫存").into()
                 },
                 icon: Some("icons/plus.svg".into()),
                 shortcut: Some(secondary_shortcut("S").into()),
@@ -226,9 +234,13 @@ pub(super) fn model(
             }),
             DiffArea::Staged => items.push(ContextMenuItem::Entry {
                 label: if use_selection {
-                    format!("Unstage ({})", selected_count).into()
+                    format!(
+                        "{} ({selected_count})",
+                        language.text("Unstage", "取消暫存")
+                    )
+                    .into()
                 } else {
-                    "Unstage".into()
+                    language.text("Unstage", "取消暫存").into()
                 },
                 icon: Some("icons/minus.svg".into()),
                 shortcut: Some(secondary_shortcut("U").into()),
@@ -253,6 +265,7 @@ pub(super) fn model(
             use_selection,
             selected_count,
             false,
+            language,
         ));
     }
 
@@ -263,9 +276,17 @@ pub(super) fn model(
     if can_add_to_gitignore {
         items.push(ContextMenuItem::Entry {
             label: if use_selection {
-                format!("Add {selected_count} files to .gitignore…").into()
+                match language {
+                    Language::English => format!("Add {selected_count} files to .gitignore…"),
+                    Language::TraditionalChinese => {
+                        format!("將 {selected_count} 個檔案加入 .gitignore…")
+                    }
+                }
+                .into()
             } else {
-                "Add to .gitignore…".into()
+                language
+                    .text("Add to .gitignore…", "加入 .gitignore…")
+                    .into()
             },
             icon: Some("icons/unlink.svg".into()),
             shortcut: None,
@@ -352,7 +373,9 @@ pub(super) fn model(
         );
     if let Some(permalink) = file_permalink {
         items.push(ContextMenuItem::Entry {
-            label: "Copy file permalink".into(),
+            label: language
+                .text("Copy file permalink", "複製檔案的永久連結")
+                .into(),
             icon: Some("icons/copy.svg".into()),
             shortcut: None,
             disabled: false,
@@ -367,6 +390,7 @@ pub(super) fn model(
         repo_id,
         path,
         Some(secondary_shortcut("Shift+C").into()),
+        language,
     );
 
     ContextMenuModel::new(items)
@@ -380,9 +404,10 @@ pub(super) fn conflict_model(
     area: DiffArea,
     path: &std::path::Path,
     cx: &gpui::Context<PopoverHost>,
+    language: Language,
 ) -> ContextMenuModel {
     let Some(repo) = this.state.repos.iter().find(|r| r.id == repo_id) else {
-        return model(this, repo_id, area, path, cx);
+        return model(this, repo_id, area, path, cx, language);
     };
     let is_unstaged_conflicted = matches!(
         repo.status_entry_for_path(DiffArea::Unstaged, path)
@@ -392,7 +417,7 @@ pub(super) fn conflict_model(
     let is_submodule = submodule::menu_state(this, repo_id, path).status.is_some()
         || repo.spec.workdir.join(path).is_dir();
     if !is_unstaged_conflicted || is_submodule {
-        return model(this, repo_id, area, path, cx);
+        return model(this, repo_id, area, path, cx, language);
     }
 
     let selection_len = {
@@ -426,6 +451,7 @@ pub(super) fn conflict_model(
         use_selection,
         selected_count,
         true,
+        language,
     );
     items.push(ContextMenuItem::Separator);
     items.push(discard_changes_entry(
@@ -435,6 +461,7 @@ pub(super) fn conflict_model(
         use_selection,
         selected_count,
         false,
+        language,
     ));
     ContextMenuModel::new(items)
 }
@@ -442,6 +469,7 @@ pub(super) fn conflict_model(
 /// Ours, theirs and mergetool: shared by the row menu and the "Resolve…"
 /// menu so the two cannot drift apart. Opening the resolver is the row's
 /// left click, so this does not offer it.
+#[allow(clippy::too_many_arguments)]
 fn push_conflict_resolve_entries(
     items: &mut Vec<ContextMenuItem>,
     repo_id: RepoId,
@@ -450,13 +478,20 @@ fn push_conflict_resolve_entries(
     use_selection: bool,
     selected_count: usize,
     is_unstaged_conflicted: bool,
+    language: Language,
 ) {
     let n = selected_count;
     items.push(ContextMenuItem::Entry {
         label: if use_selection {
-            format!("Resolve selected using ours ({n})").into()
+            match language {
+                Language::English => format!("Resolve selected using ours ({n})"),
+                Language::TraditionalChinese => format!("以本方版本解決所選衝突（{n}）"),
+            }
+            .into()
         } else {
-            "Resolve using ours".into()
+            language
+                .text("Resolve using ours", "以本方版本解決衝突")
+                .into()
         },
         icon: Some("icons/arrow_left.svg".into()),
         shortcut: Some(secondary_shortcut("O").into()),
@@ -470,9 +505,15 @@ fn push_conflict_resolve_entries(
     });
     items.push(ContextMenuItem::Entry {
         label: if use_selection {
-            format!("Resolve selected using theirs ({n})").into()
+            match language {
+                Language::English => format!("Resolve selected using theirs ({n})"),
+                Language::TraditionalChinese => format!("以對方版本解決所選衝突（{n}）"),
+            }
+            .into()
         } else {
-            "Resolve using theirs".into()
+            language
+                .text("Resolve using theirs", "以對方版本解決衝突")
+                .into()
         },
         icon: Some("icons/arrow_right.svg".into()),
         shortcut: Some(secondary_shortcut("T").into()),
@@ -489,9 +530,16 @@ fn push_conflict_resolve_entries(
         let can_launch_external_mergetool = !use_selection;
         items.push(ContextMenuItem::Entry {
             label: if can_launch_external_mergetool {
-                "Open external mergetool".into()
+                language
+                    .text("Open external mergetool", "開啟外部合併工具")
+                    .into()
             } else {
-                "Open external mergetool (select 1 file)".into()
+                language
+                    .text(
+                        "Open external mergetool (select 1 file)",
+                        "開啟外部合併工具（請選取 1 個檔案）",
+                    )
+                    .into()
             },
             icon: Some("icons/open_external.svg".into()),
             shortcut: None,
@@ -511,12 +559,13 @@ fn discard_changes_entry(
     use_selection: bool,
     selected_count: usize,
     disabled: bool,
+    language: Language,
 ) -> ContextMenuItem {
     ContextMenuItem::Entry {
         label: if use_selection {
-            format!("Discard ({selected_count})").into()
+            format!("{} ({selected_count})", language.text("Discard", "捨棄")).into()
         } else {
-            "Discard changes".into()
+            language.text("Discard changes", "捨棄變更").into()
         },
         icon: Some("icons/refresh.svg".into()),
         shortcut: Some(secondary_shortcut("U").into()),
@@ -539,8 +588,11 @@ fn submodule_status_model(
     selected_count: usize,
     is_conflicted: bool,
     submodule_menu_state: submodule::SubmoduleMenuState,
+    language: Language,
 ) -> ContextMenuModel {
-    let mut items = vec![ContextMenuItem::Header("Submodule".into())];
+    let mut items = vec![ContextMenuItem::Header(
+        language.text("Submodule", "子模組").into(),
+    )];
     items.push(ContextMenuItem::Label(path.display().to_string().into()));
     if let Some(status_label) = submodule::status_label(submodule_menu_state.status) {
         items.push(ContextMenuItem::Label(status_label.into()));
@@ -548,7 +600,7 @@ fn submodule_status_model(
     items.push(ContextMenuItem::Separator);
 
     items.push(ContextMenuItem::Entry {
-        label: "Open submodule".into(),
+        label: language.text("Open submodule", "開啟子模組").into(),
         icon: Some("icons/open_external.svg".into()),
         shortcut: None,
         disabled: !submodule_menu_state.can_open,
@@ -558,7 +610,9 @@ fn submodule_status_model(
     });
     if this.external_editor_available() {
         items.push(ContextMenuItem::Entry {
-            label: "Open in code editor".into(),
+            label: language
+                .text("Open in code editor", "在程式碼編輯器中開啟")
+                .into(),
             icon: Some("icons/open_external.svg".into()),
             shortcut: Some(secondary_shortcut("E").into()),
             disabled: !submodule_menu_state.can_open,
@@ -570,7 +624,7 @@ fn submodule_status_model(
     }
     if submodule_menu_state.show_load {
         items.push(ContextMenuItem::Entry {
-            label: "Load submodule".into(),
+            label: language.text("Load submodule", "載入子模組").into(),
             icon: Some("icons/plus.svg".into()),
             shortcut: None,
             disabled: false,
@@ -581,7 +635,7 @@ fn submodule_status_model(
         });
     }
     items.push(ContextMenuItem::Entry {
-        label: "Change pointer…".into(),
+        label: language.text("Change pointer…", "變更指標…").into(),
         icon: Some("icons/swap.svg".into()),
         shortcut: None,
         disabled: !submodule_menu_state.can_change_pointer,
@@ -595,7 +649,7 @@ fn submodule_status_model(
         }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Remove…".into(),
+        label: language.text("Remove…", "移除…").into(),
         icon: Some("icons/trash.svg".into()),
         shortcut: None,
         disabled: false,
@@ -614,9 +668,9 @@ fn submodule_status_model(
         match area {
             DiffArea::Unstaged => items.push(ContextMenuItem::Entry {
                 label: if use_selection {
-                    format!("Stage ({selected_count})").into()
+                    format!("{} ({selected_count})", language.text("Stage", "暫存")).into()
                 } else {
-                    "Stage".into()
+                    language.text("Stage", "暫存").into()
                 },
                 icon: Some("icons/plus.svg".into()),
                 shortcut: Some(secondary_shortcut("S").into()),
@@ -629,9 +683,13 @@ fn submodule_status_model(
             }),
             DiffArea::Staged => items.push(ContextMenuItem::Entry {
                 label: if use_selection {
-                    format!("Unstage ({selected_count})").into()
+                    format!(
+                        "{} ({selected_count})",
+                        language.text("Unstage", "取消暫存")
+                    )
+                    .into()
                 } else {
-                    "Unstage".into()
+                    language.text("Unstage", "取消暫存").into()
                 },
                 icon: Some("icons/minus.svg".into()),
                 shortcut: Some(secondary_shortcut("U").into()),
@@ -654,6 +712,7 @@ fn submodule_status_model(
             use_selection,
             selected_count,
             is_conflicted,
+            language,
         ));
     }
 
@@ -664,6 +723,7 @@ fn submodule_status_model(
         repo_id,
         path,
         Some(secondary_shortcut("Shift+C").into()),
+        language,
     );
 
     ContextMenuModel::new(items)

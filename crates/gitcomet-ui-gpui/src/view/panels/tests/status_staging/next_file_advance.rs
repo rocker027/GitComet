@@ -20,6 +20,11 @@ enum Trigger {
     /// Discard `c.txt` through the dialog, then stage the open file the way
     /// a status row does, which does not arm the advance.
     DiscardOtherThenStageFromRow,
+    FileButton,
+    RowButton,
+    LongFileButton,
+    FileButtonThenOpenOther,
+    FileButtonThenClose,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -31,6 +36,8 @@ struct Case {
     a_contents: &'static str,
     trigger: Trigger,
     enabled: bool,
+    partial_staged: bool,
+    index_locked: bool,
 }
 
 /// The file the diff shows once the action and the status after it settled.
@@ -47,12 +54,34 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
         std::fs::write(dir.path().join(name), BASE).unwrap();
         git(dir.path(), &["add", name]);
     }
+    if matches!(case.trigger, Trigger::LongFileButton) {
+        for ix in 0..60 {
+            let name = format!("b-{ix:03}.txt");
+            std::fs::write(dir.path().join(&name), BASE).unwrap();
+            git(dir.path(), &["add", &name]);
+        }
+    }
     commit(dir.path(), "base");
     std::fs::write(dir.path().join("a.txt"), case.a_contents).unwrap();
     std::fs::write(dir.path().join("b.txt"), ONE_CHANGE).unwrap();
     std::fs::write(dir.path().join("c.txt"), ONE_CHANGE).unwrap();
     if case.area == DiffArea::Staged {
         git(dir.path(), &["add", "a.txt", "b.txt", "c.txt"]);
+    }
+    if case.partial_staged {
+        git(dir.path(), &["add", "a.txt"]);
+        std::fs::write(dir.path().join("a.txt"), TWO_CHANGES).unwrap();
+    }
+
+    if matches!(case.trigger, Trigger::LongFileButton) {
+        // Destination already contains 60 paths before c.txt is transferred.
+        for ix in 0..60 {
+            let name = format!("b-{ix:03}.txt");
+            std::fs::write(dir.path().join(&name), ONE_CHANGE).unwrap();
+            if case.area == DiffArea::Unstaged {
+                git(dir.path(), &["add", &name]);
+            }
+        }
     }
 
     let backend = gitcomet_git_gix::GixBackend.open(dir.path()).unwrap();
@@ -121,7 +150,42 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
     draw_and_drain_test_window(cx);
 
     let mut before = store.snapshot().repos[0].ops_rev;
+    if case.index_locked {
+        std::fs::write(dir.path().join(".git/index.lock"), b"locked for test").unwrap();
+    }
     match case.trigger {
+        Trigger::FileButton
+        | Trigger::LongFileButton
+        | Trigger::FileButtonThenOpenOther
+        | Trigger::FileButtonThenClose => {
+            click(cx, "diff_bar_stage");
+            if matches!(case.trigger, Trigger::FileButtonThenOpenOther) {
+                store.dispatch(Msg::SelectDiff {
+                    repo_id: REPO,
+                    target: DiffTarget::working_tree("b.txt".into(), case.area),
+                });
+            } else if matches!(case.trigger, Trigger::FileButtonThenClose) {
+                cx.update(|_, app| {
+                    view.read(app)
+                        .diff_renderer
+                        .clone()
+                        .update(app, |pane, cx| {
+                            pane.clear_diff_selection_or_exit(REPO, cx);
+                        });
+                });
+            }
+        }
+        Trigger::RowButton => {
+            let section = match case.area {
+                DiffArea::Unstaged => "unstaged",
+                DiffArea::Staged => "staged",
+            };
+            let row = format!("status_row_{}_{section}_0", REPO.0);
+            let bounds = cx.debug_bounds(Box::leak(row.into_boxed_str())).unwrap();
+            cx.simulate_mouse_move(bounds.center(), None, Modifiers::default());
+            draw_and_drain_test_window(cx);
+            click(cx, &format!("status_stage_button_{}_{section}_0", REPO.0));
+        }
         Trigger::Key(key) => cx.simulate_keystrokes(key),
         Trigger::StageHunkMenu => cx.update(|window, app| {
             let pane = view.read(app).diff_renderer.read(app);
@@ -156,8 +220,9 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
     }
     draw_and_drain_test_window(cx);
     wait_settled(cx, &view, &store, &label, before);
-    assert!(
-        store.snapshot().repos[0].feedback.last_error.is_none(),
+    assert_eq!(
+        store.snapshot().repos[0].feedback.last_error.is_some(),
+        case.index_locked,
         "{label}: {:?}",
         store.snapshot().repos[0].feedback.last_error
     );
@@ -167,23 +232,156 @@ fn shown_after(cx: &mut gpui::TestAppContext, case: Case) -> Option<String> {
             view.update(app, |this, cx| {
                 crate::view::test_support::sync_store_snapshot(this, cx);
             });
-            view.read(app)
-                .diff_renderer
-                .read(app)
-                .next_file_advance
-                .is_none()
+            let pane = view.read(app).diff_renderer.read(app);
+            pane.next_file_advance.is_none() && pane.stage_file_transfer.is_none()
         })
     });
     crate::view::test_support::drain_store_worker(&view, cx);
     draw_and_drain_test_window(cx);
     let shown = match store.snapshot().repos[0].diff_state.diff_target.as_ref() {
         Some(DiffTarget::WorkingTree { path, area, .. }) => {
-            assert_eq!(*area, case.area, "{label}: the list's area");
+            let expected_area = if matches!(
+                case.trigger,
+                Trigger::FileButton | Trigger::LongFileButton | Trigger::RowButton
+            ) && !case.index_locked
+            {
+                match case.area {
+                    DiffArea::Unstaged => DiffArea::Staged,
+                    DiffArea::Staged => DiffArea::Unstaged,
+                }
+            } else {
+                case.area
+            };
+            assert_eq!(*area, expected_area, "{label}: the list's area");
             Some(path.display().to_string())
         }
         None => None,
         other => panic!("{label}: expected a working-tree diff, got {other:?}"),
     };
+    if matches!(
+        case.trigger,
+        Trigger::FileButton | Trigger::LongFileButton | Trigger::RowButton
+    ) && !case.index_locked
+    {
+        // Exercise the completion against its real post-SelectDiff snapshot:
+        // that request advanced the canvas generation, and must still restore
+        // the retained position. A later user request must cancel instead.
+        cx.update(|_, app| {
+            view.read(app)
+                .diff_renderer
+                .clone()
+                .update(app, |pane, cx| {
+                    let repo = pane.active_repo().unwrap();
+                    let generation = repo.navigation.canvas_requests;
+                    let ops_rev = repo.ops_rev;
+                    let repo_lifetime = repo.lifetime();
+                    for (requests_since_source, expected) in [(1, -13.0), (2, -13.0)] {
+                        pane.stage_file_transfer = Some(
+                            crate::view::panes::diff::helpers::state::StageFileTransfer {
+                                repo_id: REPO,
+                                repo_lifetime,
+                                path: case.open.into(),
+                                from: case.area,
+                                ops_rev,
+                                canvas_requests: generation.wrapping_sub(requests_since_source),
+                                opened: true,
+                                scroll_offsets: [
+                                    point(px(0.0), px(-13.0 * requests_since_source as f32)),
+                                    point(px(-9.0), px(-27.0 * requests_since_source as f32)),
+                                ],
+                            },
+                        );
+                        pane.resolve_stage_file_transfer(cx);
+                        assert!(pane.stage_file_transfer.is_none(), "{label}");
+                        assert_eq!(
+                            [&pane.diff_scroll, &pane.diff_split_right_scroll].map(|scroll| scroll
+                                .0
+                                .borrow()
+                                .base_handle
+                                .offset()),
+                            [point(px(0.0), px(expected)), point(px(-9.0), px(-27.0))],
+                            "{label}"
+                        );
+                    }
+                });
+        });
+    }
+
+    if matches!(case.trigger, Trigger::LongFileButton) {
+        draw_and_drain_test_window(cx);
+        let (selector, viewport, offset_before) = cx.update(|_, app| {
+            let pane = view.read(app).details_pane.read(app);
+            let section = match case.area {
+                DiffArea::Unstaged => StatusSection::Staged,
+                DiffArea::Staged => StatusSection::CombinedUnstaged,
+            };
+            let position = pane
+                .status_path_display_position(section, std::path::Path::new(case.open))
+                .unwrap();
+            assert!(position >= 60, "{label}: fixture must require scrolling");
+            let scroll = if case.area == DiffArea::Unstaged {
+                &pane.staged_scroll
+            } else {
+                &pane.unstaged_scroll
+            };
+            assert!(
+                scroll.0.borrow().base_handle.offset().y < px(0.0),
+                "{label}: destination must scroll"
+            );
+            let scroll = scroll.0.borrow();
+            (
+                format!("status_row_{}_{}_{position}", REPO.0, section.id_label()),
+                scroll.base_handle.bounds(),
+                scroll.base_handle.offset(),
+            )
+        });
+        let row = cx
+            .debug_bounds(Box::leak(selector.into_boxed_str()))
+            .expect("transferred path is rendered");
+        assert!(
+            row.top() >= viewport.top() && row.bottom() <= viewport.bottom(),
+            "{label}: row must be fully visible"
+        );
+        // Another reveal of the already visible row must not center or jump it.
+        cx.update(|_, app| {
+            view.read(app)
+                .diff_renderer
+                .clone()
+                .update(app, |pane, cx| {
+                    let repo = pane.active_repo().unwrap();
+                    pane.commands.defer(
+                        crate::view::panes::diff::services::DiffCommand::RevealStatus {
+                            section: if case.area == DiffArea::Unstaged {
+                                StatusSection::Staged
+                            } else {
+                                StatusSection::CombinedUnstaged
+                            },
+                            path: case.open.into(),
+                            after_transfer: Some((
+                                REPO,
+                                repo.lifetime(),
+                                repo.navigation.canvas_requests,
+                            )),
+                        },
+                        cx,
+                    );
+                });
+        });
+        draw_and_drain_test_window(cx);
+        cx.update(|_, app| {
+            let pane = view.read(app).details_pane.read(app);
+            let scroll = if case.area == DiffArea::Unstaged {
+                &pane.staged_scroll
+            } else {
+                &pane.unstaged_scroll
+            };
+            assert_eq!(
+                scroll.0.borrow().base_handle.offset(),
+                offset_before,
+                "{label}: visible row must stay put"
+            );
+        });
+    }
 
     store.dispatch(Msg::CloseRepo { repo_id: REPO });
     crate::view::test_support::drain_store_worker(&view, cx);
@@ -238,6 +436,8 @@ fn case(area: DiffArea, open: &'static str, trigger: Trigger) -> Case {
         a_contents: ONE_CHANGE,
         trigger,
         enabled: true,
+        partial_staged: false,
+        index_locked: false,
     }
 }
 
@@ -297,4 +497,69 @@ fn only_an_action_on_the_open_file_arms_the_advance(cx: &mut gpui::TestAppContex
         Trigger::DiscardOtherThenStageFromRow,
     );
     assert_eq!(shown_after(cx, case), None, "{case:?}");
+}
+
+#[gpui::test]
+fn explicit_file_buttons_follow_the_same_file_to_its_other_lane(cx: &mut gpui::TestAppContext) {
+    for area in [DiffArea::Unstaged, DiffArea::Staged] {
+        for enabled in [false, true] {
+            for partial_staged in [false, true] {
+                let case = Case {
+                    enabled,
+                    partial_staged,
+                    ..case(area, "a.txt", Trigger::FileButton)
+                };
+                assert_eq!(shown_after(cx, case).as_deref(), Some("a.txt"), "{case:?}");
+            }
+        }
+    }
+}
+
+#[gpui::test]
+fn a_failed_file_button_keeps_the_original_diff(cx: &mut gpui::TestAppContext) {
+    for area in [DiffArea::Unstaged, DiffArea::Staged] {
+        let case = Case {
+            index_locked: true,
+            ..case(area, "a.txt", Trigger::FileButton)
+        };
+        assert_eq!(shown_after(cx, case).as_deref(), Some("a.txt"), "{case:?}");
+    }
+}
+
+#[gpui::test]
+fn selecting_another_file_cancels_the_pending_lane_transfer(cx: &mut gpui::TestAppContext) {
+    for area in [DiffArea::Unstaged, DiffArea::Staged] {
+        let case = case(area, "a.txt", Trigger::FileButtonThenOpenOther);
+        assert_eq!(shown_after(cx, case).as_deref(), Some("b.txt"), "{case:?}");
+    }
+}
+
+#[gpui::test]
+fn closing_the_diff_cancels_the_pending_lane_transfer(cx: &mut gpui::TestAppContext) {
+    for area in [DiffArea::Unstaged, DiffArea::Staged] {
+        let case = case(area, "a.txt", Trigger::FileButtonThenClose);
+        assert_eq!(shown_after(cx, case), None, "{case:?}");
+    }
+}
+
+#[gpui::test]
+fn row_buttons_follow_the_open_file_to_the_other_lane(cx: &mut gpui::TestAppContext) {
+    for area in [DiffArea::Unstaged, DiffArea::Staged] {
+        assert_eq!(
+            shown_after(cx, case(area, "a.txt", Trigger::RowButton)).as_deref(),
+            Some("a.txt")
+        );
+    }
+}
+
+#[gpui::test]
+fn file_buttons_reveal_the_transferred_path_in_long_destination_lists(
+    cx: &mut gpui::TestAppContext,
+) {
+    for area in [DiffArea::Unstaged, DiffArea::Staged] {
+        assert_eq!(
+            shown_after(cx, case(area, "c.txt", Trigger::LongFileButton)).as_deref(),
+            Some("c.txt")
+        );
+    }
 }

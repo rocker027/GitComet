@@ -47,6 +47,7 @@ fn register(
             repository: None,
             active: false,
             needs_refresh: true,
+            protected_branches: Vec::new(),
         }],
         RemoteSettings::default(),
         &(Arc::new(Backend) as Arc<dyn GitBackend>),
@@ -359,6 +360,7 @@ fn shutdown_cancels_and_waits_for_active_backend_cleanup() {
             repository: None,
             active: false,
             needs_refresh: true,
+            protected_branches: Vec::new(),
         }],
         settings,
         &backend,
@@ -639,6 +641,7 @@ fn fetches_that_move_no_refs_refresh_only_tabs_that_never_loaded() {
                 // Selected, so quiet fetches keep the plain interval.
                 active: true,
                 needs_refresh: true,
+                protected_branches: Vec::new(),
             }],
             RemoteSettings::default(),
             &backend,
@@ -985,6 +988,7 @@ fn an_unreachable_host_is_contacted_once_until_its_block_expires() {
                 repository: None,
                 active: false,
                 needs_refresh: true,
+                protected_branches: Vec::new(),
             }],
             RemoteSettings::default(),
             &backend,
@@ -1088,6 +1092,7 @@ fn a_repository_fetched_recently_waits_but_loads_its_last_count_at_once() {
             repository: None,
             active: false,
             needs_refresh: true,
+            protected_branches: Vec::new(),
         }],
         settings,
         &(Arc::new(gitcomet_git_gix::GixBackend) as Arc<dyn GitBackend>),
@@ -1130,6 +1135,7 @@ fn a_store_fetched_through_a_sibling_worktree_waits_at_launch() {
             repository: None,
             active,
             needs_refresh: true,
+            protected_branches: Vec::new(),
         })
         .collect();
     let coordinator = AutoFetchCoordinator::new();
@@ -1198,6 +1204,7 @@ fn selected_tabs_fetch_first_then_the_least_recently_contacted_host() {
                 repository: None,
                 active: path == "/selected",
                 needs_refresh: true,
+                protected_branches: Vec::new(),
             }],
             RemoteSettings::default(),
             &(Arc::new(Backend) as Arc<dyn GitBackend>),
@@ -1275,6 +1282,7 @@ fn inactive_repositories_that_stay_quiet_wait_up_to_four_intervals() {
                 repository: None,
                 active,
                 needs_refresh: true,
+                protected_branches: Vec::new(),
             }],
             RemoteSettings::default(),
             &(Arc::new(Backend) as Arc<dyn GitBackend>),
@@ -1411,6 +1419,7 @@ fn linked_worktrees_of_one_repository_contact_the_remote_once() {
             repository: None,
             active: false,
             needs_refresh: true,
+            protected_branches: Vec::new(),
         })
         .collect();
     let lifetimes: Vec<_> = registrations.iter().map(|r| r.lifetime).collect();
@@ -1462,6 +1471,7 @@ fn timing_auto_fetch_sync_with_many_tabs() {
                 repository: None,
                 active: false,
                 needs_refresh: true,
+                protected_branches: Vec::new(),
             })
             .collect::<Vec<_>>()
     };
@@ -1478,6 +1488,7 @@ fn timing_auto_fetch_sync_with_many_tabs() {
                     repository: None,
                     active: false,
                     needs_refresh: true,
+                    protected_branches: Vec::new(),
                 })
                 .collect::<Vec<_>>()
         };
@@ -1541,6 +1552,7 @@ fn subscribe_unopened(
             repository: None,
             active: false,
             needs_refresh: true,
+            protected_branches: Vec::new(),
         })
         .collect();
     let lifetimes = registrations.iter().map(|r| r.lifetime).collect();
@@ -1766,6 +1778,7 @@ fn turning_automatic_fetch_off_and_on_clears_a_sign_in_host_block() {
                 repository: None,
                 active: false,
                 needs_refresh: true,
+                protected_branches: Vec::new(),
             }],
             settings,
             &(Arc::new(Backend) as Arc<dyn GitBackend>),
@@ -2032,4 +2045,93 @@ fn tracking_changed_between_automatic_fetches_reloads_the_count() {
     );
     fetch_when_due();
     assert_eq!(take(), lifetimes, "the count follows the new upstream");
+}
+
+/// F10: while a Worktree Finish run protects `release`, an automatic fetch leaves out the
+/// remote whose configured refspec writes `refs/heads/release` and still updates the other
+/// remotes' tracking refs. Without protection the same configuration moves `release`.
+#[test]
+fn automatic_fetch_skips_remotes_whose_configured_refspecs_write_protected_branches() {
+    let fetch_once = |protected_branches: Vec<String>| {
+        let (_temp, source, clone, latest) = remote_fixture();
+        let first = git(&clone, &["rev-parse", "HEAD"]);
+        git(&clone, &["branch", "release"]);
+        git(
+            &clone,
+            &["remote", "add", "danger", source.to_str().unwrap()],
+        );
+        git(
+            &clone,
+            &[
+                "config",
+                "--replace-all",
+                "remote.danger.fetch",
+                "+refs/heads/main:refs/heads/release",
+            ],
+        );
+        let coordinator = AutoFetchCoordinator::new();
+        let logged = Arc::new(Mutex::new(String::new()));
+        let sink: EventSink = {
+            let logged = Arc::clone(&logged);
+            Arc::new(move |event| {
+                if let Event::Updated {
+                    result: Some(result),
+                    ..
+                } = event
+                    && let Ok(output) = result.as_ref()
+                {
+                    logged.lock().unwrap().push_str(&output.stderr);
+                }
+            })
+        };
+        set_enabled(&coordinator, false);
+        coordinator.sync(
+            1,
+            vec![Registration {
+                repo_id: RepoId(1),
+                lifetime: RepoLifetime::allocate(),
+                workdir: clone.clone(),
+                common_dir: None,
+                repository: None,
+                active: true,
+                needs_refresh: true,
+                protected_branches,
+            }],
+            RemoteSettings::default(),
+            &(Arc::new(gitcomet_git_gix::GixBackend) as Arc<dyn GitBackend>),
+            sink,
+        );
+        enable(&coordinator);
+        assert_eq!(run_job(&coordinator, UNIX_EPOCH), Some(clone.clone()));
+        let skipped = group_of(&coordinator.inner.state.lock().unwrap(), &clone)
+            .snapshot
+            .skipped_remotes
+            .clone();
+        coordinator.shutdown();
+        let logged = logged.lock().unwrap().clone();
+        (
+            first,
+            latest,
+            git(&clone, &["rev-parse", "release"]),
+            git(&clone, &["rev-parse", "refs/remotes/origin/main"]),
+            skipped,
+            logged,
+        )
+    };
+
+    let (first, latest, release, origin_main, skipped, logged) = fetch_once(vec!["release".into()]);
+    assert_eq!(release, first, "a protected branch must not move");
+    assert_eq!(origin_main, latest, "unrelated tracking refs still update");
+    assert_eq!(skipped, vec!["danger".to_string()]);
+    assert!(
+        logged.contains("configured fetch refspec writes 'refs/heads/release'"),
+        "the background result explains the skipped remote: {logged:?}"
+    );
+
+    let (_, latest, release, _, skipped, _) = fetch_once(Vec::new());
+    assert_eq!(
+        release, latest,
+        "control: unprotected configuration moves it"
+    );
+    assert!(skipped.is_empty());
 }

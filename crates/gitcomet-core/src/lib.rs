@@ -43,6 +43,7 @@ pub mod text_search;
 pub mod text_utils;
 pub mod url_encoding;
 pub mod word_diff;
+pub mod worktree_finish;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

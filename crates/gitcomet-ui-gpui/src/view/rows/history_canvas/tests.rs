@@ -1,6 +1,117 @@
 use super::*;
 use std::rc::Rc;
 
+#[test]
+fn overflow_click_requires_both_endpoints_inside_the_visible_badge() {
+    let clipped = Bounds::new(point(px(10.0), px(10.0)), size(px(8.0), px(20.0)));
+    let targets = HistoryRefHitTargets {
+        refs: Vec::new(),
+        overflow: Some(clipped),
+        ..Default::default()
+    };
+    let inside = clipped.center();
+    let outside = point(px(30.0), inside.y);
+    assert!(targets.overflow_clicked(inside, inside));
+    assert!(
+        !targets.overflow_clicked(outside, inside),
+        "dragging into the badge"
+    );
+    assert!(
+        !targets.overflow_clicked(inside, outside),
+        "dragging out of the badge"
+    );
+    assert!(
+        !targets.overflow_clicked(outside, outside),
+        "clipped-away pixels"
+    );
+    assert!(!HistoryRefHitTargets::default().overflow_clicked(inside, inside));
+}
+
+#[test]
+fn ref_clicks_match_the_exact_chip_and_require_both_endpoints_inside_it() {
+    let local = HistoryMenuRef::Branch(BranchMenuTarget::local("feature"));
+    let remote = HistoryMenuRef::Branch(BranchMenuTarget::remote("origin", "feature"));
+    let tag = HistoryMenuRef::Tag("feature".into());
+    let refs = [local.clone(), remote.clone(), tag.clone()]
+        .into_iter()
+        .enumerate()
+        .map(|(index, target)| {
+            (
+                Bounds::new(
+                    point(px(index as f32 * 80.0), px(10.0)),
+                    size(px(70.0), px(20.0)),
+                ),
+                target,
+            )
+        })
+        .collect();
+    let targets = HistoryRefHitTargets {
+        refs,
+        ..Default::default()
+    };
+    let press_at = |position| HistoryRefMenuPress {
+        position,
+        target: targets.ref_at(position).cloned(),
+    };
+    for (bounds, target) in &targets.refs {
+        let press = press_at(bounds.center());
+        assert_eq!(press.target.as_ref(), Some(target));
+        assert!(press.matches(&targets, bounds.center(), bounds.center()));
+    }
+    let first = targets.refs[0].0.center();
+    let second = targets.refs[1].0.center();
+    assert!(!press_at(first).matches(&targets, first, second));
+    assert!(!press_at(first).matches(&targets, second, first));
+    let node = point(px(300.0), px(20.0));
+    let gap = point(px(75.0), px(20.0));
+    for position in [node, gap] {
+        let press = press_at(position);
+        assert_eq!(press.target, None);
+        assert!(press.matches(&targets, position, position));
+        assert!(!press.matches(&targets, position, first));
+    }
+}
+
+#[test]
+fn combined_tracking_ref_chip_targets_its_named_local_branch() {
+    let chip = branch_chip(
+        "feature/topic",
+        false,
+        &[
+            (BranchSection::Local, "feature/topic"),
+            (BranchSection::Remote, "origin/feature/topic"),
+            (BranchSection::Remote, "team/feature/topic"),
+        ],
+    );
+    assert_eq!(
+        history_branch_chip_target(&chip),
+        Some(HistoryMenuRef::Branch(BranchMenuTarget::local(
+            "feature/topic"
+        )))
+    );
+    let remote = branch_chip(
+        "origin/feature/topic",
+        false,
+        &[(BranchSection::Remote, "origin/feature/topic")],
+    );
+    assert_eq!(
+        history_branch_chip_target(&remote),
+        Some(HistoryMenuRef::Branch(BranchMenuTarget::remote(
+            "origin",
+            "feature/topic"
+        )))
+    );
+    let grouped_remotes = branch_chip(
+        "feature/topic",
+        false,
+        &[
+            (BranchSection::Remote, "origin/feature/topic"),
+            (BranchSection::Remote, "team/feature/topic"),
+        ],
+    );
+    assert_eq!(history_branch_chip_target(&grouped_remotes), None);
+}
+
 fn test_row_visual(theme: AppTheme) -> HistoryRowVisual {
     HistoryRowVisual {
         lane: history_graph::lane_color(theme, 3),
@@ -32,22 +143,38 @@ impl Render for RefChipsTestView {
     }
 }
 
-struct InitialsCacheTestView;
+#[test]
+fn history_author_patterns_identify_names_beyond_their_initials() {
+    // Both names abbreviate to "AL".
+    let ada = HistoryAuthorVm::new("Ada Lovelace".into());
+    let alan = HistoryAuthorVm::new("Alan Lane".into());
+    assert_ne!(ada.pattern, alan.pattern);
+    assert_eq!(
+        ada.pattern,
+        HistoryAuthorVm::new("Ada Lovelace".into()).pattern
+    );
+    for name in ["", "符文", "Ada Lovelace", "Alan Lane"] {
+        let author = HistoryAuthorVm::new(name.into());
+        assert!(author.pattern.iter().all(|row| (1..31).contains(row)));
+    }
+}
 
-impl Render for InitialsCacheTestView {
+struct AuthorMarkTestView;
+
+impl Render for AuthorMarkTestView {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
         super::super::canvas::keyed_canvas(
-            "initials_cache_test",
+            "author_mark_no_text_layout",
             |_, _, _| (),
             |_, _, window, _cx| {
                 let theme = AppTheme::gitcomet_dark();
-                let author = HistoryAuthorVm::new("Initials Cache".into());
+                let author = HistoryAuthorVm::new("Ada Lovelace".into());
                 let row = test_row_visual(theme);
                 let cached = || HISTORY_TEXT_LAYOUT_CACHE.with(|cache| cache.borrow().len());
                 let paint = |progress: f32, window: &mut Window| {
                     let d = super::super::history_node::author_diameter(
                         ui_scale::UiScale::from_window(window).with_appearance(theme.metrics),
-                        progress,
+                        0.6 + 0.4 * progress,
                     );
                     paint_history_author_node(
                         theme,
@@ -55,18 +182,18 @@ impl Render for InitialsCacheTestView {
                         row,
                         &author,
                         progress,
+                        false,
                         window,
                     );
                 };
-                paint(1.0, window);
-                let warm = cached();
-                for frame in 1..60 {
-                    paint(0.5 + frame as f32 / 120.0, window);
+                let before = cached();
+                for frame in 0..=60 {
+                    paint(frame as f32 / 60.0, window);
                 }
                 assert_eq!(
                     cached(),
-                    warm,
-                    "animated alpha must not grow the text layout cache"
+                    before,
+                    "author marks must not allocate text layouts"
                 );
             },
         )
@@ -76,8 +203,8 @@ impl Render for InitialsCacheTestView {
 }
 
 #[gpui::test]
-fn history_initials_animation_reuses_shaped_text(cx: &mut gpui::TestAppContext) {
-    let (_, cx) = cx.add_window_view(|_, _| InitialsCacheTestView);
+fn history_author_patterns_animate_without_shaping_text(cx: &mut gpui::TestAppContext) {
+    let (_, cx) = cx.add_window_view(|_, _| AuthorMarkTestView);
     cx.update(|window, app| {
         let _ = window.draw(app);
     });
@@ -139,6 +266,7 @@ fn assert_inline_ref_paint_budget(percent: u32, window: &mut Window, cx: &mut Ap
             &commit_id,
             &tags,
             &branches,
+            &[],
             None,
             None,
             &style,
@@ -147,6 +275,19 @@ fn assert_inline_ref_paint_budget(percent: u32, window: &mut Window, cx: &mut Ap
             window,
         );
         paint_history_ref_chips(&refs, window, cx);
+        if let Some(overflow) = refs.overflow_bounds {
+            assert_eq!(overflow.intersect(&budget), overflow);
+            let targets = HistoryRefHitTargets {
+                refs: Vec::new(),
+                overflow: Some(overflow),
+                ..Default::default()
+            };
+            assert!(targets.overflow_clicked(overflow.center(), overflow.center()));
+            let clipped_away = point(budget.right() + px(1.0), overflow.center().y);
+            assert!(!targets.overflow_clicked(clipped_away, clipped_away));
+        } else {
+            assert_eq!(budget.size.width, px(0.0));
+        }
         assert_eq!(
             refs.shown + refs.hidden,
             13,
@@ -187,6 +328,7 @@ fn assert_inline_ref_paint_budget(percent: u32, window: &mut Window, cx: &mut Ap
             &commit_id,
             &[],
             branch_list,
+            &[],
             None,
             None,
             &style,
@@ -219,6 +361,7 @@ fn assert_inline_ref_paint_budget(percent: u32, window: &mut Window, cx: &mut Ap
         &commit_id,
         &[],
         &long,
+        &[],
         None,
         None,
         &style,
@@ -356,52 +499,7 @@ fn history_canvas_graph_origin_tracks_fractional_device_pixel_rounding(
 }
 
 #[gpui::test]
-fn chip_label_clipping_omits_the_ellipsis_and_reclaims_its_width(cx: &mut gpui::TestAppContext) {
-    let window_handle = cx.add_window(|_window, _cx| gpui::Empty);
-    cx.update_window(window_handle.into(), |_, window, _| {
-        let style = window.text_style();
-        let font_size = style.font_size.to_pixels(window.rem_size());
-        let text: SharedString = "origin/feature/a-very-long-branch-name".into();
-        let max_width = px(96.0);
-        let color = AppTheme::gitcomet_dark().colors.foreground.primary;
-
-        // Use identical layout inputs so this also proves the truncation
-        // affix participates in the shared layout-cache key.
-        let ellipsized = shape_truncated_line_cached_from(
-            window,
-            &style,
-            font_size,
-            &text,
-            fx_hash_str(text.as_ref()),
-            max_width,
-            color,
-            None,
-            LineCut::RefLeaf,
-        );
-        let clipped = shape_chip_label_cached(
-            window,
-            &style,
-            font_size,
-            &text,
-            fx_hash_str(text.as_ref()),
-            max_width,
-            color,
-            None,
-        );
-
-        assert!(ellipsized.text.ends_with('…'));
-        assert!(!clipped.text.contains('…'));
-        assert!(text.contains(clipped.text.as_ref()));
-        assert!(
-            clipped.text.chars().count() > ellipsized.text.trim_end_matches('…').chars().count(),
-            "removing the ellipsis should expose more of the branch name"
-        );
-    })
-    .expect("history canvas test window should stay open");
-}
-
-#[gpui::test]
-fn chip_labels_give_up_the_ref_path_before_the_name_after_the_last_slash(
+fn chip_labels_mark_truncation_and_keep_the_name_after_the_last_slash(
     cx: &mut gpui::TestAppContext,
 ) {
     let window_handle = cx.add_window(|_window, _cx| gpui::Empty);
@@ -421,7 +519,7 @@ fn chip_labels_give_up_the_ref_path_before_the_name_after_the_last_slash(
         };
         let label = |text: &str, max_width: Pixels, window: &mut Window| {
             let text: SharedString = text.to_owned().into();
-            shape_chip_label_cached(
+            let shaped = shape_truncated_line_cached_from(
                 window,
                 &style,
                 font_size,
@@ -430,39 +528,31 @@ fn chip_labels_give_up_the_ref_path_before_the_name_after_the_last_slash(
                 max_width,
                 color,
                 None,
-            )
-            .text
+                LineCut::RefLeaf,
+            );
+            assert!(shaped.width <= max_width);
+            shaped.text
         };
 
         // The path before the last `/` goes first, from the start; only then
         // does the name itself give way, from its end.
-        for (max_width, expected) in [
+        for (full, expected) in [
             ("feat/new-component", "feat/new-component"),
-            ("eat/new-component", "eat/new-component"),
-            ("/new-component", "/new-component"),
-            ("new-component", "new-component"),
-            ("new-componen", "new-componen"),
-            ("new-compone", "new-compone"),
+            ("feat/new-component", "…/new-component"),
+            ("feat/new-component", "…new-component"),
+            ("feat/new-component", "new-compone…"),
+            ("origin/feat/new-component", "…t/new-component"),
+            ("origin/feat/new-component", "new-comp…"),
+            ("refactor/gitkraken", "…r/gitkraken"),
+            ("v1.2.0", "v1.2…"),
         ] {
-            let max_width = width(max_width, window);
-            assert_eq!(label("feat/new-component", max_width, window), expected);
+            let max_width = width(expected, window);
+            assert_eq!(label(full, max_width, window), expected);
         }
-        // Only the last `/` separates the name, and remote prefixes are path.
-        let max_width = width("new-compo", window);
-        assert_eq!(
-            label("origin/feat/new-component", max_width, window),
-            "new-compo"
-        );
-        let max_width = width("t/new-component", window);
-        assert_eq!(
-            label("origin/feat/new-component", max_width, window),
-            "t/new-component"
-        );
-        // A name without a path is cut from its end, like any label.
-        let max_width = width("mai", window);
-        assert_eq!(label("main", max_width, window), "mai");
-        let max_width = width("v1.2", window);
-        assert_eq!(label("v1.2.0", max_width, window), "v1.2");
+
+        let leaf_width = width("gitkraken", window);
+        let clipped_path = label("refactor/gitkraken", leaf_width, window);
+        assert!(clipped_path.ends_with('…'), "{clipped_path}");
     })
     .expect("history canvas test window should stay open");
 }
@@ -630,6 +720,7 @@ fn branch_chip(
     HistoryBranchChipVm {
         text: HistoryTextVm::new(SharedString::from(text.to_string())),
         kind: HistoryBranchChipKind::Branch { is_head, targets },
+        requires_full_label: false,
     }
 }
 
@@ -690,6 +781,7 @@ fn grouped_head_chip_stays_in_the_head_style() {
     let detached = HistoryBranchChipVm {
         text: HistoryTextVm::new("HEAD".into()),
         kind: HistoryBranchChipKind::DetachedHead,
+        requires_full_label: false,
     };
     assert!(matches!(
         history_branch_chip_style_kind(&detached, None),
@@ -709,7 +801,7 @@ fn grouped_branch_chip_icons_keep_exact_refs() {
     );
 
     assert_eq!(
-        history_branch_chip_icons(&combined).as_slice(),
+        history_branch_chip_icons(&combined, false).as_slice(),
         [HistoryBranchChipIcon::LocalRemote]
     );
     assert_eq!(HistoryBranchChipIcon::Local.path(), "icons/computer.svg");
@@ -743,7 +835,7 @@ fn grouped_branch_chip_icons_keep_exact_refs() {
 
     let local_only = branch_chip("feature/x", false, &[(BranchSection::Local, "feature/x")]);
     assert_eq!(
-        history_branch_chip_icons(&local_only).as_slice(),
+        history_branch_chip_icons(&local_only, false).as_slice(),
         [HistoryBranchChipIcon::Local]
     );
 
@@ -753,18 +845,204 @@ fn grouped_branch_chip_icons_keep_exact_refs() {
         &[(BranchSection::Remote, "origin/feature/x")],
     );
     assert_eq!(
-        history_branch_chip_icons(&remote_only).as_slice(),
+        history_branch_chip_icons(&remote_only, false).as_slice(),
         [HistoryBranchChipIcon::Remote]
     );
 
     let detached = HistoryBranchChipVm {
         text: HistoryTextVm::new("HEAD".into()),
         kind: HistoryBranchChipKind::DetachedHead,
+        requires_full_label: false,
     };
     assert_eq!(
-        history_branch_chip_icons(&detached).as_slice(),
+        history_branch_chip_icons(&detached, false).as_slice(),
         [HistoryBranchChipIcon::Check]
     );
+}
+
+fn test_worktree(branch: &str, commit: &str) -> Worktree {
+    Worktree {
+        path: "/tmp/boxfish".into(),
+        bare: false,
+        head: Some(CommitId(commit.into())),
+        branch: Some(branch.to_owned()),
+        detached: false,
+    }
+}
+
+#[test]
+fn worktree_icons_require_a_matching_local_branch_and_commit() {
+    let commit = CommitId("tip".into());
+    let worktree = test_worktree("feature/topic", "tip");
+    let attached = branch_chip(
+        "feature/topic",
+        true,
+        &[
+            (BranchSection::Local, "feature/topic"),
+            (BranchSection::Remote, "origin/feature/topic"),
+        ],
+    );
+    let other_local = branch_chip("other", false, &[(BranchSection::Local, "other")]);
+    let same_named_remote = branch_chip(
+        "feature/topic",
+        false,
+        &[(BranchSection::Remote, "origin/feature/topic")],
+    );
+    let listed = std::slice::from_ref(&worktree);
+    assert!(history_branch_chip_is_checked_out(
+        &attached, listed, &commit
+    ));
+    assert!(!history_branch_chip_is_checked_out(
+        &other_local,
+        listed,
+        &commit
+    ));
+    assert!(!history_branch_chip_is_checked_out(
+        &same_named_remote,
+        listed,
+        &commit
+    ));
+    assert!(!history_branch_chip_is_checked_out(
+        &attached,
+        listed,
+        &CommitId("old-tip".into())
+    ));
+    assert!(!history_branch_chip_is_checked_out(
+        &attached,
+        &[
+            Worktree {
+                detached: true,
+                ..worktree.clone()
+            },
+            Worktree {
+                bare: true,
+                ..worktree
+            }
+        ],
+        &commit,
+    ));
+    assert_eq!(
+        history_branch_chip_icons(&attached, true).as_slice(),
+        [
+            HistoryBranchChipIcon::Check,
+            HistoryBranchChipIcon::Worktree,
+            HistoryBranchChipIcon::Remote
+        ]
+    );
+}
+
+#[gpui::test]
+fn a_checked_out_branch_stays_visible_before_other_refs_in_a_narrow_column(
+    cx: &mut gpui::TestAppContext,
+) {
+    let window_handle = cx.add_window(|_, _| gpui::Empty);
+    cx.update_window(window_handle.into(), |_, window, _| {
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(105.0), px(28.0)));
+        let theme = AppTheme::gitcomet_dark();
+        let refs = layout_history_ref_chips(
+            theme,
+            test_row_visual(theme),
+            bounds,
+            RepoId(1),
+            &CommitId("tip".into()),
+            &[HistoryTextVm::new("release".into())],
+            &[
+                branch_chip("alias", false, &[(BranchSection::Local, "alias")]),
+                branch_chip("topic", false, &[(BranchSection::Local, "topic")]),
+            ],
+            &[test_worktree("topic", "tip")],
+            None,
+            None,
+            &window.text_style(),
+            px(11.0),
+            px(16.0),
+            window,
+        );
+        assert_eq!(refs.chips[0].shaped.text, "topic");
+        assert_eq!(
+            refs.chips[0].icons.as_slice(),
+            [HistoryBranchChipIcon::Worktree]
+        );
+        assert!(refs.hidden > 0);
+        assert!(refs.bounds.right() <= bounds.right());
+    })
+    .expect("history canvas test window should stay open");
+}
+
+#[gpui::test]
+fn qualified_remote_labels_keep_their_full_name_and_exact_menu_feedback(
+    cx: &mut gpui::TestAppContext,
+) {
+    let handle = cx.add_window(|_, _| gpui::Empty);
+    cx.update_window(handle.into(), |_, window, _| {
+        let repo_id = RepoId(1);
+        let commit = CommitId("tip".into());
+        let origin = BranchMenuTarget::remote("origin", "topic");
+        let invoker = history_branch_chip_menu_invoker(repo_id, &commit, &origin);
+        let style = window.text_style();
+        let qualified_remote = |name| HistoryBranchChipVm {
+            requires_full_label: true,
+            ..branch_chip(name, false, &[(BranchSection::Remote, name)])
+        };
+        let chips = [
+            branch_chip(
+                "origin/topic",
+                false,
+                &[(BranchSection::Local, "origin/topic")],
+            ),
+            qualified_remote("origin/topic"),
+            qualified_remote("peer/topic"),
+        ];
+        for theme in [AppTheme::gitcomet_dark(), AppTheme::gitcomet_light()] {
+            let mut layout = |width, chips: &[HistoryBranchChipVm], menu: Option<&SharedString>| {
+                layout_history_ref_chips(
+                    theme,
+                    test_row_visual(theme),
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(28.0))),
+                    repo_id,
+                    &commit,
+                    &[],
+                    chips,
+                    &[],
+                    None,
+                    menu,
+                    &style,
+                    px(11.0),
+                    px(16.0),
+                    window,
+                )
+            };
+            let closed = layout(480.0, &chips, None);
+            let open = layout(480.0, &chips, Some(&invoker));
+            assert_eq!(open.shown, 3);
+            assert_eq!(open.hidden, 0);
+            for ((closed, open), label) in closed.chips.iter().zip(&open.chips).zip([
+                "origin/topic",
+                "origin/topic",
+                "peer/topic",
+            ]) {
+                assert_eq!(open.shaped.text, label);
+                assert_eq!(
+                    closed.visual.border != open.visual.border,
+                    open.target == Some(HistoryMenuRef::Branch(origin.clone())),
+                );
+            }
+            let remote = "origin/feature/topic-with-a-name-too-wide-for-the-column";
+            let narrow = layout(
+                90.0,
+                &[
+                    qualified_remote(remote),
+                    branch_chip("fix", false, &[(BranchSection::Local, "fix")]),
+                ],
+                None,
+            );
+            assert_eq!(narrow.shown, 1);
+            assert_eq!(narrow.hidden, 1);
+            assert_eq!(narrow.chips[0].shaped.text, "fix");
+            assert!(narrow.overflow_bounds.is_some());
+        }
+    })
+    .expect("history canvas test window should stay open");
 }
 
 fn ref_item(kind: HistoryRefListItemKind) -> HistoryRefListItem {
@@ -969,7 +1247,10 @@ fn sidebar_selected_branch_ring_stands_out_on_a_selected_shared_tip() {
                     history_branch_chip_style_kind(&chip, selected.as_ref()),
                     false,
                 );
-                assert!(picked.selected, "{key}: the picked ring is drawn thicker");
+                assert!(
+                    picked.emphasized_border,
+                    "{key}: the picked ring is drawn thicker"
+                );
                 assert!(
                     contrast_ratio(picked.border, picked.bg) >= 3.0,
                     "{key} lane {color}: the sidebar-selected {name} ring blends into its fill"
@@ -979,7 +1260,7 @@ fn sidebar_selected_branch_ring_stands_out_on_a_selected_shared_tip() {
                     history_branch_chip_style_kind(&chip, None),
                 ] {
                     let other = history_chip_visual(theme, row, other, false);
-                    assert!(!other.selected);
+                    assert!(!other.emphasized_border);
                     assert_ne!(picked.border, other.border);
                 }
             }
@@ -1021,7 +1302,7 @@ fn chips_share_the_lane_color_and_activate_for_the_row_or_lane() {
         }
         let head = branch_chip("main", true, &[(BranchSection::Local, "main")]);
         assert_eq!(
-            history_branch_chip_icons(&head).as_slice(),
+            history_branch_chip_icons(&head, false).as_slice(),
             [HistoryBranchChipIcon::Check, HistoryBranchChipIcon::Local]
         );
     }
@@ -1056,25 +1337,33 @@ fn chips_with_open_context_menus_keep_a_distinct_outline() {
 fn chip_menu_invokers_identify_the_exact_chip() {
     let repo_id = RepoId(7);
     let commit_id = CommitId("deadbeef".into());
-    let local = branch_chip(
-        "feature/local",
-        false,
-        &[(BranchSection::Local, "feature/local")],
-    );
-    let remote = branch_chip(
-        "feature/remote",
-        false,
-        &[(BranchSection::Remote, "origin/feature/remote")],
-    );
-
+    let local = BranchMenuTarget::local("origin/topic");
+    let remote = BranchMenuTarget::remote("origin", "topic");
+    assert_eq!(local.display_name(), remote.display_name());
     let local_invoker = history_branch_chip_menu_invoker(repo_id, &commit_id, &local);
+    let remote_invoker = history_branch_chip_menu_invoker(repo_id, &commit_id, &remote);
+    assert_ne!(local_invoker, remote_invoker);
+    assert!(history_row_menu_is_open(
+        &remote_invoker,
+        repo_id,
+        "deadbeef"
+    ));
+    assert!(!history_row_menu_is_open(
+        &remote_invoker,
+        RepoId(1),
+        "deadbeef"
+    ));
+    assert!(!history_row_menu_is_open(&remote_invoker, repo_id, "dead"));
+    let slash_remote = BranchMenuTarget::remote("team/origin", "topic");
+    let slash_branch = BranchMenuTarget::remote("team", "origin/topic");
+    assert_eq!(slash_remote.display_name(), slash_branch.display_name());
     assert_ne!(
-        local_invoker,
-        history_branch_chip_menu_invoker(repo_id, &commit_id, &remote)
+        history_branch_chip_menu_invoker(repo_id, &commit_id, &slash_remote),
+        history_branch_chip_menu_invoker(repo_id, &commit_id, &slash_branch)
     );
     assert_ne!(
         local_invoker,
-        history_tag_chip_menu_invoker(repo_id, &commit_id, "feature/local")
+        history_tag_chip_menu_invoker(repo_id, &commit_id, "origin/topic")
     );
     assert_eq!(
         local_invoker,

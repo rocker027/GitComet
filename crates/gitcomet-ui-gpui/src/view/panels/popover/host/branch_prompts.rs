@@ -83,6 +83,61 @@ impl PopoverHost {
         }
     }
 
+    pub(in crate::view::panels::popover) fn handle_inline_worktree_source_select(
+        &mut self,
+        name: String,
+        upstream: Option<Upstream>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !matches!(
+            self.popover,
+            Some(PopoverKind::Repo {
+                kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
+                ..
+            })
+        ) {
+            return;
+        }
+        self.worktree_ref_source_target = name;
+        self.worktree_ref_source_upstream = upstream;
+        if let Some(input) = &self.branch_picker_search_input {
+            input.update(cx, |input, cx| {
+                input.clear_transient_key_presses();
+                input.set_text(self.worktree_ref_source_target.clone(), cx);
+                cx.notify();
+            });
+        }
+        self.branch_picker_selected_index = None;
+        // Hand focus to Add once the keystroke that picked the ref has
+        // finished dispatching, so it cannot land on the button it just
+        // moved to; `suppress_worktree_submit_after_ref_enter` covers
+        // the same Enter until the next frame is on screen.
+        cx.defer_in(window, |this, window, cx| {
+            if matches!(
+                this.popover,
+                Some(PopoverKind::Repo {
+                    kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
+                    ..
+                })
+            ) {
+                let focus = if this.can_submit_worktree_add(cx) {
+                    this.worktree_focus.submit.clone()
+                } else {
+                    this.worktree_path_input
+                        .read_with(cx, |input, _| input.focus_handle())
+                };
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            cx.on_next_frame(window, |this, _window, cx| {
+                this.suppress_worktree_submit_after_ref_enter = false;
+                cx.notify();
+            });
+        });
+        cx.notify();
+    }
+
     pub(in crate::view::panels::popover) fn handle_inline_branch_picker_select(
         &mut self,
         name: String,
@@ -119,46 +174,22 @@ impl PopoverHost {
                 kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
                 ..
             }) => {
-                self.worktree_ref_source_target = name;
-                if let Some(input) = &self.branch_picker_search_input {
-                    input.update(cx, |input, cx| {
-                        input.clear_transient_key_presses();
-                        input.set_text(self.worktree_ref_source_target.clone(), cx);
-                        cx.notify();
-                    });
-                }
-                self.branch_picker_selected_index = None;
-                // Hand focus to Add once the keystroke that picked the ref has
-                // finished dispatching, so it cannot land on the button it just
-                // moved to; `suppress_worktree_submit_after_ref_enter` covers
-                // the same Enter until the next frame is on screen.
-                cx.defer_in(window, |this, window, cx| {
-                    if matches!(
-                        this.popover,
-                        Some(PopoverKind::Repo {
-                            kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt),
-                            ..
-                        })
-                    ) {
-                        let focus = if this.can_submit_worktree_add(cx) {
-                            this.worktree_focus.submit.clone()
-                        } else {
-                            this.worktree_path_input
-                                .read_with(cx, |input, _| input.focus_handle())
-                        };
-                        window.focus(&focus, cx);
-                        cx.notify();
-                    }
-                    cx.on_next_frame(window, |this, _window, cx| {
-                        this.suppress_worktree_submit_after_ref_enter = false;
-                        cx.notify();
-                    });
-                });
-                cx.notify();
+                self.handle_inline_worktree_source_select(name, None, window, cx);
             }
             Some(PopoverKind::BranchPicker {
                 purpose: BranchPickerPurpose::Delete,
             }) => {
+                if self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                    || self.state.worktree_finish_protects_branch(repo_id, &name)
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This branch is protected by an active Worktree Finish run.".to_string(),
+                        cx,
+                    );
+                    self.close_popover(cx);
+                    return;
+                }
                 let is_centered = matches!(self.popover_anchor, Some(PopoverAnchor::Centered));
                 self.root_view.request(
                     RootRequest::SetForceDeleteBranchCentered(is_centered),
@@ -180,7 +211,48 @@ impl PopoverHost {
                     cx,
                 );
             }
+            Some(PopoverKind::BranchPicker {
+                purpose: BranchPickerPurpose::Merge,
+            }) => {
+                // The same gate as the branch menu's "Merge into current".
+                let repo = self.state.repos.iter().find(|repo| repo.id == repo_id);
+                let finish_busy =
+                    repo.is_some_and(|r| self.state.worktree_finish_blocks_workdir_mutation(r.id));
+                if !finish_busy
+                    && super::super::merge_commit_confirm::merge_commit_is_allowed(
+                        repo,
+                        &self.state.large_file_settings,
+                    )
+                {
+                    self.store.dispatch(Msg::MergeRef {
+                        repo_id,
+                        reference: name,
+                    });
+                } else {
+                    let reason = if finish_busy {
+                        "This worktree is currently in use by an active Worktree Finish run"
+                    } else if repo.is_some_and(|repo| repo.history_rewrite_busy()) {
+                        "Finish the merge, rebase, cherry-pick or revert in progress first"
+                    } else {
+                        "Merging is off while git-annex manages pull and push for this branch"
+                    };
+                    self.push_toast(components::ToastKind::Warning, reason.to_string(), cx);
+                }
+                self.close_popover(cx);
+            }
             _ => {
+                if self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+                    || self.state.worktree_finish_protects_branch(repo_id, &name)
+                {
+                    self.push_toast(
+                        components::ToastKind::Warning,
+                        "This worktree or branch is currently protected by an active Worktree Finish run"
+                            .to_string(),
+                        cx,
+                    );
+                    self.close_popover(cx);
+                    return;
+                }
                 self.store.dispatch(Msg::CheckoutBranch { repo_id, name });
                 self.close_popover(cx);
             }
@@ -254,6 +326,18 @@ impl PopoverHost {
             _ => return,
         };
 
+        if (checkout && self.state.worktree_finish_blocks_workdir_mutation(repo_id))
+            || self.state.worktree_finish_protects_branch(repo_id, &name)
+        {
+            self.push_toast(
+                components::ToastKind::Warning,
+                "This branch is protected by an active Worktree Finish run.".to_string(),
+                cx,
+            );
+            self.dismiss_inline_popover(window, cx);
+            return;
+        }
+
         if checkout {
             self.store.dispatch(Msg::CreateBranchAndCheckout {
                 repo_id,
@@ -299,6 +383,20 @@ impl PopoverHost {
         if !is_submittable_branch_name(&new_name) || new_name == name {
             return;
         }
+        if self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+            || self.state.worktree_finish_protects_branch(repo_id, &name)
+            || self
+                .state
+                .worktree_finish_protects_branch(repo_id, &new_name)
+        {
+            self.push_toast(
+                components::ToastKind::Warning,
+                "This branch is protected by an active Worktree Finish run.".to_string(),
+                cx,
+            );
+            self.dismiss_inline_popover(window, cx);
+            return;
+        }
         self.store.dispatch(Msg::RenameBranch {
             repo_id,
             old_name: name,
@@ -334,6 +432,20 @@ impl PopoverHost {
         let local_branch = self
             .create_branch_input
             .read_with(cx, |i, _| i.text().trim().to_string());
+
+        if self.state.worktree_finish_blocks_workdir_mutation(repo_id)
+            || self
+                .state
+                .worktree_finish_protects_branch(repo_id, &local_branch)
+        {
+            self.push_toast(
+                components::ToastKind::Warning,
+                "This branch is protected by an active Worktree Finish run.".to_string(),
+                cx,
+            );
+            self.close_popover(cx);
+            return;
+        }
 
         let local_branch_exists = self
             .state

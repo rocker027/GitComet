@@ -7,7 +7,50 @@ use gitcomet_state::model::RepoIncomingState;
 use rustc_hash::FxHasher;
 use std::cell::Cell;
 use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+
+/// The worktree list starts with the repository's primary checkout.
+pub(super) fn primary_workdir(repo: &RepoState) -> &Path {
+    repo.worktrees
+        .ready()
+        .and_then(|worktrees| worktrees.first())
+        .map_or(repo.spec.workdir.as_path(), |worktree| {
+            worktree.path.as_path()
+        })
+}
+
+/// Keep ordinary names short, adding only enough parent folders to distinguish
+/// open checkouts which have the same folder name.
+pub(super) fn workdir_label(repo: &RepoState, repos: &[RepoState]) -> SharedString {
+    let path = &repo.spec.workdir;
+    let components = path.components().collect::<Vec<_>>();
+    for count in 1..=components.len() {
+        let suffix = components[components.len() - count..]
+            .iter()
+            .collect::<PathBuf>();
+        let unique = repos
+            .iter()
+            .all(|other| other.spec.workdir == *path || !other.spec.workdir.ends_with(&suffix));
+        if unique {
+            return path_display::path_display_string(&suffix).into();
+        }
+    }
+    path_display::repo_path_name(path)
+}
+
+fn repo_identity_label(repo: &RepoState, repos: &[RepoState]) -> SharedString {
+    let name = workdir_label(repo, repos);
+    let primary = primary_workdir(repo);
+    if primary == repo.spec.workdir {
+        return name;
+    }
+    let repository = path_display::repo_path_name(primary);
+    match repo.head_branch.ready() {
+        Some(branch) => format!("{repository} / {name} · {branch}").into(),
+        None => format!("{repository} / {name}").into(),
+    }
+}
 
 pub(in super::super) struct RepoTabsBarView {
     store: Arc<AppStore>,
@@ -320,6 +363,8 @@ impl RepoTabsBarView {
         for repo in &state.repos {
             repo.id.hash(&mut hasher);
             repo.spec.workdir.hash(&mut hasher);
+            repo.head_branch_rev.hash(&mut hasher);
+            repo.worktrees_rev.hash(&mut hasher);
             repo.feedback.missing_on_disk.hash(&mut hasher);
             Self::repo_tab_tracking(repo)
                 .map(|tracking| (tracking, repo.incoming_is_stale()))
@@ -453,8 +498,16 @@ impl RepoTabsBarView {
         } else {
             ""
         };
+        let identity = if primary_workdir(repo) != repo.spec.workdir {
+            format!(
+                "{}\n",
+                repo_identity_label(repo, std::slice::from_ref(repo))
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "{}\n{detail}{freshness}",
+            "{identity}{}\n{detail}{freshness}",
             path_display::path_display_string(&repo.spec.workdir)
         )
         .into()
@@ -886,7 +939,7 @@ impl Render for RepoTabsBarView {
             .state
             .repos
             .iter()
-            .map(|repo| path_display::repo_path_name(&repo.spec.workdir))
+            .map(|repo| repo_identity_label(repo, &self.state.repos))
             .collect::<Vec<_>>();
         let incoming_labels = self
             .state
@@ -1524,8 +1577,8 @@ fn repo_tab_insert_before_for_drop(
 #[cfg(test)]
 mod tests {
     use super::{
-        RepoTabsBarView, repo_tab_close_button_fill, repo_tab_drag_direction,
-        repo_tab_insert_before_for_drag_cursor, repo_tab_insert_before_for_drop,
+        RepoTabsBarView, repo_identity_label, repo_tab_close_button_fill, repo_tab_drag_direction,
+        repo_tab_insert_before_for_drag_cursor, repo_tab_insert_before_for_drop, workdir_label,
     };
     use gitcomet_core::domain::{HeadTracking, RepoSpec, Upstream, UpstreamDivergence};
     use gitcomet_state::model::{
@@ -1543,6 +1596,53 @@ mod tests {
                 workdir: PathBuf::from(path),
             },
         )
+    }
+
+    #[test]
+    fn same_named_checkout_tabs_show_the_shortest_distinct_path() {
+        let repos = vec![
+            repo_state("/projects/alpha/src/repo"),
+            repo_state("/projects/beta/src/repo"),
+            repo_state("/projects/other"),
+        ];
+        assert_eq!(workdir_label(&repos[0], &repos).as_ref(), "alpha/src/repo");
+        assert_eq!(workdir_label(&repos[1], &repos).as_ref(), "beta/src/repo");
+        assert_eq!(workdir_label(&repos[2], &repos).as_ref(), "other");
+        assert_eq!(
+            repo_identity_label(&repos[0], &repos).as_ref(),
+            "alpha/src/repo"
+        );
+    }
+
+    #[test]
+    fn linked_checkout_tab_names_its_repository_folder_and_branch() {
+        use gitcomet_core::domain::Worktree;
+        use gitcomet_state::model::Loadable;
+        let mut repo = repo_state("/worktrees/feature");
+        repo.worktrees = Loadable::Ready(std::sync::Arc::new(vec![Worktree {
+            path: PathBuf::from("/projects/repository"),
+            head: None,
+            branch: Some("main".into()),
+            detached: false,
+            bare: false,
+        }]));
+        repo.head_branch = Loadable::Ready("feature/login".into());
+        assert_eq!(
+            repo_identity_label(&repo, std::slice::from_ref(&repo)).as_ref(),
+            "repository / feature · feature/login"
+        );
+        let tooltip = RepoTabsBarView::repo_tab_tooltip(&repo);
+        assert!(tooltip.contains("repository / feature · feature/login"));
+        assert!(tooltip.contains("/worktrees/feature"));
+
+        let mut state = AppState::default();
+        state.repos.push(repo);
+        let before = RepoTabsBarView::notify_fingerprint(&state);
+        state.repos[0].head_branch_rev += 1;
+        assert_ne!(before, RepoTabsBarView::notify_fingerprint(&state));
+        let before = RepoTabsBarView::notify_fingerprint(&state);
+        state.repos[0].worktrees_rev += 1;
+        assert_ne!(before, RepoTabsBarView::notify_fingerprint(&state));
     }
 
     #[test]

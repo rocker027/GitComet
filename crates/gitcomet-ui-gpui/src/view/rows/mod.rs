@@ -1131,6 +1131,7 @@ fn line_number_string(n: Option<u32>) -> SharedString {
 }
 
 mod blame;
+pub(in crate::view) mod branch_drag;
 mod canvas;
 #[cfg(test)]
 mod canvas_tests;
@@ -1198,6 +1199,7 @@ pub(in crate::view) use file_list::{
 mod diff_text;
 mod history;
 pub(in crate::view) use history::history_row_height;
+pub(in crate::view) use history::{HistoryBranchActivation, history_double_click_branch};
 mod history_canvas;
 #[cfg(test)]
 pub(in crate::view) use history_canvas::{

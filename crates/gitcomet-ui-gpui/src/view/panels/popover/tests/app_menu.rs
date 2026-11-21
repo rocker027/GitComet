@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 
 fn open_app_menu(
     cx: &mut gpui::TestAppContext,
@@ -140,6 +141,57 @@ fn app_menu_shortcuts_use_command_palette_keycaps(cx: &mut gpui::TestAppContext)
         cx.debug_bounds("shortcut_keycaps").is_some(),
         "App-menu shortcuts should use the shared Command Palette keycap badges"
     );
+}
+
+#[gpui::test]
+fn app_menu_localizes_labels_and_keeps_action_shortcut_and_selector(cx: &mut gpui::TestAppContext) {
+    let (view, cx) = open_app_menu(cx);
+    cx.update(|_window, app| {
+        let host = view.read(app).popover_host.clone();
+        for (language, expected_label) in [
+            (
+                Language::English,
+                crate::menu_labels::OPEN_REMOTE_IN_BROWSER,
+            ),
+            (Language::TraditionalChinese, "在瀏覽器中開啟遠端"),
+        ] {
+            app.set_global(language);
+            host.update(app, |host, cx| {
+                let model = host.context_menu_model(&PopoverKind::AppMenu, cx).unwrap();
+                let ix = model
+                    .entry_debug_selectors
+                    .iter()
+                    .find_map(|(ix, id)| {
+                        (id.as_ref() == "app_menu_open_remote_in_browser").then_some(*ix)
+                    })
+                    .unwrap();
+                let ContextMenuItem::Entry {
+                    label,
+                    shortcut,
+                    disabled,
+                    action,
+                    ..
+                } = &model.items[ix]
+                else {
+                    panic!("expected an app menu entry");
+                };
+                assert_eq!(label.as_ref(), expected_label);
+                assert_eq!(
+                    shortcut.as_deref(),
+                    Some(if cfg!(target_os = "macos") {
+                        "Cmd+K"
+                    } else {
+                        "Ctrl+K"
+                    })
+                );
+                assert!(*disabled);
+                assert!(matches!(
+                    action.as_ref(),
+                    ContextMenuAction::AppMenu(AppMenuAction::OpenRemoteInBrowser)
+                ));
+            });
+        }
+    });
 }
 
 #[gpui::test]
@@ -285,7 +337,7 @@ fn open_remote_entry_disabled(
 ) -> Option<bool> {
     cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        super::super::app_menu::model(host)
+        super::super::app_menu::model(host, Language::English)
             .items
             .iter()
             .find_map(|item| match item {
@@ -330,7 +382,7 @@ fn app_menu_open_remote_shows_the_chord(cx: &mut gpui::TestAppContext) {
     let (view, cx) = open_app_menu(cx);
     let shortcut = cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        super::super::app_menu::model(host)
+        super::super::app_menu::model(host, Language::English)
             .items
             .iter()
             .find_map(|item| match item {
@@ -469,7 +521,11 @@ fn app_menu_disables_update_check_when_environment_override_is_present(
     let (view, cx) = open_app_menu(cx);
     cx.update(|_window, app| {
         let host = view.read(app).popover_host.read(app);
-        let model = super::super::app_menu::model_with_update_checks_disabled(host, true);
+        let model = super::super::app_menu::model_with_update_checks_disabled(
+            host,
+            true,
+            Language::English,
+        );
         let disabled = model.items.iter().find_map(|item| match item {
             ContextMenuItem::Entry {
                 label, disabled, ..

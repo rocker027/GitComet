@@ -172,15 +172,16 @@ fn continuing_winners(
 pub(super) fn graph_node_bounds(
     row: &history_graph::GraphRow,
     is_stash: bool,
-    initials_reveal: f32,
+    author_expansion: f32,
     bounds: Bounds<Pixels>,
     grid: GraphGrid,
     scale: ui_scale::UiScale,
 ) -> Bounds<Pixels> {
-    let diameter = grid.even(if is_stash || row.is_merge {
+    let diameter = grid.even(if is_stash {
         super::history_node::icon_diameter(scale)
     } else {
-        super::history_node::author_diameter(scale, initials_reveal)
+        // Keep a readable five-column mark on consecutive same-author rows.
+        super::history_node::author_diameter(scale, 0.60 + 0.40 * author_expansion)
     });
     let x = grid.snap(bounds.left())
         + grid.col_x(usize::from(row.node_col), grid.edge_x(bounds.size.width));
@@ -212,7 +213,7 @@ pub(super) fn paint_history_graph(
     // their lane tint over it so they match hovered, selected and browsed rows.
     row_visual: history_canvas::HistoryRowVisual,
     author: &HistoryAuthorVm,
-    initials_reveal: f32,
+    author_expansion: f32,
     selection: f32,
     bounds: Bounds<Pixels>,
     grid: GraphGrid,
@@ -299,6 +300,7 @@ pub(super) fn paint_history_graph(
             y_center,
             stroke_width,
             segment_color(x, lane_paint.color_ix),
+            lane_paint.is_stash(),
             window,
         );
     }
@@ -333,6 +335,7 @@ pub(super) fn paint_history_graph(
             elbow_radius,
             stroke_width,
             color,
+            row.lanes_now.get(from).is_some_and(|lane| lane.is_stash()),
             window,
         );
     }
@@ -372,6 +375,7 @@ pub(super) fn paint_history_graph(
                 elbow_radius,
                 stroke_width,
                 color,
+                lane_paint.is_stash(),
                 window,
             );
         } else {
@@ -381,6 +385,7 @@ pub(super) fn paint_history_graph(
                 y_bottom,
                 stroke_width,
                 color,
+                lane_paint.is_stash(),
                 window,
             );
         }
@@ -421,6 +426,7 @@ pub(super) fn paint_history_graph(
             elbow_radius,
             stroke_width,
             lane(edge.color_ix),
+            false,
             window,
         );
     }
@@ -453,25 +459,37 @@ pub(super) fn paint_history_graph(
                 window,
                 cx,
             );
-        } else if row.is_merge {
-            paint_icon_node(
-                ui_scale::UiScale::from_window(window).with_appearance(theme.metrics),
-                node_bounds,
-                icons::GIT_MERGE_ICON_PATH,
-                row_background,
-                node_color,
-                window,
-                cx,
-            );
         } else {
             history_canvas::paint_history_author_node(
                 theme,
                 node_bounds,
                 row_visual,
                 author,
-                initials_reveal,
+                author_expansion,
+                row.is_merge,
                 window,
             );
+            if row.is_merge {
+                // Reserve the lower-right edge of the node for its topology
+                // glyph, including on a lane pinned to the graph boundary.
+                let diameter = node_bounds.size.width * 0.40;
+                let badge = Bounds::new(
+                    point(
+                        node_bounds.right() - diameter,
+                        node_bounds.bottom() - diameter,
+                    ),
+                    size(diameter, diameter),
+                );
+                super::history_shapes::paint_disc(badge, theme.colors.surface.canvas, window);
+                super::diff_canvas::paint_centered_svg_icon(
+                    icons::GIT_MERGE_ICON_PATH,
+                    badge,
+                    diameter,
+                    theme.colors.foreground.primary,
+                    window,
+                    cx,
+                );
+            }
         }
     });
 }
@@ -945,7 +963,15 @@ pub(super) fn paint_history_graph_band(
             } else {
                 lane_wash_color(theme, lane.color_ix, row_ix, selected_lane)
             };
-            paint_vertical_segment(left + x, from_y, to_y, stroke_width, color, window);
+            paint_vertical_segment(
+                left + x,
+                from_y,
+                to_y,
+                stroke_width,
+                color,
+                lane.is_stash() && passes_through(col, lane),
+                window,
+            );
         }
     }
 
@@ -963,6 +989,7 @@ pub(super) fn paint_history_graph_band(
             elbow_radius,
             stroke_width,
             node.color,
+            false,
             window,
         );
     }
@@ -1069,14 +1096,25 @@ fn snap_to_device(value: Pixels, scale_factor: f32) -> Pixels {
 /// it is the same rectangle a butt-capped stroke yields, without lyon's per-path
 /// buffers, and verticals are most of what a row draws. Quads paint under any
 /// path in the layer, so only an elbow can now cover a straight run.
-pub(super) fn paint_vertical_segment(
+fn paint_vertical_segment(
     x: Pixels,
     y_from: Pixels,
     y_to: Pixels,
     stroke_width: Pixels,
     color: gpui::Rgba,
+    dashed: bool,
     window: &mut Window,
 ) {
+    if dashed {
+        paint_dashed_connector(
+            point(x, y_from),
+            point(x, y_to),
+            stroke_width,
+            color,
+            window,
+        );
+        return;
+    }
     gitcomet_core::history_perf::record(gitcomet_core::history_perf::Work::PaintSegmentQuad);
     window.paint_quad(
         PaintQuad::new(Bounds::new(
@@ -1175,6 +1213,31 @@ fn elbow_radius(preferred: Pixels, dx: Pixels, vertical: Pixels) -> Pixels {
     preferred.min(dx.abs()).min(vertical.max(px(0.0)))
 }
 
+fn lane_path(width: Pixels, dashed: bool) -> gpui::PathBuilder {
+    let path = gpui::PathBuilder::stroke(width);
+    if dashed {
+        path.dash_array(&[width * 2.0, width * 1.5])
+    } else {
+        path
+    }
+}
+
+fn paint_dashed_connector(
+    from: Point<Pixels>,
+    to: Point<Pixels>,
+    width: Pixels,
+    color: gpui::Rgba,
+    window: &mut Window,
+) {
+    let mut path = lane_path(width, true);
+    path.move_to(from);
+    path.line_to(to);
+    if let Ok(path) = path.build() {
+        gitcomet_core::history_perf::record(gitcomet_core::history_perf::Work::PaintPath);
+        window.paint_path(path, color);
+    }
+}
+
 /// Leaves the node horizontally, turns through a rounded corner, then runs
 /// straight down to the bottom of the row.
 #[allow(clippy::too_many_arguments)]
@@ -1187,22 +1250,21 @@ fn paint_node_to_lane(
     preferred_radius: Pixels,
     stroke_width: Pixels,
     color: gpui::Rgba,
+    dashed: bool,
     window: &mut Window,
 ) {
-    use gpui::PathBuilder;
-
     if same_x(x_from, x_to) {
-        paint_straight_connector(
-            point(left + x_from, y_center),
-            point(left + x_to, y_bottom),
-            stroke_width,
-            color,
-            window,
-        );
+        let from = point(left + x_from, y_center);
+        let to = point(left + x_to, y_bottom);
+        if dashed {
+            paint_dashed_connector(from, to, stroke_width, color, window);
+        } else {
+            paint_straight_connector(from, to, stroke_width, color, window);
+        }
         return;
     }
 
-    let mut path = PathBuilder::stroke(stroke_width);
+    let mut path = lane_path(stroke_width, dashed);
     path.move_to(point(left + x_from, y_center));
 
     let dx = x_to - x_from;
@@ -1237,15 +1299,14 @@ fn paint_lane_to_node(
     preferred_radius: Pixels,
     stroke_width: Pixels,
     color: gpui::Rgba,
+    dashed: bool,
     window: &mut Window,
 ) {
-    use gpui::PathBuilder;
-
     let dx = x_to - x_from;
     let dir = if dx > px(0.0) { 1.0 } else { -1.0 };
     let r = elbow_radius(preferred_radius, dx, y_center - y_top);
 
-    let mut path = PathBuilder::stroke(stroke_width);
+    let mut path = lane_path(stroke_width, dashed);
     path.move_to(point(left + x_from, y_top));
     path.line_to(point(left + x_from, y_center - r));
     path.cubic_bezier_to(
@@ -1261,7 +1322,7 @@ fn paint_lane_to_node(
     }
 }
 
-/// Merge, stash and uncommitted nodes share the author nodes' lane-coloured
+/// Icon nodes share the author nodes' lane-coloured
 /// outline and faint fill, with the glyph also in the lane colour. Composite
 /// over the actual row background so the opaque middle hides lane strokes.
 pub(super) fn paint_icon_node(
@@ -1276,9 +1337,14 @@ pub(super) fn paint_icon_node(
     let glyph = scale.ui_text(10.5);
 
     let background = crate::theme::composite_over(row_background, with_alpha(lane_color, 0.12));
+    let corner_radius = if icon_path == icons::GIT_STASH_NODE_ICON_PATH {
+        disc.size.width * 0.16
+    } else {
+        disc.size.width * 0.5
+    };
     super::history_shapes::paint_rounded_rect(
         disc,
-        disc.size.width * 0.5,
+        corner_radius,
         background,
         super::history_node::ring_width(scale, window.scale_factor()),
         lane_color,

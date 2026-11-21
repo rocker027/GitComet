@@ -3,6 +3,7 @@ use std::sync::Arc;
 mod app;
 mod auto_fetch;
 mod diff;
+mod git_undo;
 mod hidden_history_refs;
 mod history;
 mod incoming;
@@ -13,10 +14,12 @@ mod repository;
 mod repository_preferences;
 mod reword;
 mod signature_map;
+mod worktree_finish;
 
 pub use app::*;
 pub use auto_fetch::*;
 pub use diff::*;
+pub use git_undo::*;
 pub use hidden_history_refs::*;
 pub use history::*;
 pub use incoming::*;
@@ -27,6 +30,7 @@ pub use repository::*;
 pub use repository_preferences::*;
 pub use reword::*;
 pub use signature_map::CommitSignatureMap;
+pub use worktree_finish::*;
 
 pub type Shared<T> = Arc<T>;
 

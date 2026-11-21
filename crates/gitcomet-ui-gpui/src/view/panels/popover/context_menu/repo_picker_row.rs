@@ -6,8 +6,13 @@
 //! the rest for a repository that is not open at all.
 
 use super::*;
+use crate::localization::Language;
 
-pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) -> ContextMenuModel {
+pub(super) fn model(
+    host: &PopoverHost,
+    entry: &repo_picker::RepoPickerEntry,
+    language: Language,
+) -> ContextMenuModel {
     if let repo_picker::RepoPickerEntry::Workspace(workspace_id) = entry {
         let Some(workspace) = host
             .cached_workspaces
@@ -20,7 +25,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
         return ContextMenuModel::new(vec![
             ContextMenuItem::Header(workspace.display_name().into()),
             ContextMenuItem::Entry {
-                label: "Activate".into(),
+                label: language.text("Activate", "切換至工作區").into(),
                 // Same icon as a repository row's Activate.
                 icon: Some("icons/check.svg".into()),
                 shortcut: None,
@@ -30,7 +35,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
             },
             ContextMenuItem::Separator,
             ContextMenuItem::Entry {
-                label: "Workspace Settings".into(),
+                label: language.text("Workspace Settings", "工作區設定").into(),
                 icon: Some("icons/cog.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -39,7 +44,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
             // Destructive last, as on repository rows; the trash icon makes it red.
             ContextMenuItem::Separator,
             ContextMenuItem::Entry {
-                label: "Delete workspace".into(),
+                label: language.text("Delete workspace", "刪除工作區").into(),
                 icon: Some("icons/trash.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -57,7 +62,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
     if let Some(workdir) = workdir.clone() {
         items.push(if pinned {
             ContextMenuItem::Entry {
-                label: "Unpin repository".into(),
+                label: language.text("Unpin repository", "取消釘選儲存庫").into(),
                 icon: Some("icons/pin.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -65,7 +70,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
             }
         } else {
             ContextMenuItem::Entry {
-                label: "Pin repository".into(),
+                label: language.text("Pin repository", "釘選儲存庫").into(),
                 icon: Some("icons/pin.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -78,7 +83,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
     match entry {
         repo_picker::RepoPickerEntry::Workspace(_) => {}
         repo_picker::RepoPickerEntry::Open(repo_id) => items.push(ContextMenuItem::Entry {
-            label: "Activate".into(),
+            label: language.text("Activate", "切換至儲存庫").into(),
             icon: Some("icons/check.svg".into()),
             shortcut: None,
             // The active repository cannot be activated again — a row menu
@@ -89,7 +94,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
         // Same wording and icon as the "+" menu's Open repository, which is the
         // other way into this action.
         repo_picker::RepoPickerEntry::Closed(path) => items.push(ContextMenuItem::Entry {
-            label: "Open repository".into(),
+            label: language.text("Open repository", "開啟儲存庫").into(),
             icon: Some("icons/disk.svg".into()),
             shortcut: None,
             disabled: false,
@@ -100,7 +105,9 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
     if let Some(workdir) = workdir.clone() {
         items.push(ContextMenuItem::Separator);
         items.push(ContextMenuItem::Entry {
-            label: "Open repository location".into(),
+            label: language
+                .text("Open repository location", "開啟儲存庫所在位置")
+                .into(),
             icon: Some("icons/folder.svg".into()),
             shortcut: None,
             disabled: false,
@@ -110,7 +117,9 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
         });
         if host.external_editor_available() {
             items.push(ContextMenuItem::Entry {
-                label: "Open in code editor".into(),
+                label: language
+                    .text("Open in code editor", "在程式碼編輯器中開啟")
+                    .into(),
                 icon: Some("icons/open_external.svg".into()),
                 shortcut: None,
                 disabled: false,
@@ -125,7 +134,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
             // counterpart to pair this with — but it is named the same way as
             // the file menus' entry so the app has one vocabulary for the
             // action.
-            label: "Copy absolute path".into(),
+            label: language.text("Copy absolute path", "複製絕對路徑").into(),
             icon: Some("icons/copy.svg".into()),
             shortcut: None,
             disabled: false,
@@ -141,7 +150,7 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
     let destructive = match entry {
         repo_picker::RepoPickerEntry::Workspace(_) => None,
         repo_picker::RepoPickerEntry::Open(repo_id) => Some(ContextMenuItem::Entry {
-            label: "Close repository".into(),
+            label: language.text("Close repository", "關閉儲存庫").into(),
             icon: Some("icons/repo_tab_close.svg".into()),
             shortcut: None,
             disabled: false,
@@ -149,7 +158,9 @@ pub(super) fn model(host: &PopoverHost, entry: &repo_picker::RepoPickerEntry) ->
         }),
         repo_picker::RepoPickerEntry::Closed(_) if pinned => None,
         repo_picker::RepoPickerEntry::Closed(path) => Some(ContextMenuItem::Entry {
-            label: "Remove from recently closed".into(),
+            label: language
+                .text("Remove from recently closed", "從最近關閉清單移除")
+                .into(),
             icon: Some("icons/repo_tab_close.svg".into()),
             shortcut: None,
             disabled: false,

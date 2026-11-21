@@ -26,5 +26,8 @@ static GLOBAL: &gitcomet_ui_gpui::perf_alloc::PerfTrackingAllocator =
     &gitcomet_ui_gpui::perf_alloc::TRACKING_MIMALLOC;
 
 fn main() -> ! {
-    gitcomet_app::App::new().run()
+    gitcomet_app::App::new()
+        .identity(gitcomet_app::ProductIdentity::revweave())
+        .about("RevWeave — open-source desktop Git client")
+        .run()
 }

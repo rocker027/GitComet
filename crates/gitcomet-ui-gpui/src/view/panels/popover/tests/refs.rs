@@ -1,5 +1,7 @@
 use super::branch::{create_tracking_store, wait_until};
 use super::*;
+use crate::localization::Language;
+use crate::view::panels::tests::{app_state_with_repo, push_test_state};
 
 fn click_debug_selector(cx: &mut gpui::VisualTestContext, selector: &'static str) {
     let center = cx
@@ -1223,6 +1225,228 @@ fn open_in_browser_picker_shows_an_empty_state(cx: &mut gpui::TestAppContext) {
     )));
 }
 
+fn branch_menu_groups(items: &[ContextMenuItem]) -> Vec<Vec<&str>> {
+    items
+        .split(|item| matches!(item, ContextMenuItem::Separator))
+        .map(|group| {
+            assert!(!group.is_empty(), "unexpected empty menu group");
+            group
+                .iter()
+                .map(|item| match item {
+                    ContextMenuItem::Entry { label, .. } => label.as_ref(),
+                    _ => panic!("expected a menu action"),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[gpui::test]
+fn branch_menu_groups_actions_in_sidebar_and_history(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(1);
+    let tip = CommitId("0123456789abcdef".into());
+    let mut repo = RepoState::new_opening(
+        repo_id,
+        gitcomet_core::domain::RepoSpec {
+            workdir: std::path::PathBuf::from("/tmp/branch-menu-groups"),
+        },
+    );
+    repo.head_branch = Loadable::Ready("main".into());
+    repo.branches = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Branch {
+        name: "main".into(),
+        target: CommitId("fedcba9876543210".into()),
+        upstream: None,
+        divergence: None,
+    }]));
+    repo.remote_branches = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::RemoteBranch {
+        remote: "origin".into(),
+        name: "feature/topic".into(),
+        target: tip.clone(),
+    }]));
+    let mut state = app_state_with_repo(repo, repo_id);
+    Arc::make_mut(&mut state).git_log_settings.show_history_tags = false;
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| push_test_state(this, state, cx));
+    });
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                let local = host
+                    .context_menu_model(
+                        &PopoverKind::BranchMenu {
+                            repo_id,
+                            target: BranchMenuTarget::local("main"),
+                        },
+                        cx,
+                    )
+                    .expect("local branch menu");
+                assert!(matches!(
+                    local.items.as_slice(),
+                    [ContextMenuItem::Header(heading), ContextMenuItem::Separator, ..]
+                        if heading.as_ref() == "Local branch · main"
+                ));
+                assert_eq!(
+                    branch_menu_groups(&local.items[2..]),
+                    [
+                        vec!["Checkout", "Open in new worktree"],
+                        vec!["Push branch…"],
+                        vec!["Create branch", "Create tag…"],
+                        vec!["Rename branch", "Delete branch"],
+                        vec!["Mark main for comparison", "Compare with working tree"],
+                        vec!["Focus", "Pin branch", "Copy branch name", "Copy commit SHA", "Export patch…"],
+                    ]
+                );
+                assert_eq!(local.first_selectable(), Some(2));
+
+                let target = BranchMenuTarget::remote("origin", "feature/topic");
+                let remote = host
+                    .context_menu_model(
+                        &PopoverKind::BranchMenu { repo_id, target: target.clone() },
+                        cx,
+                    )
+                    .expect("remote branch menu");
+                let remote_groups = branch_menu_groups(&remote.items[2..]);
+                assert_eq!(
+                    remote_groups,
+                    [
+                        vec!["Checkout", "Open in new worktree"],
+                        vec!["Pull into current (main)", "Set as tracking upstream"],
+                        vec!["Merge origin/feature/topic into main", "Squash origin/feature/topic into main", "Rebase main onto origin/feature/topic", "Interactive rebase main onto origin/feature/topic"],
+                        vec!["Create branch", "Create tag…"],
+                        vec!["Cherry-pick", "Reset (--soft) to here", "Reset (--mixed) to here", "Reset (--hard) to here", "Revert 01234567…"],
+                        vec!["Delete remote branch…"],
+                        vec!["Mark origin/feature/topic for comparison", "Compare with working tree"],
+                        vec!["Focus", "Pin branch", "Copy branch name", "Copy commit SHA", "Export patch…"],
+                        vec!["Fetch all", "Prune merged branches", "Prune local tags"],
+                    ]
+                );
+
+                let history_ref = HistoryMenuRef::Branch(target);
+                host.expanded_history_ref = Some(history_ref.clone());
+                let history = host
+                    .context_menu_model(
+                        &PopoverKind::CommitMenu {
+                            repo_id,
+                            commit_id: tip.clone(),
+                            refs: CommitMenuRefs::Only(history_ref),
+                        },
+                        cx,
+                    )
+                    .expect("expanded history branch menu");
+                let range = &history.groups[0];
+                let mut embedded_groups = remote_groups.clone();
+                assert_eq!(
+                    embedded_groups[2].pop(),
+                    Some("Interactive rebase main onto origin/feature/topic")
+                );
+                embedded_groups.remove(4);
+                embedded_groups[6].truncate(3);
+                assert_eq!(
+                    branch_menu_groups(&history.items[range.start + 1..range.end]),
+                    embedded_groups
+                );
+
+                let chooser = host
+                    .context_menu_model(
+                        &PopoverKind::CommitMenu {
+                            repo_id,
+                            commit_id: tip,
+                            refs: CommitMenuRefs::Chooser,
+                        },
+                        cx,
+                    )
+                    .expect("expanded ref chooser");
+                let range = &chooser.groups[0];
+                assert_eq!(
+                    branch_menu_groups(&chooser.items[range.start + 1..range.end]),
+                    remote_groups
+                );
+
+                for model in [&remote, &history] {
+                    let tag_index = model.items.iter().position(|item| matches!(
+                        item,
+                        ContextMenuItem::Entry { label, disabled: true, .. } if label.as_ref() == "Create tag…"
+                    )).expect("disabled Create tag action");
+                    assert!(model.entry_tooltips[&tag_index].contains("Show tags in history view"));
+                }
+            });
+        });
+    });
+}
+
+#[gpui::test]
+fn local_branch_menu_push_uses_the_clicked_branch_in_sidebar_and_history(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gitcomet_core::domain::{Branch, Remote, Upstream};
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(1);
+    let tip = CommitId("0123456789abcdef".into());
+    let mut repo = RepoState::new_opening(
+        repo_id,
+        gitcomet_core::domain::RepoSpec {
+            workdir: std::path::PathBuf::from("/tmp/branch-menu-push"),
+        },
+    );
+    repo.head_branch = Loadable::Ready("master".into());
+    repo.branches = Loadable::Ready(Arc::new(vec![Branch {
+        name: "feature/test".into(),
+        target: tip.clone(),
+        upstream: Some(Upstream {
+            remote: "mirror".into(),
+            branch: "review/topic".into(),
+        }),
+        divergence: None,
+    }]));
+    repo.remotes = Loadable::Ready(Arc::new(vec![Remote {
+        name: "mirror".into(),
+        url: None,
+        default_branch: None,
+    }]));
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            push_test_state(this, app_state_with_repo(repo, repo_id), cx)
+        });
+    });
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                let target = BranchMenuTarget::local("feature/test");
+                let history_ref = HistoryMenuRef::Branch(target.clone());
+                host.expanded_history_ref = Some(history_ref.clone());
+                for kind in [
+                    PopoverKind::BranchMenu { repo_id, target },
+                    PopoverKind::CommitMenu {
+                        repo_id,
+                        commit_id: tip,
+                        refs: CommitMenuRefs::Only(history_ref),
+                    },
+                ] {
+                    let menu = host.context_menu_model(&kind, cx).expect("branch menu");
+                    assert!(menu.items.iter().any(|item| matches!(
+                        item,
+                        ContextMenuItem::Entry { label, disabled: false, action, .. }
+                            if label.as_ref() == "Push to mirror/review/topic"
+                                && matches!(action.as_ref(), ContextMenuAction::PushBranch {
+                                    repo_id: RepoId(1), local_branch, upstream,
+                                } if local_branch == "feature/test"
+                                    && upstream.remote == "mirror"
+                                    && upstream.branch == "review/topic")
+                    )));
+                }
+            });
+        });
+    });
+}
+
 #[gpui::test]
 fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppContext) {
     let (store, events) = AppStore::new_test(Arc::new(TestBackend));
@@ -1279,7 +1503,9 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Pull into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == "Pull into current (main)" => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1306,7 +1532,9 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Merge into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == format!("Merge {branch_name} into main") => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1331,7 +1559,9 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Squash into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == format!("Squash {branch_name} into main") => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1368,7 +1598,7 @@ fn local_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCon
         ));
 
         let has_pull_into_current = model.items.iter().any(|item| match item {
-            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Pull into current",
+            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Pull into current (main)",
             _ => false,
         });
         assert!(has_pull_into_current);
@@ -1525,7 +1755,9 @@ fn remote_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCo
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Pull into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == "Pull into current (main)" => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1552,7 +1784,9 @@ fn remote_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCo
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Merge into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == format!("Merge {branch_name} into main") => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1577,7 +1811,9 @@ fn remote_branch_menu_has_pull_merge_and_squash_actions(cx: &mut gpui::TestAppCo
                 action,
                 disabled,
                 ..
-            } if label.as_ref() == "Squash into current" => Some(((**action).clone(), *disabled)),
+            } if label.as_ref() == format!("Squash {branch_name} into main") => {
+                Some(((**action).clone(), *disabled))
+            }
             _ => None,
         });
 
@@ -1696,7 +1932,7 @@ fn remote_branch_menu_preserves_exact_identity_and_uses_its_loaded_tip(
             }) if remote == "team/alice" && branch == "main"
         ));
         assert!(matches!(
-            action("Pull into current"),
+            action("Pull into current (feature/local)"),
             Some(ContextMenuAction::PullBranch { remote, branch, .. })
                 if remote == "team/alice" && branch == "main"
         ));
@@ -1728,11 +1964,11 @@ fn remote_branch_menu_preserves_exact_identity_and_uses_its_loaded_tip(
             }) if target == selected_tip
         ));
         assert!(matches!(
-            action("Merge into current"),
+            action("Merge team/alice/main into feature/local"),
             Some(ContextMenuAction::MergeRef { reference, .. }) if reference == selected_tip
         ));
         assert!(matches!(
-            action("Squash into current"),
+            action("Squash team/alice/main into feature/local"),
             Some(ContextMenuAction::SquashRef { reference, .. }) if reference == selected_tip
         ));
         assert!(matches!(
@@ -1741,7 +1977,237 @@ fn remote_branch_menu_preserves_exact_identity_and_uses_its_loaded_tip(
                 kind: PopoverKind::RebaseOntoConfirm { onto, .. }
             }) if onto == selected_tip
         ));
+        assert!(matches!(
+            action("Interactive rebase feature/local onto team/alice/main"),
+            Some(ContextMenuAction::LoadInteractiveRebaseSetup { repo_id: repo, base })
+                if repo == repo_id && base == selected_tip
+        ));
+        assert!(matches!(
+            action("Cherry-pick"),
+            Some(ContextMenuAction::CherryPickCommit { repo_id: repo, commit_id })
+                if repo == repo_id && commit_id.as_ref() == selected_tip
+        ));
+        assert!(matches!(
+            action("Revert 22222222…"),
+            Some(ContextMenuAction::RevertCommit { repo_id: repo, commit_id })
+                if repo == repo_id && commit_id.as_ref() == selected_tip
+        ));
+        for (label, expected_mode) in [
+            (
+                "Reset (--soft) to here",
+                gitcomet_core::services::ResetMode::Soft,
+            ),
+            (
+                "Reset (--mixed) to here",
+                gitcomet_core::services::ResetMode::Mixed,
+            ),
+            (
+                "Reset (--hard) to here",
+                gitcomet_core::services::ResetMode::Hard,
+            ),
+        ] {
+            assert!(matches!(
+                action(label),
+                Some(ContextMenuAction::OpenPopover {
+                    kind: PopoverKind::ResetPrompt { repo_id: repo, target, mode }
+                }) if repo == repo_id && target == selected_tip && mode == expected_mode
+            ));
+        }
+        assert!(matches!(
+            action("Copy commit SHA"),
+            Some(ContextMenuAction::CopyCommitSha { commit_id })
+                if commit_id.as_ref() == selected_tip
+        ));
+        assert!(matches!(
+            action("Export patch…"),
+            Some(ContextMenuAction::ExportPatch { repo_id: repo, commit_id })
+                if repo == repo_id && commit_id.as_ref() == selected_tip
+        ));
     });
+}
+
+#[gpui::test]
+fn branch_menu_interactive_rebase_uses_the_local_tip_and_respects_head_and_busy_state(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gitcomet_core::domain::Branch;
+    use gitcomet_core::services::SequencerState;
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(77);
+    let head = CommitId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
+    let topic = CommitId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+    let target = BranchMenuTarget::local("origin/topic");
+
+    for (tip, busy, expected_disabled) in [
+        (&topic, false, Some(false)),
+        (&topic, true, Some(true)),
+        (&head, false, None),
+    ] {
+        cx.update(|_window, app| {
+            view.update(app, |this, cx| {
+                let mut repo = RepoState::new_opening(
+                    repo_id,
+                    gitcomet_core::domain::RepoSpec {
+                        workdir: std::path::PathBuf::from("/tmp/branch-menu-interactive-rebase"),
+                    },
+                );
+                repo.head_branch = Loadable::Ready("main".into());
+                repo.branches = Loadable::Ready(Arc::new(vec![
+                    Branch {
+                        name: "main".into(),
+                        target: head.clone(),
+                        upstream: None,
+                        divergence: None,
+                    },
+                    Branch {
+                        name: "origin/topic".into(),
+                        target: tip.clone(),
+                        upstream: None,
+                        divergence: None,
+                    },
+                ]));
+                repo.remote_branches =
+                    Loadable::Ready(Arc::new(vec![gitcomet_core::domain::RemoteBranch {
+                        remote: "origin".into(),
+                        name: "topic".into(),
+                        target: CommitId("cccccccccccccccccccccccccccccccccccccccc".into()),
+                    }]));
+                if busy {
+                    repo.sequencer_state = Loadable::Ready(SequencerState::CherryPick);
+                }
+                push_test_state(this, app_state_with_repo(repo, repo_id), cx);
+            });
+        });
+        cx.update(|_window, app| {
+            let host = view.read(app).popover_host.clone();
+            host.update(app, |host, cx| {
+                let menu = host
+                    .context_menu_model(
+                        &PopoverKind::BranchMenu {
+                            repo_id,
+                            target: target.clone(),
+                        },
+                        cx,
+                    )
+                    .expect("branch menu");
+                let action = menu.items.iter().find_map(|item| {
+                    let ContextMenuItem::Entry {
+                        label,
+                        disabled,
+                        action,
+                        ..
+                    } = item
+                    else {
+                        return None;
+                    };
+                    let ContextMenuAction::LoadInteractiveRebaseSetup {
+                        repo_id: actual_repo,
+                        base,
+                    } = action.as_ref()
+                    else {
+                        return None;
+                    };
+                    assert_eq!(label.as_ref(), "Interactive rebase main onto origin/topic");
+                    assert_eq!(*actual_repo, repo_id);
+                    assert_eq!(base, tip.as_ref());
+                    Some(*disabled)
+                });
+                assert_eq!(action, expected_disabled);
+            });
+        });
+    }
+}
+
+#[gpui::test]
+fn branch_destination_labels_name_the_current_branch_when_known(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let repo_id = RepoId(1);
+    let kind = PopoverKind::BranchMenu {
+        repo_id,
+        target: BranchMenuTarget::remote("origin", "feature/topic"),
+    };
+
+    for (language, head_branch, expected) in [
+        (
+            Language::English,
+            Loadable::Ready("feature/本機".into()),
+            [
+                "Pull into current (feature/本機)",
+                "Merge origin/feature/topic into feature/本機",
+                "Squash origin/feature/topic into feature/本機",
+            ],
+        ),
+        (
+            Language::TraditionalChinese,
+            Loadable::Ready("feature/本機".into()),
+            [
+                "拉取至目前分支（feature/本機）",
+                "將 origin/feature/topic 合併至 feature/本機",
+                "將 origin/feature/topic 壓縮合併至 feature/本機",
+            ],
+        ),
+        (
+            Language::English,
+            Loadable::Ready("HEAD".into()),
+            [
+                "Pull into current",
+                "Merge origin/feature/topic into HEAD",
+                "Squash origin/feature/topic into HEAD",
+            ],
+        ),
+        (
+            Language::TraditionalChinese,
+            Loadable::NotLoaded,
+            [
+                "拉取至目前分支",
+                "將 origin/feature/topic 合併至 HEAD",
+                "將 origin/feature/topic 壓縮合併至 HEAD",
+            ],
+        ),
+    ] {
+        cx.update(|_, app| {
+            app.set_global(language);
+            view.update(app, |this, cx| {
+                let mut repo = RepoState::new_opening(
+                    repo_id,
+                    gitcomet_core::domain::RepoSpec {
+                        workdir: std::path::PathBuf::from("/tmp/branch-destination-labels"),
+                    },
+                );
+                repo.head_branch = head_branch;
+                push_test_state(this, app_state_with_repo(repo, repo_id), cx);
+            });
+        });
+        cx.update(|_, app| {
+            let host = view.read(app).popover_host.clone();
+            let model = host
+                .update(app, |host, cx| host.context_menu_model(&kind, cx))
+                .expect("remote branch menu");
+            let labels: Vec<_> = model
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    ContextMenuItem::Entry { label, action, .. }
+                        if matches!(
+                            action.as_ref(),
+                            ContextMenuAction::PullBranch { .. }
+                                | ContextMenuAction::MergeRef { .. }
+                                | ContextMenuAction::SquashRef { .. }
+                        ) =>
+                    {
+                        Some(label.as_ref())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(labels, expected, "{language:?}");
+        });
+    }
 }
 
 #[gpui::test]
@@ -2396,15 +2862,21 @@ fn local_branch_menu_excludes_pull_merge_and_squash_for_current_branch(
             .expect("expected branch context menu model");
 
         let has_merge = model.items.iter().any(|item| match item {
-            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Merge into current",
+            ContextMenuItem::Entry { action, .. } => {
+                matches!(action.as_ref(), ContextMenuAction::MergeRef { .. })
+            }
             _ => false,
         });
         let has_pull = model.items.iter().any(|item| match item {
-            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Pull into current",
+            ContextMenuItem::Entry { action, .. } => {
+                matches!(action.as_ref(), ContextMenuAction::PullBranch { .. })
+            }
             _ => false,
         });
         let has_squash = model.items.iter().any(|item| match item {
-            ContextMenuItem::Entry { label, .. } => label.as_ref() == "Squash into current",
+            ContextMenuItem::Entry { action, .. } => {
+                matches!(action.as_ref(), ContextMenuAction::SquashRef { .. })
+            }
             _ => false,
         });
 

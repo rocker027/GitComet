@@ -38,11 +38,12 @@ These shortcuts apply in the normal GitComet window.
 | Close the active window | `Cmd-Shift-W` | `Ctrl-Shift-W` | |
 | Previous repository tab | `Cmd-PageUp`, `Cmd-{`, `Cmd-Option-Left` | `Ctrl-PageUp`, `Ctrl-Shift-Tab` | |
 | Next repository tab | `Cmd-PageDown`, `Cmd-}`, `Cmd-Option-Right` | `Ctrl-PageDown`, `Ctrl-Tab` | |
+| Switch to repository tab 1–9 | `Cmd-1` … `Cmd-9` | `Ctrl-1` … `Ctrl-9` | As in GitKraken. The conflict resolver keeps `Cmd-1`–`Cmd-3` / `Ctrl-1`–`Ctrl-3` for picking a side. |
 | Toggle full screen | `Cmd-Ctrl-F` | `F11` | |
 | Increase UI scale | `Cmd-+`, `Cmd-=` | `Ctrl-+`, `Ctrl-=` | |
 | Decrease UI scale | `Cmd--` | `Ctrl--` | |
 | Reset UI scale | `Cmd-0` | `Ctrl-0` | |
-| Quit GitComet | `Cmd-Q` | `Ctrl-Q` | |
+| Quit application | `Cmd-Q` | `Ctrl-Q` | |
 
 Additional window-management shortcuts:
 
@@ -65,12 +66,15 @@ that chord (AltGr-S is `ś` on Polish), the shortcut does not run.
 | Action | macOS | Windows / Linux | Notes |
 | --- | --- | --- | --- |
 | Reload repository | `Cmd-R`, `F5` | `Ctrl-R`, `F5` | |
-| Fetch all remotes | `Cmd-Shift-F` | `Ctrl-Shift-F` | |
+| Undo the last Git operation | `Cmd-Z` | `Ctrl-Z` | Commits, branch creation and deletion, and soft resets made since the application started, as in GitKraken. Also the toolbar's Undo button. A commit or soft reset can only be undone with its branch checked out; its changes go back to the staged files. Refused, without changing anything, when a branch moved since or is checked out in another worktree. Any other operation that moves a branch or HEAD (a checkout, merge, rebase, pull, mixed or hard reset...) ends what can be undone. A recreated branch gets its commit back, not its upstream setting. Text inputs and the Files explorer keep the key for their own undo. |
+| Redo the last undone Git operation | `Cmd-Shift-Z` | `Ctrl-Shift-Z` | Also the toolbar's Redo button. `Cmd-Y` / `Ctrl-Y` stays with the conflict resolver's manual alignment. |
+| Fetch all remotes | `Cmd-Shift-F`, `Cmd-L` | `Ctrl-Shift-F`, `Ctrl-L` | `Cmd-L` / `Ctrl-L` match GitKraken. |
 | Pull | `Cmd-Option-Down` | None | Uses the configured upstream. Available from the palette and buttons. |
 | Push | `Cmd-Option-Up` | None | Opens upstream setup when required. Available from the palette and buttons. |
-| Open commit dialog | `Cmd-Option-Enter` | `Ctrl-Alt-Enter` | Review and submit in the dialog; `Cmd-Enter` / `Ctrl-Enter` still submits from the commit message input. |
+| Focus the commit message | `Cmd-Shift-M` | `Ctrl-Shift-M` | Shows the working-copy changes in the details pane and puts the cursor in the commit message, as in GitKraken. |
+| Open commit dialog | `Cmd-Option-Enter` | `Ctrl-Alt-Enter` | Review and submit in the dialog; `Cmd-Enter` / `Ctrl-Enter` still submits from the commit message input. With nothing staged, the dialog stages every change first, like the Commit button; the palette's Stage All and Commit opens the same dialog. |
 | Stage all changes | `Cmd-Option-S` | `Ctrl-Alt-S` | Unresolved conflict markers still require confirmation. |
-| Unstage all changes | `Cmd-Option-U` | `Ctrl-Alt-U` | |
+| Unstage all changes | `Cmd-Option-U`, `Cmd-Shift-U` | `Ctrl-Alt-U`, `Ctrl-Shift-U` | `Cmd-Shift-U` / `Ctrl-Shift-U` match GitKraken. |
 | Create branch | `Cmd-Option-N` | `Ctrl-Alt-N` | Opens the branch creation dialog. |
 | Checkout branch | `Cmd-Option-C` | `Ctrl-Alt-C` | Opens the branch picker. |
 | Stash changes | `Cmd-Shift-S` | `Ctrl-Shift-S` | Opens the stash dialog. |
@@ -148,8 +152,8 @@ Compatibility note:
 
 | Action | macOS | Windows / Linux | Notes |
 | --- | --- | --- | --- |
-| Commit staged changes | `Cmd-Enter` | `Ctrl-Enter` | Commit message input only, and only when the Commit action is enabled. |
-| Commit staged changes and push | `Cmd-Shift-Enter` | `Ctrl-Shift-Enter` | Commit message input only, and only when the Commit & Push action is enabled. |
+| Commit staged changes | `Cmd-Enter` | `Ctrl-Enter` | Commit message input only, and only when the Commit action is enabled. With nothing staged, the button reads Stage All & Commit and this stages every change, untracked files included, before committing. Not during an amend, a merge or rebase, or with a conflict. |
+| Commit staged changes and push | `Cmd-Shift-Enter` | `Ctrl-Shift-Enter` | Commit message input only, and only when the Commit & Push action is enabled. It never stages for you: with nothing staged it stays off. |
 
 ### Commit message editor
 
@@ -164,7 +168,8 @@ These shortcuts apply while the commit history list is showing.
 
 | Action | macOS | Windows / Linux | Notes |
 | --- | --- | --- | --- |
-| Previous / next row | `Up`, `Down` | `Up`, `Down` | While the history list has focus. |
+| Previous / next row | `Up`, `Down`, `K`, `J` | `Up`, `Down`, `K`, `J` | While the history list has focus. Without modifiers, K moves up one row and J moves down one row. Plain Up/Down keep their existing row behavior. |
+| Newer / older commit on the first-parent path | `Shift-Up`, `Shift-Down`, `Shift-K`, `Shift-J` | `Shift-Up`, `Shift-Down`, `Shift-K`, `Shift-J` | While the graph has focus and the current selection is a visible commit. Shift-Up/Shift-K moves to a newer commit; Shift-Down/Shift-J moves to an older commit along the first-parent path. Reversing at a fork prefers the path just followed. Skips worktree rows and stops at the current graph boundary. Shift-click keeps its existing range-selection behavior. |
 | Previous / next page | `PageUp`, `PageDown` | `PageUp`, `PageDown` | While the history list has focus. Moves selection by one visible page, updates the selected row's details, and stops at the first / last available row. With nothing selected, selects the first row. |
 | First / last row | `Home`, `End` | `Home`, `End` | While the history list has focus. Also with nothing selected. |
 | Find a commit | `Cmd-F` | `Ctrl-F` | Opens the find bar over the history. Matches the commit summary or the author (each on its own), or the start of the SHA (4+ hex characters), across the whole history, not only the loaded rows. Typing selects the first match. With the bar already open, refocuses it with the query selected. |
@@ -197,7 +202,7 @@ the main canvas. An open diff preview stays open.
 | File list: focus the diff | `Enter` | `Enter` | The selected file stays open. |
 | File list: return to graph | `Escape` | `Escape` | Closes file search first. Restores the same commit and graph position. |
 | Filter the focused file list | `Cmd-F` | `Ctrl-F` | Case-insensitive path substring. Enter or Down focuses the results; Escape clears the filter. Diff navigation follows the filtered list. |
-| Open the selected commit/file menu | `Shift-F10` | `Shift-F10` | Uses the existing context menu and its confirmations. |
+| Open the selected commit, worktree, or file menu | `Shift-F10` | `Shift-F10` | Uses the existing context menu and its confirmations. |
 
 Review a commit with `Enter` → `Up`/`Down` → `Enter`, then use `Up`/`Down`
 through its changes and files. `Escape` returns one level at a time:
@@ -319,6 +324,25 @@ Preview-mode note:
 - [Markdown previews](markdown-previews.md) also support text selection, link menus, and keyboard-operated disclosures in embedded descriptions.
 - Rendered markdown preview hides the raw diff navigation controls and ignores the raw-diff-only view toggles, whitespace toggle, and conflict navigation hotkeys until you return to source mode.
 - The function-key navigation aliases remain available from text inputs. Arrow keys and Option/Alt arrows belong to the focused input, terminal, menu, or dialog.
+
+## Interactive rebase editor
+
+These keys apply while the interactive rebase or cherry-pick editor has focus;
+click a commit row first. They match GitKraken's keys and follow the same rules
+as the row's action menu, which shows the same letters.
+
+| Action | Shortcut | Notes |
+| --- | --- | --- |
+| Pick the selected commit | `P` | Unavailable while later commits squash into it. |
+| Reword the selected commit | `R` | Opens the message dialog. |
+| Squash the selected commit into the one below | `S` | Needs an earlier commit to fold into. |
+| Drop the selected commit | `D` | The last remaining commit cannot be dropped. |
+
+## Branch drag and drop
+
+| Action | Shortcut | Notes |
+| --- | --- | --- |
+| Merge, squash, rebase or push between two branches | Drag a sidebar branch onto another | Opens a menu for the pair. Merge, squash and push start at once, as in the branch menu and the toolbar; rebase asks first; interactive rebase opens the editor. Merges go into the checked-out branch and rebases move it, so pairs that need another branch checked out are listed greyed out with the reason. Push goes to the checked-out branch's upstream; a branch without one can push to the remote branch of its own name, through the first-push prompt (directly when git-annex manages push). |
 
 ## Context menu shortcuts
 

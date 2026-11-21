@@ -3,6 +3,7 @@
 use super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
 use crate::kit::{Scrollbar, ScrollbarAxis};
+use crate::localization::Language;
 use crate::view::panels::popover::picker_nav::{
     PickerNavKeys, PickerNavOutcome, handle_picker_nav,
 };
@@ -61,6 +62,10 @@ fn matches_query(query: &str, haystacks: &[&str]) -> bool {
         || haystacks
             .iter()
             .any(|haystack| haystack.to_lowercase().contains(query))
+}
+
+fn search_placeholder(language: Language) -> &'static str {
+    language.text("Search workspaces and repositories", "搜尋工作區與儲存庫")
 }
 
 fn repo_name(path: &Path) -> String {
@@ -131,7 +136,7 @@ impl HomeView {
         let search_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Search workspaces and repositories".into(),
+                    placeholder: search_placeholder(Language::current(cx)).into(),
                     ..Default::default()
                 },
                 window,
@@ -526,6 +531,7 @@ impl HomeView {
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
         let theme = AppTheme::current(cx);
+        let language = Language::current(cx);
         let ui_scale = crate::ui_scale::UiScale::from_percent(crate::ui_scale::current(cx).percent);
         range
             .filter_map(|ix| this.rows.workspaces.get(ix).cloned().map(|w| (ix, w)))
@@ -541,7 +547,7 @@ impl HomeView {
                         });
                     (
                         "home_workspace_remove",
-                        SharedString::from("Delete workspace"),
+                        language.text("Delete workspace", "刪除工作區").into(),
                         on_remove,
                     )
                 });
@@ -550,7 +556,7 @@ impl HomeView {
                 components::picker_row(
                     theme,
                     ui_scale,
-                    &crate::view::workspace_picker::workspace_picker_item(&workspace),
+                    &crate::view::workspace_picker::workspace_picker_item(&workspace, language),
                     components::PickerRowSpec {
                         id: row_id.clone().into(),
                         selector_prefix: "home",
@@ -586,6 +592,7 @@ impl HomeView {
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
         let theme = AppTheme::current(cx);
+        let language = Language::current(cx);
         let scale = crate::ui_scale::UiScale::from_percent(crate::ui_scale::current(cx).percent);
         let offset = this.rows.workspaces.len();
         range
@@ -598,7 +605,8 @@ impl HomeView {
                     .map(|parent| parent.display().to_string())
                     .unwrap_or_default();
                 let detail = if this.pinned_repos.contains(&path) {
-                    format!("Pinned · {parent}")
+                    let pinned = language.text("Pinned", "已釘選");
+                    format!("{pinned} · {parent}")
                 } else {
                     parent
                 };
@@ -618,9 +626,12 @@ impl HomeView {
                         this.remove_repository(&remove_path, cx);
                     });
                 let tooltip = if pinned {
-                    "Unpin and remove from recent repositories"
+                    language.text(
+                        "Unpin and remove from recent repositories",
+                        "取消釘選並從最近儲存庫移除",
+                    )
                 } else {
-                    "Remove from recent repositories"
+                    language.text("Remove from recent repositories", "從最近儲存庫移除")
                 };
                 let trailing = this.row_trailing(
                     row_id.clone(),
@@ -694,20 +705,29 @@ impl HomeView {
 impl Render for HomeView {
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let theme = AppTheme::current(cx);
+        let language = Language::current(cx);
         let percent = crate::ui_scale::current(cx).percent;
         let scaled_px = crate::ui_scale::scaler(percent);
+        let placeholder = search_placeholder(language);
+        if self.search_input.read(cx).placeholder() != placeholder {
+            self.search_input
+                .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        }
         self.sync_rows(cx);
         let filtering = !self.search_query.trim().is_empty();
         let workspaces_column = self.column(
             HomeColumn {
-                title: "Workspaces",
+                title: language.text("Workspaces", "工作區"),
                 frame_id: "home_workspaces_list",
                 list_id: "home_workspaces_rows",
                 scrollbar_id: "home_workspaces_scrollbar",
                 empty_text: if filtering {
-                    "No matching workspaces."
+                    language.text("No matching workspaces.", "沒有相符的工作區。")
                 } else {
-                    "No saved workspaces yet. Every window with repositories open is one."
+                    language.text(
+                        "No saved workspaces yet. Every window with repositories open is one.",
+                        "尚未儲存任何工作區。每個開啟儲存庫的視窗都是一個工作區。",
+                    )
                 },
             },
             self.rows.workspaces.len(),
@@ -720,14 +740,17 @@ impl Render for HomeView {
         );
         let repositories_column = self.column(
             HomeColumn {
-                title: "Recent repositories",
+                title: language.text("Recent repositories", "最近的儲存庫"),
                 frame_id: "home_recent_list",
                 list_id: "home_recent_rows",
                 scrollbar_id: "home_recent_scrollbar",
                 empty_text: if filtering {
-                    "No matching repositories."
+                    language.text("No matching repositories.", "沒有相符的儲存庫。")
                 } else {
-                    "Repositories you open appear here."
+                    language.text(
+                        "Repositories you open appear here.",
+                        "開啟過的儲存庫會顯示在這裡。",
+                    )
                 },
             },
             self.rows.repositories.len(),
@@ -788,26 +811,32 @@ impl GitCometView {
             self.state.git_runtime.availability,
             gitcomet_core::process::GitExecutableAvailability::Checking
         ) {
-            return self.startup_repository_loading_screen();
+            return self.startup_repository_loading_screen(cx);
         }
         if self.git_runtime_unavailable() {
             return self.git_unavailable_splash(cx);
         }
 
         let theme = self.theme;
+        let language = Language::current(cx);
         let scaled_px = crate::ui_scale::scaler(self.ui_scale_percent);
         let colors = theme.colors.interstitial;
         let cta_scale = crate::ui_scale::UiScale::from_percent(self.ui_scale_percent);
 
         let open_button = components::interstitial_cta_button(
             "home_open_repo",
-            "Open Repository",
+            language.text("Open Repository", "開啟儲存庫"),
             "icons/folder.svg",
             true,
             theme,
             cta_scale,
         )
-        .gitcomet_tooltip(theme, "Open an existing repository".into())
+        .gitcomet_tooltip(
+            theme,
+            language
+                .text("Open an existing repository", "開啟現有的儲存庫")
+                .into(),
+        )
         .on_activate(
             false,
             controls::ControlActivation::Action,
@@ -820,13 +849,18 @@ impl GitCometView {
             let last_bounds_for_click = Rc::clone(&last_bounds);
             let button = components::interstitial_cta_button(
                 "home_clone_repo",
-                "Clone Repository",
+                language.text("Clone Repository", "複製儲存庫"),
                 "icons/cloud.svg",
                 false,
                 theme,
                 cta_scale,
             )
-            .gitcomet_tooltip(theme, "Clone a repository from a URL".into())
+            .gitcomet_tooltip(
+                theme,
+                language
+                    .text("Clone a repository from a URL", "從網址複製儲存庫")
+                    .into(),
+            )
             .on_activate(
                 false,
                 controls::ControlActivation::Action,
@@ -848,13 +882,21 @@ impl GitCometView {
         let init_button = (!self.blocks_repository_management_actions()).then(|| {
             components::interstitial_cta_button(
                 "home_init_repo",
-                "Initialize Repository",
+                language.text("Initialize Repository", "初始化儲存庫"),
                 "icons/git_branch.svg",
                 false,
                 theme,
                 cta_scale,
             )
-            .gitcomet_tooltip(theme, "Create a new repository in a folder".into())
+            .gitcomet_tooltip(
+                theme,
+                language
+                    .text(
+                        "Create a new repository in a folder",
+                        "在資料夾中建立儲存庫",
+                    )
+                    .into(),
+            )
             .on_activate(
                 false,
                 controls::ControlActivation::Action,
@@ -871,9 +913,10 @@ impl GitCometView {
                         .text_size(theme.ui_text(11.0))
                         .text_color(colors.muted)
                         .text_center()
-                        .child(
+                        .child(language.text(
                             "Native folder picker unavailable. Enter a repository path manually.",
-                        ),
+                            "無法使用系統的資料夾選擇器。請手動輸入儲存庫路徑。",
+                        )),
                 )
                 .child(self.open_repo_panel(cx))
         });

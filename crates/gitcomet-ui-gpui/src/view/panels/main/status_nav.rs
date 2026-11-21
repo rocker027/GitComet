@@ -209,7 +209,7 @@ pub(super) fn status_navigation_context<'a>(
 
 /// Which section a working-tree diff target belongs to. Shared so the order
 /// looked up for navigation is the order navigation then walks.
-pub(super) fn status_navigation_section(
+pub(in crate::view) fn status_navigation_section(
     repo: &RepoState,
     path: &std::path::Path,
     area: DiffArea,

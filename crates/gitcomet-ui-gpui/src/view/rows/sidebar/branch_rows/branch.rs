@@ -2,6 +2,7 @@
 //! worktree badges.
 
 use super::*;
+use crate::view::rows::branch_drag::{BranchDrag, BranchDragPreview};
 
 impl SidebarPaneView {
     /// One local or remote branch, in the tree or among the pins.
@@ -29,6 +30,10 @@ impl SidebarPaneView {
         } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
+        let lifetime = this
+            .active_repo()
+            .filter(|repo| repo.id == repo_id)
+            .map(RepoState::lifetime);
         let full_name_for_checkout: SharedString = name.clone();
         let surface = if ix < ctx.pin_count {
             SidebarRowSurface::Pins
@@ -42,6 +47,13 @@ impl SidebarPaneView {
         let target_for_reveal = target.clone();
         let target_for_checkout = target.clone();
         let target_for_menu = target.clone();
+        let target_for_drop = target.clone();
+        let target_for_can_drop = target.clone();
+        let drag_payload = BranchDrag {
+            repo_id,
+            lifetime: lifetime.unwrap_or(0),
+            target: target.clone(),
+        };
         let section_key = match section {
             BranchSection::Local => "local",
             BranchSection::Remote => "remote",
@@ -147,9 +159,9 @@ impl SidebarPaneView {
                     .gitcomet_tooltip(
                         theme,
                         if in_history_focus {
-                            "Stop focus"
+                            text(cx, "Stop focus", "停止聚焦")
                         } else {
-                            "Focus"
+                            text(cx, "Focus", "聚焦")
                         }
                         .into(),
                     )
@@ -271,7 +283,7 @@ impl SidebarPaneView {
 
         if is_upstream && section == BranchSection::Remote {
             end_accessories = end_accessories
-                .child(ctx.upstream_badge(Some(format!("branch_upstream_badge_{ix}"))));
+                .child(ctx.upstream_badge(Some(format!("branch_upstream_badge_{ix}")), cx));
         }
 
         if show_worktree_badge {
@@ -349,19 +361,62 @@ impl SidebarPaneView {
                             }
                         }
                         BranchSection::Remote => {
-                            if let Some((remote, branch)) = target_for_checkout.remote_parts() {
-                                this.open_popover_at(
-                                    PopoverKind::CheckoutRemoteBranchPrompt {
+                            let Some((remote, branch)) = target_for_checkout.remote_parts() else {
+                                return;
+                            };
+                            if this.active_repo().is_some_and(RepoState::is_bare) {
+                                this.explain_working_tree_required(cx);
+                                return;
+                            }
+                            let action = remote_branch_double_click_action(
+                                this.active_repo()
+                                    .and_then(|repo| repo.branches.ready())
+                                    .map(|branches| branches.as_slice()),
+                                remote,
+                                branch,
+                            );
+                            match action {
+                                RemoteBranchDoubleClickAction::CheckoutTracking { name } => {
+                                    // As a local branch's double-click: a branch held
+                                    // by another worktree opens that worktree.
+                                    let held_at = this.active_repo().and_then(|repo| {
+                                        crate::view::rows::branch_held_elsewhere(repo, &name)
+                                    });
+                                    if let Some(path) = held_at {
+                                        crate::app::open_repository_from_view(
+                                            cx,
+                                            window.window_handle().window_id(),
+                                            path,
+                                        );
+                                    } else {
+                                        this.store.dispatch(Msg::CheckoutBranch { repo_id, name });
+                                        this.rebuild_diff_cache(cx);
+                                    }
+                                }
+                                RemoteBranchDoubleClickAction::CreateTracking { name } => {
+                                    this.store.dispatch(Msg::CheckoutRemoteBranch {
                                         repo_id,
                                         remote: remote.to_string(),
                                         branch: branch.to_string(),
-                                    },
-                                    e.position(),
-                                    window,
-                                    cx,
-                                );
-                                cx.notify();
+                                        local_branch: name,
+                                        mode: gitcomet_core::services::CheckoutRemoteBranchMode::Create,
+                                    });
+                                    this.rebuild_diff_cache(cx);
+                                }
+                                RemoteBranchDoubleClickAction::PromptForName => {
+                                    this.open_popover_at(
+                                        PopoverKind::CheckoutRemoteBranchPrompt {
+                                            repo_id,
+                                            remote: remote.to_string(),
+                                            branch: branch.to_string(),
+                                        },
+                                        e.position(),
+                                        window,
+                                        cx,
+                                    );
+                                }
                             }
+                            cx.notify();
                         }
                     }
                 }),
@@ -389,6 +444,49 @@ impl SidebarPaneView {
                     is_upstream,
                 ),
             );
+
+        // Drag a branch onto another to merge, rebase or push, as in
+        // GitKraken. The drop only opens a menu; each entry runs what its
+        // branch-menu counterpart runs (merge and push at once, rebase after
+        // its confirmation).
+        let drop_highlight = theme.colors.accent.subtle_background;
+        let drop_store = Arc::clone(&this.store);
+        let row = row
+            .on_drag(drag_payload, move |drag, offset, _window, cx| {
+                cx.new(|_| BranchDragPreview::new(drag, theme, offset))
+            })
+            .can_drop(move |dragged, _window, _cx| {
+                dragged.downcast_ref::<BranchDrag>().is_some_and(|drag| {
+                    lifetime.is_some_and(|lifetime| {
+                        drag.can_drop_live(
+                            &drop_store.snapshot(),
+                            repo_id,
+                            lifetime,
+                            &target_for_can_drop,
+                        )
+                    })
+                })
+            })
+            .on_drop(cx.listener(move |this, drag: &BranchDrag, window, cx| {
+                if !lifetime.is_some_and(|lifetime| {
+                    drag.can_drop_live(&this.store.snapshot(), repo_id, lifetime, &target_for_drop)
+                }) {
+                    return;
+                }
+                cx.stop_propagation();
+                this.open_popover_at(
+                    PopoverKind::BranchDropMenu {
+                        repo_id,
+                        source: drag.target.clone(),
+                        target: target_for_drop.clone(),
+                    },
+                    window.mouse_position(),
+                    window,
+                    cx,
+                );
+                cx.notify();
+            }))
+            .on_drag_over::<BranchDrag>(move |style, _drag, _window, _cx| style.bg(drop_highlight));
 
         row.into_any_element()
     }

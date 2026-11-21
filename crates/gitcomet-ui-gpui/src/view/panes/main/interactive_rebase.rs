@@ -293,6 +293,48 @@ fn clear_stale_reword_edits(
     }
 }
 
+/// The row action menu's eligibility, `(can_squash, can_drop)`: dropping
+/// the last remaining commit is refused, and squash needs a commit to fold
+/// into. The menu and the single-key shortcuts share it.
+pub(in crate::view) fn rebase_action_menu_flags(
+    entries: &[InteractiveRebaseEntry],
+    ix: usize,
+) -> (bool, bool) {
+    let current_action = entries.get(ix).map(|e| e.action);
+    let can_drop =
+        current_action == Some(InteractiveRebaseAction::Drop) || non_drop_count(entries) > 1;
+    let can_squash = squash_target(entries, ix).is_some();
+    (can_squash, can_drop)
+}
+
+/// The single keys that set the selected row's action, as in the row menu:
+/// P pick, R reword, S squash, D drop.
+fn rebase_action_for_key(key: &str) -> Option<InteractiveRebaseAction> {
+    match key {
+        "p" => Some(InteractiveRebaseAction::Pick),
+        "r" => Some(InteractiveRebaseAction::Reword),
+        "s" => Some(InteractiveRebaseAction::Squash),
+        "d" => Some(InteractiveRebaseAction::Drop),
+        _ => None,
+    }
+}
+
+/// Whether the row menu would offer `action` for the entry at `ix`.
+fn rebase_action_offered(
+    entries: &[InteractiveRebaseEntry],
+    ix: usize,
+    action: InteractiveRebaseAction,
+    pick_locked: bool,
+) -> bool {
+    let (can_squash, can_drop) = rebase_action_menu_flags(entries, ix);
+    match action {
+        InteractiveRebaseAction::Pick => !pick_locked,
+        InteractiveRebaseAction::Reword => true,
+        InteractiveRebaseAction::Drop => can_drop,
+        InteractiveRebaseAction::Squash | InteractiveRebaseAction::Fixup => can_squash,
+    }
+}
+
 fn non_drop_count(entries: &[InteractiveRebaseEntry]) -> usize {
     entries
         .iter()
@@ -590,6 +632,78 @@ impl MainPaneView {
         cx.notify();
     }
 
+    /// The editor entry for the commit selected in history, if it is listed.
+    /// The row single keys act on: the one last clicked in the editor, which
+    /// the store may not have published as the selection yet, else the
+    /// commit selected in history.
+    fn selected_rebase_entry_ix(&self) -> Option<usize> {
+        let repo = self.active_repo()?;
+        let entries = &self.active_irebase()?.entries;
+        let clicked = self
+            .irebase_key_target
+            .as_ref()
+            .filter(|(repo_id, _)| *repo_id == repo.id)
+            .and_then(|(_, commit_id)| {
+                entries
+                    .iter()
+                    .position(|entry| entry.commit_id == *commit_id)
+            });
+        clicked.or_else(|| {
+            let selected = repo.history_state.selected_commit.as_ref()?;
+            entries
+                .iter()
+                .position(|entry| entry.commit_id.as_str() == selected.0.as_ref())
+        })
+    }
+
+    /// Sets the selected row's action from a single key, applying the row
+    /// menu's rules; Reword opens the message dialog as the menu does.
+    /// Returns whether the key was consumed.
+    fn apply_rebase_action_key(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(action) = rebase_action_for_key(key) else {
+            return false;
+        };
+        let Some(ix) = self.selected_rebase_entry_ix() else {
+            return false;
+        };
+        let pick_locked = self.active_entry_pick_locked(ix);
+        let Some(st) = self.active_irebase() else {
+            return false;
+        };
+        if !rebase_action_offered(&st.entries, ix, action, pick_locked) {
+            return true;
+        }
+        let original_action = st.entries[ix].action;
+        let reword_seed = (action == InteractiveRebaseAction::Reword)
+            .then(|| gitcomet_core::squash::reword_seed_message(&st.entries, ix));
+        self.set_rebase_action(ix, action, cx);
+        if let Some(original_message) = reword_seed {
+            let root = self.root_view.clone();
+            let wh = window.window_handle();
+            cx.defer(move |cx| {
+                let _ = wh.update(cx, |_, window, cx| {
+                    let _ = root.update(cx, |root, cx| {
+                        root.open_popover_centered(
+                            PopoverKind::RebaseReword {
+                                ix,
+                                original_action,
+                                original_message,
+                            },
+                            window,
+                            cx,
+                        );
+                    });
+                });
+            });
+        }
+        true
+    }
+
     /// Commit the pending drag reorder. Shared by every way a drag can end
     /// (drop on the list, drop outside it, mouse released out of the window)
     /// so the paths cannot diverge. Returns true if there was a drag to end.
@@ -790,10 +904,7 @@ impl MainPaneView {
                 let Some(st) = this.interactive_rebase_states.get(&repo_id) else {
                     return;
                 };
-                let nd = non_drop_count(&st.entries);
-                let current_action = st.entries.get(ix).map(|e| e.action);
-                let can_drop = current_action == Some(InteractiveRebaseAction::Drop) || nd > 1;
-                let can_squash = squash_target(&st.entries, ix).is_some();
+                let (can_squash, can_drop) = rebase_action_menu_flags(&st.entries, ix);
                 let wh = window.window_handle();
                 let root = this.root_view.clone();
                 cx.defer(move |cx| {
@@ -908,6 +1019,7 @@ impl MainPaneView {
         let accent = theme.colors.accent.foreground;
         let row_div = div()
             .id(("irebase_row", ix))
+            .debug_selector(move || format!("irebase_row_{ix}"))
             .relative()
             .w_full()
             .flex()
@@ -1028,12 +1140,16 @@ impl MainPaneView {
             .on_activate(
                 is_drag_source,
                 controls::ControlActivation::Composite,
-                cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
                     this.store.dispatch(Msg::SelectCommit {
                         request_id: None,
                         repo_id,
                         commit_id: commit_id_val.clone(),
                     });
+                    // The editor takes focus so the row's single-key actions apply,
+                    // to this row even before the store publishes the selection.
+                    this.irebase_key_target = Some((repo_id, commit_id_val.0.to_string()));
+                    window.focus(&this.irebase_focus_handle, cx);
                     cx.notify();
                 }),
             )
@@ -1046,10 +1162,7 @@ impl MainPaneView {
                     let Some(st) = this.interactive_rebase_states.get(&repo_id) else {
                         return;
                     };
-                    let nd = non_drop_count(&st.entries);
-                    let current_action = st.entries.get(ix).map(|e| e.action);
-                    let can_drop = current_action == Some(InteractiveRebaseAction::Drop) || nd > 1;
-                    let can_squash = squash_target(&st.entries, ix).is_some();
+                    let (can_squash, can_drop) = rebase_action_menu_flags(&st.entries, ix);
                     let wh = window.window_handle();
                     let root = this.root_view.clone();
                     let pos = e.position;
@@ -1146,52 +1259,45 @@ impl MainPaneView {
         // Setups can outlive the state they were opened under (a merge or
         // pick started from another surface, or externally in a terminal);
         // git would refuse the start, so hold the button until it can work.
-        let history_rewrite_busy = repo.history_rewrite_busy();
-        let (editor_mode, base, header_title, header_detail, loading_state) =
-            if let Some(setup) = repo.interactive_rebase_setup.as_ref() {
-                let base = setup.base.clone();
-                // Only abbreviate full commit ids; leave branch names intact.
-                let base_short: SharedString =
-                    if base.len() > 16 && base.chars().all(|c| c.is_ascii_hexdigit()) {
-                        base.get(..8).unwrap_or(&base).to_string().into()
-                    } else {
-                        base.clone().into()
-                    };
-                // Prefer a branch name that points at the base commit; fall back to the
-                // abbreviated sha.
-                let base_display: SharedString = match &repo.branches {
-                    Loadable::Ready(branches) => branches
-                        .iter()
-                        .find(|b| b.target.as_ref() == base.as_str())
-                        .map(|b| SharedString::from(b.name.clone()))
-                        .unwrap_or_else(|| base_short.clone()),
-                    _ => base_short.clone(),
-                };
-                (
-                    ICommitEditorMode::Rebase,
-                    Some(base),
-                    SharedString::from("Interactive Rebase"),
-                    SharedString::from(format!("onto {base_display}")),
-                    setup.entries.clone(),
-                )
-            } else if let Some(setup) = repo.interactive_cherry_pick_setup.as_ref() {
-                let count = setup.entries.len();
-                let entries = match &setup.full_messages {
-                    Loadable::NotLoaded => Loadable::NotLoaded,
-                    Loadable::Loading => Loadable::Loading,
-                    Loadable::Ready(()) => Loadable::Ready(setup.entries.clone()),
-                    Loadable::Error(error) => Loadable::Error(error.clone()),
-                };
-                (
-                    ICommitEditorMode::CherryPick,
-                    None,
-                    SharedString::from("Cherry-pick"),
-                    SharedString::from(format!("{count} commits")),
-                    entries,
-                )
+        let history_rewrite_busy = repo.history_rewrite_busy()
+            || self.state.worktree_finish_blocks_workdir_mutation(repo_id);
+        let (editor_mode, base, header_title, header_detail, loading_state) = if let Some(setup) =
+            repo.interactive_rebase_setup.as_ref()
+        {
+            let base = setup.base.clone();
+            // An exact commit may be shared by several refs. Display its
+            // SHA instead of attributing it to an unrelated branch.
+            let base_display = if base.len() > 16 && base.chars().all(|c| c.is_ascii_hexdigit()) {
+                &base[..8]
             } else {
-                return div().child("No interactive commit setup");
+                &base
             };
+            let header_detail = SharedString::from(format!("onto {base_display}"));
+            (
+                ICommitEditorMode::Rebase,
+                Some(base),
+                SharedString::from("Interactive Rebase"),
+                header_detail,
+                setup.entries.clone(),
+            )
+        } else if let Some(setup) = repo.interactive_cherry_pick_setup.as_ref() {
+            let count = setup.entries.len();
+            let entries = match &setup.full_messages {
+                Loadable::NotLoaded => Loadable::NotLoaded,
+                Loadable::Loading => Loadable::Loading,
+                Loadable::Ready(()) => Loadable::Ready(setup.entries.clone()),
+                Loadable::Error(error) => Loadable::Error(error.clone()),
+            };
+            (
+                ICommitEditorMode::CherryPick,
+                None,
+                SharedString::from("Cherry-pick"),
+                SharedString::from(format!("{count} commits")),
+                entries,
+            )
+        } else {
+            return div().child("No interactive commit setup");
+        };
         let entry_content: gpui::AnyElement = match &loading_state {
             Loadable::NotLoaded => div()
                 .px_2()
@@ -1317,6 +1423,20 @@ impl MainPaneView {
             .flex()
             .flex_col()
             .size_full()
+            .track_focus(&self.irebase_focus_handle)
+            .key_context("InteractiveRebase")
+            .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, window, cx| {
+                if !this.irebase_focus_handle.is_focused(window) {
+                    return;
+                }
+                let mods = e.keystroke.modifiers;
+                if mods.number_of_modifiers() > 0 {
+                    return;
+                }
+                if this.apply_rebase_action_key(e.keystroke.key.as_str(), window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             // Safety net: end the drag for drops that land outside the scroll container
             // (e.g. releasing the mouse above the list when dragging the topmost item).
             // Commits at the last previewed position, same as dropping on the list.
@@ -1548,6 +1668,86 @@ mod tests {
             message: format!("summary {id}"),
             new_message: new_message.map(|s| s.to_string()),
         }
+    }
+
+    #[test]
+    fn single_keys_map_to_the_row_menu_actions() {
+        assert_eq!(
+            rebase_action_for_key("p"),
+            Some(InteractiveRebaseAction::Pick)
+        );
+        assert_eq!(
+            rebase_action_for_key("r"),
+            Some(InteractiveRebaseAction::Reword)
+        );
+        assert_eq!(
+            rebase_action_for_key("s"),
+            Some(InteractiveRebaseAction::Squash)
+        );
+        assert_eq!(
+            rebase_action_for_key("d"),
+            Some(InteractiveRebaseAction::Drop)
+        );
+        assert_eq!(rebase_action_for_key("f"), None);
+        assert_eq!(rebase_action_for_key("x"), None);
+    }
+
+    #[test]
+    fn single_keys_follow_the_row_menu_rules() {
+        let entries = vec![
+            entry(InteractiveRebaseAction::Pick, "a", None),
+            entry(InteractiveRebaseAction::Pick, "b", None),
+        ];
+        // The oldest commit has nothing to fold into.
+        assert!(!rebase_action_offered(
+            &entries,
+            0,
+            InteractiveRebaseAction::Squash,
+            false
+        ));
+        assert!(rebase_action_offered(
+            &entries,
+            1,
+            InteractiveRebaseAction::Squash,
+            false
+        ));
+        assert!(rebase_action_offered(
+            &entries,
+            1,
+            InteractiveRebaseAction::Drop,
+            false
+        ));
+        assert!(!rebase_action_offered(
+            &entries,
+            1,
+            InteractiveRebaseAction::Pick,
+            true
+        ));
+        assert!(rebase_action_offered(
+            &entries,
+            1,
+            InteractiveRebaseAction::Reword,
+            true
+        ));
+
+        // The last remaining commit cannot be dropped, but an already
+        // dropped one can be set to Drop again.
+        let one_left = vec![
+            entry(InteractiveRebaseAction::Drop, "a", None),
+            entry(InteractiveRebaseAction::Pick, "b", None),
+        ];
+        assert!(!rebase_action_offered(
+            &one_left,
+            1,
+            InteractiveRebaseAction::Drop,
+            false
+        ));
+        assert!(rebase_action_offered(
+            &one_left,
+            0,
+            InteractiveRebaseAction::Drop,
+            false
+        ));
     }
 
     #[test]

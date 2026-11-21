@@ -1,6 +1,7 @@
 use super::super::path_display;
 use super::super::*;
 use crate::kit::text_truncation::path_alignment_visible_signature;
+use crate::localization::text;
 use crate::view::pending_commit::PendingCommit;
 use gitcomet_core::history_find::HistoryFindQuery;
 use rustc_hash::FxHasher;
@@ -8,6 +9,10 @@ use std::hash::{Hash, Hasher};
 
 mod review;
 mod review_search;
+
+const COMMIT_MESSAGE_PLACEHOLDER: (&str, &str) = ("What changed and why", "變更內容與原因");
+const COMMIT_REWORD_PLACEHOLDER: (&str, &str) = ("Enter commit message", "輸入提交訊息");
+const REVIEW_SEARCH_PLACEHOLDER: (&str, &str) = ("Filter files", "篩選檔案");
 
 /// A commit message being edited in the commit details. Kept only while that
 /// commit stays the one shown.
@@ -86,7 +91,7 @@ pub(in super::super) struct DetailsPaneView {
     /// The history find bar's query, highlighted in the commit details. It
     /// lives on the history view, so this copy is what repaints the pane.
     pub(in super::super) history_find_query: Option<HistoryFindQuery>,
-    root_view: WeakEntity<GitCometView>,
+    pub(in crate::view) root_view: WeakEntity<GitCometView>,
     diff_renderer: WeakEntity<DiffRenderer>,
     pub(in crate::view) tooltip_host: WeakEntity<TooltipHost>,
     notify_fingerprint: u64,
@@ -140,6 +145,11 @@ pub(in super::super) struct DetailsPaneView {
     pub(in super::super) commit_reword_input: Entity<components::TextInput>,
     pub(in super::super) commit_reword_scroll: ScrollHandle,
     pub(in super::super) commit_reword: Option<CommitRewordDraft>,
+    /// An edit asked for from the history row's menu, waiting for the
+    /// commit's details to load: `(repo, commit, selection when asked)`.
+    pub(in super::super) pending_commit_reword: Option<(RepoId, CommitId, Option<CommitId>)>,
+    /// The editor opened outside a render; focus it on the next one.
+    pub(in super::super) commit_reword_focus_pending: bool,
     pub(in super::super) commit_details_message_link_menu: Entity<components::CommitLinkMenu>,
     pub(in super::super) commit_message_drafts: FxHashMap<RepoId, SharedString>,
     pub(in super::super) commit_amend_enabled: bool,
@@ -147,6 +157,8 @@ pub(in super::super) struct DetailsPaneView {
     /// `--no-verify` for the commit and the push after it.
     pub(in super::super) commit_skip_hooks_enabled: bool,
     pub(in super::super) pending_commits: FxHashMap<RepoId, PendingCommit>,
+    /// The AI commit message being generated for a repository's staged changes.
+    pub(in super::super) commit_message_generation: Option<(RepoId, gpui::Task<()>)>,
     pending_amend_prefill: Option<RepoId>,
     /// Suggestion (repo and rev) already offered to the commit box, so git's
     /// prepared message is applied once and never re-applied.
@@ -315,6 +327,20 @@ impl Element for StatusSectionResizeTracker {
 }
 
 impl DetailsPaneView {
+    pub(in crate::view) fn is_empty_working_copy(&self) -> bool {
+        self.active_repo().is_some_and(|repo| {
+            let showing_review = !self.review_details_dismissed
+                && (repo.history_state.selected_commit.is_some()
+                    || Self::shows_comparison(repo)
+                    || self.selected_worktree_summary().is_some());
+            !showing_review
+                && !self.commit_amend_enabled
+                && !merge_in_progress(repo)
+                && repo.worktree_status_entries().is_some_and(<[_]>::is_empty)
+                && repo.staged_status_entries().is_some_and(<[_]>::is_empty)
+        })
+    }
+
     fn notify_fingerprint(state: &AppState) -> u64 {
         let mut hasher = FxHasher::default();
         state.active_repo.hash(&mut hasher);
@@ -410,17 +436,33 @@ impl DetailsPaneView {
         let subscription = cx.observe(&ui_model, |this, model, cx| {
             let next = Arc::clone(&model.read(cx).state);
             let next_fingerprint = Self::notify_fingerprint(&next);
+            let was_empty = this.is_empty_working_copy();
             if this.advance_pending_commits(&next, cx) {
                 cx.notify();
             }
             if next_fingerprint == this.notify_fingerprint {
                 this.state = next;
-                return;
+                // A requested edit waits on details the fingerprint may not
+                // cover; check it on every snapshot.
+                if this.pending_commit_reword.is_some() {
+                    this.resolve_pending_commit_reword(cx);
+                    cx.notify();
+                }
+            } else {
+                this.notify_fingerprint = next_fingerprint;
+                this.apply_state_snapshot(next, cx);
+                this.resolve_pending_commit_reword(cx);
+                cx.notify();
             }
 
-            this.notify_fingerprint = next_fingerprint;
-            this.apply_state_snapshot(next, cx);
-            cx.notify();
+            if was_empty != this.is_empty_working_copy()
+                && let Some(root) = this.root_view.upgrade()
+                && root.read(cx).details_hide_when_clean
+            {
+                let footer = root.read(cx).bottom_status_bar.entity_id();
+                gpui::AppContext::notify(cx, root.entity_id());
+                gpui::AppContext::notify(cx, footer);
+            }
         });
 
         let commit_message_scroll = ScrollHandle::new();
@@ -428,7 +470,12 @@ impl DetailsPaneView {
         let commit_message_input = cx.new(|cx| {
             let mut input = components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "What changed and why".into(),
+                    placeholder: text(
+                        cx,
+                        COMMIT_MESSAGE_PLACEHOLDER.0,
+                        COMMIT_MESSAGE_PLACEHOLDER.1,
+                    )
+                    .into(),
                     multiline: true,
                     soft_wrap: true,
                     // The commit box draws the card around the input.
@@ -463,7 +510,8 @@ impl DetailsPaneView {
         let commit_reword_input = cx.new(|cx| {
             let mut input = components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Enter commit message".into(),
+                    placeholder: text(cx, COMMIT_REWORD_PLACEHOLDER.0, COMMIT_REWORD_PLACEHOLDER.1)
+                        .into(),
                     multiline: true,
                     soft_wrap: true,
                     ..Default::default()
@@ -514,7 +562,8 @@ impl DetailsPaneView {
         let review_search_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Filter files".into(),
+                    placeholder: text(cx, REVIEW_SEARCH_PLACEHOLDER.0, REVIEW_SEARCH_PLACEHOLDER.1)
+                        .into(),
                     chromeless: true,
                     ..Default::default()
                 },
@@ -614,12 +663,15 @@ impl DetailsPaneView {
             commit_reword_input,
             commit_reword_scroll,
             commit_reword: None,
+            pending_commit_reword: None,
+            commit_reword_focus_pending: false,
             commit_details_message_link_menu,
             commit_message_drafts: FxHashMap::default(),
             commit_amend_enabled: false,
             commit_push_after_enabled,
             commit_skip_hooks_enabled: false,
             pending_commits: FxHashMap::default(),
+            commit_message_generation: None,
             pending_amend_prefill: None,
             applied_commit_suggestions: rustc_hash::FxHashMap::default(),
             extension_commit_items: Vec::new(),
@@ -2594,7 +2646,11 @@ impl DetailsPaneView {
         }
     }
 
-    fn apply_state_snapshot(&mut self, next: Arc<AppState>, cx: &mut gpui::Context<Self>) {
+    pub(in crate::view) fn apply_state_snapshot(
+        &mut self,
+        next: Arc<AppState>,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.file_controllers
             .borrow_mut()
             .retain(|(id, _), _| next.repos.iter().any(|repo| repo.id == *id));
@@ -3126,6 +3182,20 @@ impl Render for DetailsPaneView {
         #[cfg(any(test, feature = "benchmarks"))]
         {
             self.render_count += 1;
+        }
+        if std::mem::take(&mut self.commit_reword_focus_pending) {
+            let focus = self.commit_reword_input.read(cx).focus_handle();
+            window.focus(&focus, cx);
+        }
+        for (input, (english, traditional_chinese)) in [
+            (&self.commit_message_input, COMMIT_MESSAGE_PLACEHOLDER),
+            (&self.commit_reword_input, COMMIT_REWORD_PLACEHOLDER),
+            (&self.review_search_input, REVIEW_SEARCH_PLACEHOLDER),
+        ] {
+            let hint = text(cx, english, traditional_chinese);
+            if input.read(cx).placeholder() != hint {
+                input.update(cx, |input, cx| input.set_placeholder(hint, cx));
+            }
         }
         div()
             .size_full()

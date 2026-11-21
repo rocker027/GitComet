@@ -5,6 +5,15 @@ use super::*;
 type ExtensionWindowAction =
     std::rc::Rc<dyn Fn(gitcomet_extension_api::WindowHost, &mut Window, &mut App)>;
 
+/// Why Undo (or Redo) of a Git operation cannot run now, or `None` when it
+/// can; the toolbar buttons and the palette say the same as the store.
+pub(in crate::view) fn git_undo_unavailable(
+    repo: &RepoState,
+    direction: gitcomet_state::model::GitUndoDirection,
+) -> Option<&'static str> {
+    repo.git_undo_block(direction).map(|block| block.reason())
+}
+
 impl GitCometView {
     fn hook_activity_workflow_repo(kind: &PopoverKind) -> Option<RepoId> {
         match kind {
@@ -229,6 +238,15 @@ impl GitCometView {
             update_check: !super::manual_update_check_unavailable(
                 super::extension_host::provides_update_check(cx),
             ),
+            git_undo_unavailable: repo.map_or(Some("Open a repository first"), |repo| {
+                git_undo_unavailable(repo, gitcomet_state::model::GitUndoDirection::Undo)
+            }),
+            git_redo_unavailable: repo.map_or(Some("Open a repository first"), |repo| {
+                git_undo_unavailable(repo, gitcomet_state::model::GitUndoDirection::Redo)
+            }),
+            stage_all_commit_unavailable: repo.map_or(Some("Open a repository first"), |repo| {
+                stage_all_commit_paths(repo, false).err()
+            }),
         }
     }
 
@@ -439,8 +457,25 @@ impl GitCometView {
             self.close_history_refs_hover(cx);
             return;
         }
+        let worktrees = self
+            .state
+            .repos
+            .iter()
+            .find(|repo| repo.id == repo_id)
+            .and_then(|repo| match &repo.worktrees {
+                Loadable::Ready(worktrees) => Some(Arc::clone(worktrees)),
+                _ => None,
+            });
         self.history_refs_hover_host.update(cx, |host, cx| {
-            host.show(repo_id, commit_id, source_bounds, items, pointer, cx)
+            host.show(
+                repo_id,
+                commit_id,
+                source_bounds,
+                items,
+                worktrees,
+                pointer,
+                cx,
+            )
         });
     }
 
@@ -472,6 +507,34 @@ impl GitCometView {
     }
 
     pub(in crate::view) fn dismiss_history_refs_menus(&mut self, cx: &mut gpui::Context<Self>) {
+        self.dismiss_history_refs_hover_menu(cx);
+        let Some(invoker) = self
+            .active_context_menu_invoker
+            .as_ref()
+            .filter(|invoker| {
+                invoker.starts_with(
+                    crate::view::history_refs_hover::HISTORY_REFS_PICKER_MENU_INVOKER_PREFIX,
+                )
+            })
+            .cloned()
+        else {
+            return;
+        };
+        let host = self.popover_host.downgrade();
+        let window_handle = self.window_handle;
+        cx.defer(move |cx| {
+            let _ = window_handle.update(cx, |_, window, cx| {
+                let _ = host.update(cx, |host, cx| {
+                    host.dismiss_history_refs_picker(&invoker, window, cx);
+                });
+            });
+        });
+    }
+
+    pub(in crate::view) fn dismiss_history_refs_hover_menu(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.close_history_refs_hover(cx);
 
         let history_refs_menu_open =
@@ -623,6 +686,7 @@ impl GitCometView {
             ),
         }
         .initialize(cx);
+        crate::localization::Language::initialize(ui_session.ui_language.as_deref(), cx);
         crate::session_ui::initialize_appearance(&ui_session, cx);
         ui_preferences.appearance.metrics = crate::appearance::current(cx);
         crate::session_ui::ui_scale(&ui_session, cx);
@@ -1355,6 +1419,9 @@ impl GitCometView {
             sidebar_collapsed_popover_anim_seq: 0,
             sidebar_collapsed_before_merge_view: None,
             details_collapsed: false,
+            // A clean working copy opens with the details pane hidden; it
+            // shows once a commit is selected or changes appear.
+            details_hide_when_clean: true,
             sidebar_width_design: initial_sidebar_width_design,
             details_width_design: initial_details_width_design,
             sidebar_width: initial_sidebar_width,
@@ -1883,12 +1950,50 @@ impl GitCometView {
         }
     }
 
+    pub(super) fn details_auto_hidden(&self, cx: &App) -> bool {
+        self.details_hide_when_clean
+            && self.details_pane.read(cx).is_empty_working_copy()
+            && self.details_listing().is_none()
+    }
+
+    pub(super) fn set_details_hide_when_clean(
+        &mut self,
+        enabled: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if self.details_hide_when_clean != enabled {
+            self.details_hide_when_clean = enabled;
+            gpui::AppContext::notify(cx, self.bottom_status_bar.entity_id());
+            cx.notify();
+        }
+    }
+
+    pub(super) fn toggle_details(&mut self, cx: &mut gpui::Context<Self>) {
+        let show = self.details_collapsed || self.details_auto_hidden(cx);
+        if show {
+            self.set_details_hide_when_clean(false, cx);
+        }
+        self.set_details_collapsed(!show, cx);
+    }
+
     pub(super) fn set_details_collapsed(&mut self, collapsed: bool, cx: &mut gpui::Context<Self>) {
         if self.details_collapsed == collapsed {
             return;
         }
 
         self.details_collapsed = collapsed;
+        // The highlighted commit is the one the details pane shows, so closing
+        // the pane drops the selection; selecting a commit opens it again.
+        if collapsed
+            && let Some(repo) = self
+                .active_repo()
+                .filter(|repo| repo.history_state.selected_commit.is_some())
+        {
+            self.store.dispatch(Msg::ClearCommitSelection {
+                request_id: None,
+                repo_id: repo.id,
+            });
+        }
         // The cached bottom bar draws this toggle's icon. Notified by id: its own
         // toggle calls this from inside the bar's update.
         gpui::AppContext::notify(cx, self.bottom_status_bar.entity_id());
@@ -2462,6 +2567,36 @@ impl GitCometView {
     /// diff search, or the hosted diff pane in the extension view or overlay
     /// over History. With no pane there it opens nothing, rather than
     /// History's hidden find, and the key goes on to the focused view.
+    /// Search Commits: History's find bar, whatever the main canvas shows.
+    /// History is brought back first and an open diff closed, so the bar
+    /// searches the graph as GitKraken's commit search does.
+    pub(super) fn open_commit_search(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if !self.shell_action_allowed(super::shell_policy::ShellAction::Repository) {
+            return;
+        }
+        // The rebase / cherry-pick editor holds the canvas, also under a diff
+        // shown above it; a hidden find bar would only take its focus.
+        if self.active_repo().is_some_and(|repo| {
+            repo.interactive_rebase_setup.is_some() || repo.interactive_cherry_pick_setup.is_some()
+        }) {
+            return;
+        }
+        let content = self.main_pane.read(cx).active_content(cx);
+        self.show_history_view(window, cx);
+        if content == crate::view::panes::main::MainPaneContent::Diff
+            && let Some(repo_id) = self.active_repo_id()
+        {
+            // The diff's own close path, which also ends its engine override.
+            self.diff_renderer.update(cx, |pane, cx| {
+                pane.clear_diff_selection_or_exit(repo_id, cx)
+            });
+        }
+        self.main_pane.update(cx, |pane, cx| {
+            pane.history_view
+                .update(cx, |history, cx| history.open_history_find(window, cx));
+        });
+    }
+
     pub(super) fn open_main_slot_search(
         &mut self,
         window: &mut Window,

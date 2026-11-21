@@ -1,6 +1,9 @@
 use super::*;
 use crate::kit::interaction_paint::InteractionPaint;
+use crate::view::caches::history_worktree_for_local_ref;
+use crate::view::history_refs_hover::HISTORY_REFS_PICKER_MENU_INVOKER_PREFIX;
 use crate::view::panes::HistoryRowHoverArea;
+use gitcomet_core::domain::Worktree;
 use gitcomet_extension_api::{MarkEdge, MarkTarget, RowGlyph, RowMark};
 use gitcomet_state::msg::CommitSelectMode;
 use gitcomet_ui_kit::text_layout::TextLayoutExt as _;
@@ -12,6 +15,8 @@ use palette::IntoColor;
 use rustc_hash::FxHasher;
 use smallvec::SmallVec;
 use std::cell::RefCell;
+
+mod branch_drag;
 
 const HISTORY_TAG_CHIP_HEIGHT_PX: f32 = 18.0;
 const HISTORY_TAG_CHIP_PADDING_X_PX: f32 = 6.0;
@@ -28,6 +33,7 @@ const HISTORY_REF_CONNECTOR_DOT_PX: f32 = 1.5;
 const HISTORY_REF_CONNECTOR_PITCH_PX: f32 = 4.0;
 const COMPARISON_MARK_CHIP_TEXT: &str = "Compare base";
 const COMPARISON_MARK_CHIP_ICON: &str = "icons/git_compare.svg";
+const HISTORY_BRANCH_CHIP_MENU_PREFIX: &str = "history_branch_chip_menu_";
 // The chip never takes more than half the message cell from the subject: the
 // labelled chip (~105px) fits a default cell (~330px), else only its icon shows.
 const COMPARISON_MARK_CHIP_MAX_CELL_FRACTION: f32 = 0.5;
@@ -176,8 +182,8 @@ enum LineCut {
     /// A ref name keeps its leaf, the part after the last `/`: the path
     /// before it gives way first, from the start, and only a leaf that
     /// overflows on its own is cut, from its end. `feat/new-component`
-    /// narrows through `eat/new-component` and `new-component` to
-    /// `new-compone`.
+    /// narrows through `…/new-component` and `…new-component` to
+    /// `new-compone…`.
     RefLeaf,
 }
 
@@ -216,7 +222,7 @@ fn shape_truncated_line_cached_from(
     font_family: Option<&'static str>,
     cut: LineCut,
 ) -> gpui::ShapedLine {
-    shape_truncated_line_cached_from_with_affix(
+    shape_history_line_cached(
         window,
         base_style,
         font_size,
@@ -226,7 +232,6 @@ fn shape_truncated_line_cached_from(
         color,
         font_family,
         cut,
-        "…",
         &[],
     )
 }
@@ -244,7 +249,7 @@ fn shape_highlighted_line_cached(
     font_family: Option<&'static str>,
     highlights: &[(std::ops::Range<usize>, gpui::HighlightStyle)],
 ) -> gpui::ShapedLine {
-    shape_truncated_line_cached_from_with_affix(
+    shape_history_line_cached(
         window,
         base_style,
         font_size,
@@ -254,42 +259,12 @@ fn shape_highlighted_line_cached(
         color,
         font_family,
         LineCut::End,
-        "…",
         highlights,
     )
 }
 
-/// A ref chip's label. It is clipped without an ellipsis so the chip spends
-/// its width on the name, and cut with [`LineCut::RefLeaf`] so the name after
-/// the last `/` is the part that stays readable.
 #[allow(clippy::too_many_arguments)]
-fn shape_chip_label_cached(
-    window: &mut Window,
-    base_style: &gpui::TextStyle,
-    font_size: Pixels,
-    text: &SharedString,
-    text_hash: u64,
-    max_width: Pixels,
-    color: gpui::Rgba,
-    font_family: Option<&'static str>,
-) -> gpui::ShapedLine {
-    shape_truncated_line_cached_from_with_affix(
-        window,
-        base_style,
-        font_size,
-        text,
-        text_hash,
-        max_width,
-        color,
-        font_family,
-        LineCut::RefLeaf,
-        "",
-        &[],
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn shape_truncated_line_cached_from_with_affix(
+fn shape_history_line_cached(
     window: &mut Window,
     base_style: &gpui::TextStyle,
     font_size: Pixels,
@@ -299,11 +274,11 @@ fn shape_truncated_line_cached_from_with_affix(
     color: gpui::Rgba,
     font_family: Option<&'static str>,
     cut: LineCut,
-    truncation_affix: &'static str,
     highlights: &[(std::ops::Range<usize>, gpui::HighlightStyle)],
 ) -> gpui::ShapedLine {
     use std::hash::{Hash, Hasher};
 
+    let truncation_affix = "…";
     let key = {
         let mut hasher = FxHasher::default();
         text_hash.hash(&mut hasher);
@@ -318,7 +293,6 @@ fn shape_truncated_line_cached_from_with_affix(
         color.blue.to_bits().hash(&mut hasher);
         color.alpha.to_bits().hash(&mut hasher);
         cut.hash(&mut hasher);
-        truncation_affix.hash(&mut hasher);
         highlights.len().hash(&mut hasher);
         for (range, style) in highlights {
             range.hash(&mut hasher);
@@ -447,7 +421,7 @@ fn truncate_ref_leaf<'runs>(
     }
 
     let mut skip = leaf_start;
-    let leaf_runs: Vec<gpui::TextRun> = runs
+    let mut leaf_runs: Vec<gpui::TextRun> = runs
         .iter()
         .filter_map(|run| {
             let len = run.len.saturating_sub(skip);
@@ -455,8 +429,12 @@ fn truncate_ref_leaf<'runs>(
             (len > 0).then(|| gpui::TextRun { len, ..run.clone() })
         })
         .collect();
+    // The path is already gone, so mark the cut even if the leaf alone fits.
+    if let Some(last) = leaf_runs.last_mut() {
+        last.len += affix.len();
+    }
     let (leaf, leaf_runs) = gpui::TextLayout::truncate_line(
-        SharedString::from(text[leaf_start..].to_owned()),
+        SharedString::from(format!("{}{affix}", &text[leaf_start..])),
         font_size,
         max_width,
         affix,
@@ -495,7 +473,7 @@ struct HistoryChipVisual {
     border: gpui::Rgba,
     bg: gpui::Rgba,
     text: gpui::Rgba,
-    selected: bool,
+    emphasized_border: bool,
 }
 
 fn relative_luminance(color: gpui::Rgba) -> f32 {
@@ -612,118 +590,42 @@ fn history_chip_visual(
         },
         bg,
         text,
-        selected,
+        emphasized_border: selected,
     }
 }
 
-/// Paint an opaque disc above the lane strokes, with cached, cap-height centred
-/// initials. Case expansion can produce more than two glyphs (e.g. SSE); fit
-/// those glyphs instead of replacing the author's identity with an ellipsis.
+/// The ring follows the graph lane. The mark inside follows the author, so its
+/// shape and ink stay recognizable across branches, hover and selection.
 pub(super) fn paint_history_author_node(
     theme: AppTheme,
     bounds: Bounds<Pixels>,
     row: HistoryRowVisual,
     author: &HistoryAuthorVm,
-    initials_reveal: f32,
+    expansion: f32,
+    is_merge: bool,
     window: &mut Window,
 ) {
     let scale = ui_scale::UiScale::from_window(window).with_appearance(theme.metrics);
-    let disc = crate::theme::composite_over(row.background, with_alpha(row.lane, 0.12));
-    let background = crate::theme::mix_colors(row.lane, disc, initials_reveal);
-    let foreground = readable_chip_foreground(theme, background, theme.colors.foreground.primary);
+    let background = theme.colors.surface.canvas;
+    let ink = readable_chip_foreground(
+        theme,
+        background,
+        components::author_color(theme, author.as_ref()),
+    );
     super::history_shapes::paint_rounded_rect(
         bounds,
         bounds.size.width * 0.5,
         background,
-        super::history_node::ring_width(scale, window.scale_factor()) * initials_reveal,
-        row.lane,
+        super::history_node::ring_width(scale, window.scale_factor()),
+        crate::theme::mix_colors(background, row.lane, 0.75 + expansion * 0.25),
         window,
     );
-    let text_opacity = ((initials_reveal - 0.5) * 2.0).clamp(0.0, 1.0);
-    if text_opacity == 0.0 {
-        return;
-    }
-    paint_author_initials(
-        bounds,
-        author,
-        scale.ui_text(9.0),
-        scale.ui_text(16.0),
-        foreground,
-        text_opacity,
-        window,
-    );
-}
-
-fn paint_author_initials(
-    bounds: Bounds<Pixels>,
-    author: &HistoryAuthorVm,
-    mut font: Pixels,
-    available: Pixels,
-    foreground: gpui::Rgba,
-    opacity: f32,
-    window: &mut Window,
-) {
-    let mut style = window.text_style();
-    style.font_weight = gpui::FontWeight::SEMIBOLD;
-    // Shape at full opacity: animation must not add a cache entry per frame.
-    let mut shaped = shape_truncated_line_cached(
-        window,
-        &style,
-        font,
-        author.initials.shared(),
-        author.initials.text_hash(),
-        font * 16.0,
-        gpui::rgba(0xffffffff),
-        None,
-    );
-    // Keep glyph metrics stable while the dot expands beneath the text.
-    if shaped.width > available && shaped.width > px(0.0) {
-        font *= available / shaped.width;
-        shaped = shape_truncated_line_cached(
-            window,
-            &style,
-            font,
-            author.initials.shared(),
-            author.initials.text_hash(),
-            font * 16.0,
-            gpui::rgba(0xffffffff),
-            None,
-        );
-    }
-    let cap_height = shaped
-        .paint_fragments
-        .first()
-        .map(|run| window.text_system().cap_height(run.font_id, font))
-        .unwrap_or(font * 0.7);
-    // Glyph positions stay cached; color and opacity are paint-only state.
-    // These single-line initials have no decorations or inline elements.
-    let origin = point(
-        bounds.left() + (bounds.size.width - shaped.width).max(px(0.0)) * 0.5,
-        bounds.center().y + cap_height * 0.5,
-    );
-    let color = with_alpha(foreground, opacity).into_color();
-    for fragment in &shaped.paint_fragments {
-        for glyph in &*fragment.glyphs {
-            let position = origin + glyph.position;
-            let _ = if glyph.is_emoji {
-                window.paint_emoji_with_color(
-                    position,
-                    fragment.font_id,
-                    glyph.id,
-                    fragment.font_size,
-                    color,
-                )
-            } else {
-                window.paint_glyph(
-                    position,
-                    fragment.font_id,
-                    glyph.id,
-                    fragment.font_size,
-                    color,
-                )
-            };
-        }
-    }
+    let inset = if is_merge {
+        bounds.size.width * 0.065
+    } else {
+        px(0.0)
+    };
+    components::paint_author_mark(bounds, inset, author.pattern, ink, window);
 }
 
 /// Whether one rendered ref is the branch selected in the sidebar. Comparison
@@ -864,6 +766,7 @@ enum HistoryBranchChipIcon {
     Local,
     Remote,
     LocalRemote,
+    Worktree,
     Tag,
     Check,
 }
@@ -874,6 +777,7 @@ impl HistoryBranchChipIcon {
             Self::Local => "icons/computer.svg",
             Self::Remote => "icons/cloud.svg",
             Self::LocalRemote => "icons/computer-cloud-background.svg",
+            Self::Worktree => "icons/git_worktree.svg",
             Self::Tag => "icons/tag.svg",
             Self::Check => "icons/check.svg",
         }
@@ -882,19 +786,39 @@ impl HistoryBranchChipIcon {
     fn foreground_path(self) -> Option<&'static str> {
         match self {
             Self::LocalRemote => Some("icons/computer-cloud-foreground.svg"),
-            Self::Local | Self::Remote | Self::Tag | Self::Check => None,
+            _ => None,
         }
     }
 
     fn size(self, icon_size: Pixels, combined_icon_size: Pixels) -> Pixels {
         match self {
-            Self::Local | Self::Remote | Self::Tag | Self::Check => icon_size,
             Self::LocalRemote => combined_icon_size,
+            _ => icon_size,
         }
     }
 }
 
-fn history_branch_chip_icons(chip: &HistoryBranchChipVm) -> SmallVec<[HistoryBranchChipIcon; 2]> {
+fn history_branch_chip_is_checked_out(
+    chip: &HistoryBranchChipVm,
+    worktrees: &[Worktree],
+    commit_id: &CommitId,
+) -> bool {
+    let HistoryBranchChipKind::Branch { targets, .. } = &chip.kind else {
+        return false;
+    };
+    targets.iter().any(|target| {
+        matches!(
+            target,
+            BranchMenuTarget::Local { name }
+                if history_worktree_for_local_ref(worktrees, commit_id, name).is_some()
+        )
+    })
+}
+
+fn history_branch_chip_icons(
+    chip: &HistoryBranchChipVm,
+    checked_out: bool,
+) -> SmallVec<[HistoryBranchChipIcon; 3]> {
     let HistoryBranchChipKind::Branch { targets, is_head } = &chip.kind else {
         return smallvec::smallvec![HistoryBranchChipIcon::Check];
     };
@@ -908,7 +832,12 @@ fn history_branch_chip_icons(chip: &HistoryBranchChipVm) -> SmallVec<[HistoryBra
     if *is_head {
         icons.push(HistoryBranchChipIcon::Check);
     }
-    if has_local && has_remote {
+    if checked_out {
+        icons.push(HistoryBranchChipIcon::Worktree);
+        if has_remote {
+            icons.push(HistoryBranchChipIcon::Remote);
+        }
+    } else if has_local && has_remote {
         icons.push(HistoryBranchChipIcon::LocalRemote);
     } else if has_local {
         icons.push(HistoryBranchChipIcon::Local);
@@ -1140,20 +1069,31 @@ pub(in crate::view) fn history_mark_menu_invoker(
     .into()
 }
 
-/// Whether the menu `invoker` opened is `repo_id`'s `commit_id` row's: the
-/// commit's own, or one its marks opened.
+/// Whether this commit row opened a context menu, ref picker or a mark menu.
 pub(in crate::view) fn history_row_menu_is_open(
     invoker: &str,
     repo_id: RepoId,
     commit_id: &str,
 ) -> bool {
-    // Compared without formatting: this runs once per visible commit per
-    // frame just to find the one row whose menu is open.
+    history_menu_matches_row(invoker, "history_commit_menu_", repo_id, commit_id)
+        || invoker.split_once(':').is_some_and(|(row, _)| {
+            history_menu_matches_row(row, HISTORY_BRANCH_CHIP_MENU_PREFIX, repo_id, commit_id)
+        })
+        || history_menu_matches_row(
+            invoker,
+            HISTORY_REFS_PICKER_MENU_INVOKER_PREFIX,
+            repo_id,
+            commit_id,
+        )
+        || history_mark_menu_chip(invoker, repo_id, commit_id).is_some()
+}
+
+fn history_menu_matches_row(invoker: &str, prefix: &str, repo_id: RepoId, commit_id: &str) -> bool {
+    // Avoid formatting an invoker for every visible row.
     invoker
-        .strip_prefix("history_commit_menu_")
+        .strip_prefix(prefix)
         .and_then(|rest| rest.split_once('_'))
         .is_some_and(|(repo, commit)| repo.parse::<u64>() == Ok(repo_id.0) && commit == commit_id)
-        || history_mark_menu_chip(invoker, repo_id, commit_id).is_some()
 }
 
 /// The chip on `repo_id`'s `commit_id` row whose menu `invoker` opened.
@@ -1189,7 +1129,7 @@ fn paint_history_chip(
     text_icon_gap: Pixels,
     icon_gap: Pixels,
 ) {
-    let border_w = if visual.selected {
+    let border_w = if visual.emphasized_border {
         border_w * 2.0
     } else {
         border_w
@@ -1203,11 +1143,26 @@ fn paint_history_chip(
         window,
     );
 
+    let content_x = chip_bounds.left() + pad_x;
+    let leading_check = icons.first() == Some(&HistoryBranchChipIcon::Check);
+    let text_x = if leading_check {
+        // Reuse the spacing already reserved for the check so the chip keeps
+        // the same text budget and bounds when the check moves before the name.
+        let check_gap = if icons.len() > 1 {
+            icon_gap
+        } else {
+            text_icon_gap
+        };
+        content_x + icon_size + check_gap
+    } else {
+        content_x
+    };
+
     // Center the line box on the chip even when it is taller than the chip
     // (clamping the offset to zero pushed the glyphs visibly below center).
     let text_y = chip_bounds.top() + (chip_bounds.size.height - line_height) * 0.5;
     let _ = shaped.paint(
-        point(chip_bounds.left() + pad_x, text_y),
+        point(text_x, text_y),
         line_height,
         gpui::TextAlign::Left,
         None,
@@ -1215,15 +1170,16 @@ fn paint_history_chip(
         cx,
     );
 
-    let mut icon_x = chip_bounds.left() + pad_x + shaped.width;
-    if !icons.is_empty() {
-        icon_x += text_icon_gap;
-    }
+    let mut trailing_icon_x = text_x + shaped.width + text_icon_gap;
     for (ix, icon) in icons.iter().enumerate() {
-        if ix > 0 {
-            icon_x += icon_gap;
-        }
         let painted_icon_size = icon.size(icon_size, combined_icon_size);
+        let icon_x = if leading_check && ix == 0 {
+            content_x
+        } else {
+            let x = trailing_icon_x;
+            trailing_icon_x += painted_icon_size + icon_gap;
+            x
+        };
         let cell = Bounds::new(
             point(icon_x, chip_bounds.top()),
             size(painted_icon_size, chip_bounds.size.height),
@@ -1246,7 +1202,6 @@ fn paint_history_chip(
                 cx,
             );
         }
-        icon_x += painted_icon_size;
     }
 }
 
@@ -1274,22 +1229,146 @@ fn history_tag_chip_menu_invoker(
 fn history_branch_chip_menu_invoker(
     repo_id: RepoId,
     commit_id: &CommitId,
-    chip: &HistoryBranchChipVm,
+    target: &BranchMenuTarget,
 ) -> SharedString {
+    let key = match target {
+        BranchMenuTarget::Local { name } => format!("local:{name}"),
+        BranchMenuTarget::Remote { remote, branch } => {
+            format!("remote:{}:{remote}{branch}", remote.len())
+        }
+    };
     format!(
-        "history_branch_chip_menu_{}_{}_{}",
+        "{HISTORY_BRANCH_CHIP_MENU_PREFIX}{}_{}:{key}",
         repo_id.0,
-        commit_id.as_ref(),
-        chip.text.as_ref()
+        commit_id.as_ref()
     )
     .into()
 }
 
+#[derive(Default)]
+pub(super) struct HistoryRefHitTargets {
+    pub refs: Vec<(Bounds<Pixels>, HistoryMenuRef)>,
+    pub overflow: Option<Bounds<Pixels>>,
+    pub released_branch: Option<(Point<Pixels>, u64, BranchMenuTarget)>,
+}
+
+struct HistoryRefMenuPress {
+    position: Point<Pixels>,
+    target: Option<HistoryMenuRef>,
+}
+
+impl HistoryRefMenuPress {
+    fn matches(
+        &self,
+        targets: &HistoryRefHitTargets,
+        down: Point<Pixels>,
+        up: Point<Pixels>,
+    ) -> bool {
+        self.position == down && self.target.as_ref() == targets.ref_at(up)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static PAINTED_HISTORY_OVERFLOW: RefCell<std::collections::HashMap<
+        (u64, String, bool), Option<(Bounds<Pixels>, bool)>
+    >> = RefCell::new(std::collections::HashMap::new());
+    static PAINTED_HISTORY_REF_BOUNDS: RefCell<std::collections::HashMap<
+        (u64, String, bool), Vec<(Bounds<Pixels>, HistoryMenuRef)>
+    >> = RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(test)]
+impl HistoryView {
+    pub(in crate::view) fn painted_ref_bounds_for_test(
+        repo_id: RepoId,
+        commit_id: &str,
+        mode: HistoryBranchNamesMode,
+        target: &HistoryMenuRef,
+    ) -> Option<Bounds<Pixels>> {
+        PAINTED_HISTORY_REF_BOUNDS.with(|bounds| {
+            bounds
+                .borrow()
+                .get(&(
+                    repo_id.0,
+                    commit_id.to_string(),
+                    mode == HistoryBranchNamesMode::Inline,
+                ))?
+                .iter()
+                .find(|(_, candidate)| candidate == target)
+                .map(|(bounds, _)| *bounds)
+        })
+    }
+
+    pub(in crate::view) fn painted_overflow_bounds_for_test(
+        repo_id: RepoId,
+        commit_id: &str,
+        mode: HistoryBranchNamesMode,
+    ) -> Option<Bounds<Pixels>> {
+        Self::painted_overflow_for_test(repo_id, commit_id, mode).map(|(bounds, _)| bounds)
+    }
+
+    pub(in crate::view) fn painted_overflow_emphasis_for_test(
+        repo_id: RepoId,
+        commit_id: &str,
+        mode: HistoryBranchNamesMode,
+    ) -> Option<bool> {
+        Self::painted_overflow_for_test(repo_id, commit_id, mode).map(|(_, emphasized)| emphasized)
+    }
+
+    fn painted_overflow_for_test(
+        repo_id: RepoId,
+        commit_id: &str,
+        mode: HistoryBranchNamesMode,
+    ) -> Option<(Bounds<Pixels>, bool)> {
+        PAINTED_HISTORY_OVERFLOW.with(|painted| {
+            painted
+                .borrow()
+                .get(&(
+                    repo_id.0,
+                    commit_id.to_string(),
+                    mode == HistoryBranchNamesMode::Inline,
+                ))
+                .copied()
+                .flatten()
+        })
+    }
+}
+
+impl HistoryRefHitTargets {
+    pub fn overflow_clicked(&self, pressed: Point<Pixels>, released: Point<Pixels>) -> bool {
+        self.overflow
+            .is_some_and(|bounds| bounds.contains(&pressed) && bounds.contains(&released))
+    }
+
+    fn ref_at(&self, position: Point<Pixels>) -> Option<&HistoryMenuRef> {
+        self.refs
+            .iter()
+            .find(|(bounds, _)| bounds.contains(&position))
+            .map(|(_, target)| target)
+    }
+}
+
+fn history_branch_chip_target(chip: &HistoryBranchChipVm) -> Option<HistoryMenuRef> {
+    let HistoryBranchChipKind::Branch { targets, .. } = &chip.kind else {
+        return None;
+    };
+    // A local branch and its remote tracking refs share the local branch label.
+    // The hover list still exposes each remote ref separately.
+    targets
+        .iter()
+        .find(|target| matches!(target, BranchMenuTarget::Local { name } if name == chip.text.as_ref()))
+        .or_else(|| (targets.len() == 1).then(|| &targets[0]))
+        .cloned()
+        .map(HistoryMenuRef::Branch)
+}
+
 struct HistoryRefChipPaint {
+    target: Option<HistoryMenuRef>,
     bounds: Bounds<Pixels>,
     visual: HistoryChipVisual,
     shaped: gpui::ShapedLine,
-    icons: SmallVec<[HistoryBranchChipIcon; 2]>,
+    icons: SmallVec<[HistoryBranchChipIcon; 3]>,
 }
 
 #[derive(Default)]
@@ -1307,6 +1386,7 @@ struct HistoryChipMetrics {
 struct HistoryRefsPaintLayout {
     bounds: Bounds<Pixels>,
     content_bounds: Bounds<Pixels>,
+    overflow_bounds: Option<Bounds<Pixels>>,
     chips: SmallVec<[HistoryRefChipPaint; 4]>,
     metrics: HistoryChipMetrics,
     #[cfg(test)]
@@ -1348,6 +1428,7 @@ fn layout_history_ref_chips(
     commit_id: &CommitId,
     tag_names: &[HistoryTextVm],
     branch_chips: &[HistoryBranchChipVm],
+    worktrees: &[Worktree],
     selected_branch: Option<&SelectedHistoryBranch>,
     active_context_menu_invoker: Option<&SharedString>,
     base_style: &gpui::TextStyle,
@@ -1362,6 +1443,7 @@ fn layout_history_ref_chips(
                 size(px(0.0), content_bounds.size.height),
             ),
             chips: SmallVec::new(),
+            overflow_bounds: None,
             content_bounds,
             metrics: HistoryChipMetrics::default(),
             #[cfg(test)]
@@ -1419,11 +1501,11 @@ fn layout_history_ref_chips(
 
     enum ChipEntry<'a> {
         Tag(&'a HistoryTextVm),
-        Branch(&'a HistoryBranchChipVm),
+        Branch(&'a HistoryBranchChipVm, bool),
     }
-    // HEAD first (the strongest signal), then tags, then
-    // plain branches; overflow beyond the column collapses
-    // into a "+N" chip resolved by the refs hover menu.
+    // Show the current HEAD first, then checked-out branches before the
+    // other refs. The hover menu still lists every ref in the "+N" chip.
+    let checked_out = |chip| history_branch_chip_is_checked_out(chip, worktrees, commit_id);
     let head_entries = branch_chips
         .iter()
         .filter(|item| {
@@ -1433,19 +1515,26 @@ fn layout_history_ref_chips(
                     | HistoryBranchChipKind::DetachedHead
             )
         })
-        .map(ChipEntry::Branch);
-    let branch_entries = branch_chips
-        .iter()
-        .filter(|item| {
-            matches!(
-                item.kind,
-                HistoryBranchChipKind::Branch { is_head: false, .. }
-            )
-        })
-        .map(ChipEntry::Branch);
+        .map(|chip| ChipEntry::Branch(chip, checked_out(chip)));
+    let branch_entries = branch_chips.iter().filter(|item| {
+        matches!(
+            item.kind,
+            HistoryBranchChipKind::Branch { is_head: false, .. }
+        )
+    });
     let entries = head_entries
+        .chain(
+            branch_entries
+                .clone()
+                .filter(|chip| checked_out(*chip))
+                .map(|chip| ChipEntry::Branch(chip, true)),
+        )
         .chain(tag_names.iter().map(ChipEntry::Tag))
-        .chain(branch_entries);
+        .chain(
+            branch_entries
+                .filter(|chip| !checked_out(*chip))
+                .map(|chip| ChipEntry::Branch(chip, false)),
+        );
 
     for entry in entries {
         let pending_after = total_chips - shown - 1;
@@ -1456,7 +1545,7 @@ fn layout_history_ref_chips(
         };
         let icons = match &entry {
             ChipEntry::Tag(_) => smallvec::smallvec![HistoryBranchChipIcon::Tag],
-            ChipEntry::Branch(chip) => history_branch_chip_icons(chip),
+            ChipEntry::Branch(chip, checked_out) => history_branch_chip_icons(chip, *checked_out),
         };
         let icons_width = history_branch_chip_icon_width(
             icons.as_slice(),
@@ -1480,19 +1569,24 @@ fn layout_history_ref_chips(
 
         let style_kind = match &entry {
             ChipEntry::Tag(_) => HistoryChipStyleKind::Tag,
-            ChipEntry::Branch(chip) => history_branch_chip_style_kind(chip, selected_branch),
+            ChipEntry::Branch(chip, _) => history_branch_chip_style_kind(chip, selected_branch),
         };
-        let context_menu_open = active_context_menu_invoker.is_some_and(|active| match &entry {
-            ChipEntry::Tag(name) => {
-                active == &history_tag_chip_menu_invoker(repo_id, commit_id, name.as_ref())
+        let target = match &entry {
+            ChipEntry::Tag(name) => Some(HistoryMenuRef::Tag(name.as_ref().to_string())),
+            ChipEntry::Branch(chip, _) => history_branch_chip_target(chip),
+        };
+        let context_menu_open = active_context_menu_invoker.is_some_and(|active| match &target {
+            Some(HistoryMenuRef::Tag(name)) => {
+                active == &history_tag_chip_menu_invoker(repo_id, commit_id, name)
             }
-            ChipEntry::Branch(chip) => {
-                active == &history_branch_chip_menu_invoker(repo_id, commit_id, chip)
+            Some(HistoryMenuRef::Branch(target)) => {
+                active == &history_branch_chip_menu_invoker(repo_id, commit_id, target)
             }
+            None => false,
         });
         let visual = history_chip_visual(theme, row_visual, style_kind, context_menu_open);
         let shaped = match &entry {
-            ChipEntry::Tag(name) => shape_chip_label_cached(
+            ChipEntry::Tag(name) => shape_truncated_line_cached_from(
                 window,
                 base_style,
                 xxs_font,
@@ -1501,8 +1595,9 @@ fn layout_history_ref_chips(
                 max_text_w,
                 visual.text,
                 None,
+                LineCut::RefLeaf,
             ),
-            ChipEntry::Branch(chip) => shape_chip_label_cached(
+            ChipEntry::Branch(chip, _) => shape_truncated_line_cached_from(
                 window,
                 if matches!(style_kind, HistoryChipStyleKind::Head { .. }) {
                     head_style.get_or_insert_with(|| {
@@ -1519,12 +1614,22 @@ fn layout_history_ref_chips(
                 max_text_w,
                 visual.text,
                 None,
+                LineCut::RefLeaf,
             ),
         };
+        // A trailing leaf alone would make separate same-named remote labels
+        // indistinguishable. Keep the full name available in the ref picker.
+        if let ChipEntry::Branch(chip, _) = &entry
+            && chip.requires_full_label
+            && (shaped.text.as_ref() != chip.text.as_ref() || shaped.width > max_text_w)
+        {
+            continue;
+        }
 
         let chip_w = shaped.width + icons_width + chip_pad_x * 2.0;
         let chip_bounds = Bounds::new(point(x, chip_y), size(chip_w, chip_height));
         chips.push(HistoryRefChipPaint {
+            target,
             bounds: chip_bounds,
             visual,
             shaped,
@@ -1535,16 +1640,26 @@ fn layout_history_ref_chips(
     }
 
     let hidden = total_chips - shown;
+    let mut overflow_bounds = None;
     let mut occupied_right = (x - chip_gap).max(content_bounds.left());
     // Shown chips reserve room for it. Without any, a clipped "+N" is still
     // the row's only refs marker and its inline hover target.
     if hidden > 0 {
-        let visual = history_chip_visual(
+        let picker_open = active_context_menu_invoker.is_some_and(|active| {
+            history_menu_matches_row(
+                active,
+                HISTORY_REFS_PICKER_MENU_INVOKER_PREFIX,
+                repo_id,
+                commit_id.as_ref(),
+            )
+        });
+        let mut visual = history_chip_visual(
             theme,
             row_visual,
             HistoryChipStyleKind::Branch { selected: false },
-            false,
+            picker_open,
         );
+        visual.emphasized_border = picker_open;
         let label: SharedString = format!("+{hidden}").into();
         let shaped = shape_truncated_line_cached(
             window,
@@ -1561,8 +1676,15 @@ fn layout_history_ref_chips(
             size(shaped.width + chip_pad_x * 2.0, chip_height),
         );
         occupied_right = chip_bounds.right();
+        // Match the content mask used by paint_history_ref_chips, including
+        // narrow columns where only part of the overflow badge is visible.
+        let clipped = chip_bounds.intersect(&content_bounds);
+        if clipped.size.width > px(0.0) && clipped.size.height > px(0.0) {
+            overflow_bounds = Some(clipped);
+        }
 
         chips.push(HistoryRefChipPaint {
+            target: None,
             bounds: chip_bounds,
             visual,
             shaped,
@@ -1571,6 +1693,7 @@ fn layout_history_ref_chips(
     }
     HistoryRefsPaintLayout {
         content_bounds,
+        overflow_bounds,
         chips,
         metrics: HistoryChipMetrics {
             radius: chip_radius,
@@ -1725,6 +1848,7 @@ pub(super) fn history_commit_row_canvas(
     tag_names: Arc<[HistoryTextVm]>,
     branch_chips: Arc<[HistoryBranchChipVm]>,
     ref_items: Arc<[HistoryRefListItem]>,
+    branch_worktrees: Option<Arc<Vec<Worktree>>>,
     selected_branch: Option<SelectedHistoryBranch>,
     selected_lane: Option<super::history_graph_paint::SelectedLane>,
     lane_branch_name: Option<SharedString>,
@@ -1745,6 +1869,7 @@ pub(super) fn history_commit_row_canvas(
     comparison_mark: Option<SharedString>,
     // Left edge of the worktree chips laid over the end of the message cell.
     worktree_chips_left: Option<std::rc::Rc<std::cell::Cell<Option<Pixels>>>>,
+    ref_hit_targets: std::rc::Rc<RefCell<HistoryRefHitTargets>>,
     // For each mark (leading, trailing), the annotator whose menu it opens.
     mark_menus: [Option<usize>; 2],
     // The commit, on a row with a mark that opens a menu.
@@ -1875,7 +2000,7 @@ pub(super) fn history_commit_row_canvas(
             } else {
                 0.0
             };
-            let initials_reveal = if author_run_interior
+            let author_expansion = if author_run_interior
                 && branch_chips.is_empty()
                 && tag_names.is_empty()
                 && connect_from_top_col.is_none()
@@ -1890,13 +2015,13 @@ pub(super) fn history_commit_row_canvas(
                 super::history_graph_paint::graph_node_bounds(
                     graph_row,
                     is_stash_node,
-                    initials_reveal,
+                    author_expansion,
                     graph_bounds,
                     grid,
                     scale,
                 )
             });
-            // Dots retain the same generous author tooltip target as discs.
+            // Compact marks retain the full author tooltip target.
             let author_hover_bounds = graph_node.map(|node| {
                 let diameter = super::history_node::author_diameter(scale, 1.0);
                 Bounds::new(
@@ -2275,6 +2400,7 @@ pub(super) fn history_commit_row_canvas(
                 &commit_id,
                 &tag_names,
                 &branch_chips,
+                branch_worktrees.as_deref().map_or(&[], Vec::as_slice),
                 selected_branch.as_ref(),
                 active_context_menu_invoker.as_ref(),
                 &base_style,
@@ -2327,7 +2453,7 @@ pub(super) fn history_commit_row_canvas(
                                 selected_lane,
                                 row_visual,
                                 &author,
-                                initials_reveal,
+                                author_expansion,
                                 selection,
                                 graph_bounds,
                                 grid,
@@ -2340,7 +2466,55 @@ pub(super) fn history_commit_row_canvas(
                 );
             }
 
+            *ref_hit_targets.borrow_mut() = HistoryRefHitTargets {
+                refs: refs
+                    .chips
+                    .iter()
+                    .filter_map(|chip| {
+                        let bounds = chip.bounds.intersect(&refs.content_bounds);
+                        (bounds.size.width > px(0.0) && bounds.size.height > px(0.0))
+                            .then(|| chip.target.clone().map(|target| (bounds, target)))
+                            .flatten()
+                    })
+                    .collect(),
+                overflow: refs.overflow_bounds,
+                released_branch: None,
+            };
+            #[cfg(test)]
+            PAINTED_HISTORY_OVERFLOW.with(|painted| {
+                painted.borrow_mut().insert(
+                    (
+                        repo_id.0,
+                        commit_id.as_ref().to_string(),
+                        branch_names == HistoryBranchNamesMode::Inline,
+                    ),
+                    refs.overflow_bounds
+                        .zip(refs.chips.last())
+                        .map(|(bounds, chip)| (bounds, chip.visual.emphasized_border)),
+                );
+            });
+            #[cfg(test)]
+            PAINTED_HISTORY_REF_BOUNDS.with(|bounds| {
+                bounds.borrow_mut().insert(
+                    (
+                        repo_id.0,
+                        commit_id.as_ref().to_string(),
+                        branch_names == HistoryBranchNamesMode::Inline,
+                    ),
+                    ref_hit_targets.borrow().refs.clone(),
+                );
+            });
             paint_history_ref_chips(&refs, window, cx);
+            branch_drag::paint_and_register(
+                view.clone(),
+                repo_id,
+                theme,
+                &hitbox,
+                element_id,
+                ref_hit_targets.clone(),
+                window,
+                cx,
+            );
 
             let summary_text_bounds = if branch_names == HistoryBranchNamesMode::Inline {
                 history_message_after_inline_refs(
@@ -2414,8 +2588,8 @@ pub(super) fn history_commit_row_canvas(
                 // Matches the header's extra left inset that clears the
                 // column resize handle.
                 let avatar_left = author_bounds.left() + cell_pad_x * 2.0;
-                let identity_color = components::author_color(theme, author.as_ref());
                 if !show_graph && author_bounds.size.width >= avatar_d + cell_pad_x * 2.0 {
+                    let identity_color = components::author_color(theme, author.as_ref());
                     let avatar_top = author_bounds.top()
                         + (author_bounds.size.height - avatar_d).max(px(0.0)) * 0.5;
                     let avatar = super::history_shapes::paint_disc(
@@ -2424,13 +2598,11 @@ pub(super) fn history_commit_row_canvas(
                         window,
                     );
 
-                    paint_author_initials(
+                    components::paint_author_mark(
                         avatar,
-                        &author,
-                        scale.ui_text(components::AVATAR_FONT_PX),
-                        avatar_d,
+                        px(0.0),
+                        author.pattern,
                         identity_color,
-                        1.0,
                         window,
                     );
                 }
@@ -2617,7 +2789,7 @@ pub(super) fn history_commit_row_canvas(
                 let signature_hover = signature_hover.clone();
                 let comparison_mark_hover = comparison_mark_hover.clone();
                 move |event: &gpui::MouseMoveEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble {
+                    if phase != DispatchPhase::Bubble || cx.has_active_drag() {
                         return;
                     }
                     // The row's hitbox — not its bounds — decides whether this
@@ -2751,20 +2923,44 @@ pub(super) fn history_commit_row_canvas(
                 }
             });
 
+            let menu_press = window.with_element_state(
+                element_id,
+                |press: Option<std::rc::Rc<RefCell<Option<HistoryRefMenuPress>>>>, _| {
+                    let press = press.unwrap_or_default();
+                    (press.clone(), press)
+                },
+            );
             window.on_mouse_event({
                 let view = view.clone();
-                move |_: &gpui::MouseDownEvent, phase, _, cx| {
-                    if phase == DispatchPhase::Bubble {
+                let menu_press = menu_press.clone();
+                let hitbox = hitbox.clone();
+                let ref_hit_targets = ref_hit_targets.clone();
+                move |event: &gpui::MouseDownEvent, phase, window, cx| match phase {
+                    DispatchPhase::Capture if event.button == MouseButton::Right => {
+                        *menu_press.borrow_mut() =
+                            hitbox.is_hovered(window).then(|| HistoryRefMenuPress {
+                                position: event.position,
+                                target: ref_hit_targets.borrow().ref_at(event.position).cloned(),
+                            });
+                    }
+                    DispatchPhase::Bubble => {
                         view.update(cx, |this, _| this.reset_history_row_hover());
                     }
+                    _ => {}
                 }
             });
             let target = crate::kit::click::canvas_target(
                 "history-menu",
-                (view.entity_id(), repo_id.0, commit_id.as_ref()),
+                (
+                    view.entity_id(),
+                    repo_id.0,
+                    view.read(cx).active_repo().map(RepoState::lifetime),
+                    commit_id.as_ref(),
+                ),
             );
             let view = view.clone();
             let commit_id = commit_id.clone();
+            let ref_hit_targets = ref_hit_targets.clone();
             crate::kit::click::on_canvas_click(
                 window,
                 target,
@@ -2779,6 +2975,13 @@ pub(super) fn history_commit_row_canvas(
                         gpui::ClickEvent::Mouse(click) => click.down.position,
                         _ => event.position(),
                     };
+                    let Some(press) = menu_press.borrow_mut().take() else {
+                        return;
+                    };
+                    if !press.matches(&ref_hit_targets.borrow(), pressed, event.position()) {
+                        return;
+                    }
+                    let clicked_ref = press.target;
                     let chip = mark_chips
                         .iter()
                         .find(|(_, _, bounds)| bounds.contains(&pressed))
@@ -2828,13 +3031,25 @@ pub(super) fn history_commit_row_canvas(
                                 cx,
                             );
                         } else {
-                            let kind = PopoverKind::CommitMenu {
-                                repo_id,
-                                commit_id: commit_id.clone(),
-                                refs: CommitMenuRefs::All,
+                            let (kind, invoker) = match clicked_ref {
+                                Some(HistoryMenuRef::Branch(target)) => {
+                                    let invoker = history_branch_chip_menu_invoker(
+                                        repo_id, &commit_id, &target,
+                                    );
+                                    (PopoverKind::BranchMenu { repo_id, target }, invoker)
+                                }
+                                clicked_ref => (
+                                    PopoverKind::CommitMenu {
+                                        repo_id,
+                                        commit_id: commit_id.clone(),
+                                        refs: clicked_ref
+                                            .map_or(CommitMenuRefs::All, CommitMenuRefs::Only),
+                                    },
+                                    context_menu_invoker,
+                                ),
                             };
                             this.open_popover_at(
-                                kind.invoked_by(context_menu_invoker),
+                                kind.invoked_by(invoker),
                                 event.position(),
                                 window,
                                 cx,

@@ -352,11 +352,11 @@ fn status_action_labels_rewrite_the_wording() {
         "Ustg (1)"
     );
     assert_eq!(
-        status_action_all_label(StatusActionLabels::Full, "Unstage all changes"),
+        status_action_all_label(StatusActionLabels::Full, "Unstage all changes", "All"),
         "Unstage all changes"
     );
     assert_eq!(
-        status_action_all_label(StatusActionLabels::Compact, "Unstage all changes"),
+        status_action_all_label(StatusActionLabels::Compact, "Unstage all changes", "All"),
         "All"
     );
 }
@@ -453,7 +453,7 @@ fn commit_options_carry_the_hook_choice_to_commit_and_amend() {
                 } else {
                     GitHooks::Run
                 };
-                match options.msg(repo_id, "message".to_string()) {
+                match options.msg(repo_id, "message".to_string(), Vec::new()) {
                     Msg::Commit {
                         repo_id: id,
                         request:
@@ -462,8 +462,10 @@ fn commit_options_carry_the_hook_choice_to_commit_and_amend() {
                                 amend: sent_amend,
                                 push_after_commit,
                                 hooks,
+                                stage_paths,
                             },
                     } => {
+                        assert!(stage_paths.is_empty());
                         assert_eq!(sent_amend, amend, "{options:?}");
                         assert_eq!((id, message.as_str()), (repo_id, "message"));
                         assert_eq!((push_after_commit, hooks), (push_after, expected_hooks));
@@ -486,7 +488,7 @@ fn commit_button_names_skipped_hooks() {
                     push_after,
                     skip_hooks,
                 };
-                let (label, tooltip) = options.button_text();
+                let (label, tooltip) = options.button_text(crate::localization::Language::English);
                 assert!(labels.insert(label), "{label} is used twice");
                 assert_eq!(label.contains("without Hooks"), skip_hooks, "{label}");
                 assert_eq!(tooltip.contains("without running"), skip_hooks, "{tooltip}");
@@ -497,7 +499,7 @@ fn commit_button_names_skipped_hooks() {
         }
     }
     assert_eq!(
-        CommitOptions::default().button_text(),
+        CommitOptions::default().button_text(crate::localization::Language::English),
         ("Commit", "Commit staged changes")
     );
 }

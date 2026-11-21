@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::{Language, text};
 use std::rc::Rc;
 
 const LOCAL_SECTION: &str = "Local Branches";
@@ -49,6 +50,7 @@ fn metadata_parts(
     repo: &RepoState,
     refname: &str,
     now: std::time::SystemTime,
+    language: Language,
 ) -> Vec<components::PickerPromptItemPart> {
     let Loadable::Ready(metadata) = &repo.ref_metadata else {
         // Still loading: no detail line yet rather than a placeholder that would
@@ -67,7 +69,7 @@ fn metadata_parts(
         // dropping the line, so one branch does not leave a short row in a list
         // of tall ones.
         return vec![
-            components::PickerPromptItemPart::new("No commits found")
+            components::PickerPromptItemPart::new(language.text("No commits found", "找不到提交"))
                 .searchable(false)
                 .tooltip(false),
         ];
@@ -120,6 +122,7 @@ fn branch_row(
     icon: &'static str,
     section: &'static str,
     now: std::time::SystemTime,
+    language: Language,
 ) -> components::PickerPromptItem {
     // The ref name is the row's title; who touched it last and what they said is
     // supporting detail on a second, quieter line.
@@ -130,7 +133,7 @@ fn branch_row(
     .flexible(false)])
     .icon(icon)
     .section(section);
-    item.secondary_parts(metadata_parts(repo, lookup_name, now))
+    item.secondary_parts(metadata_parts(repo, lookup_name, now, language))
 }
 
 /// The canonical remote-branch row used by every picker that offers a remote
@@ -142,14 +145,16 @@ pub(super) fn remote_branch_row(
     display_name: String,
     lookup_name: &str,
     now: std::time::SystemTime,
+    language: Language,
 ) -> components::PickerPromptItem {
     branch_row(
         repo,
         display_name,
         lookup_name,
         "icons/cloud.svg",
-        REMOTE_SECTION,
+        language.text(REMOTE_SECTION, "遠端分支"),
         now,
+        language,
     )
 }
 
@@ -162,7 +167,17 @@ pub(super) fn remote_branch_row(
 /// benchmarks build it without a popover. `now` is passed in for the same reason
 /// — the relative dates on the detail line would otherwise make every call
 /// distinct.
+#[cfg(any(test, feature = "benchmarks"))]
 pub(super) fn rows(repo: &RepoState, query: &str, now: std::time::SystemTime) -> BranchRows {
+    rows_for_language(repo, query, now, Language::English)
+}
+
+fn rows_for_language(
+    repo: &RepoState,
+    query: &str,
+    now: std::time::SystemTime,
+    language: Language,
+) -> BranchRows {
     let local_count = repo.branches.ready().map_or(0usize, |values| values.len());
     let remote_count = repo
         .remote_branches
@@ -194,8 +209,9 @@ pub(super) fn rows(repo: &RepoState, query: &str, now: std::time::SystemTime) ->
                 branch.name.clone(),
                 &branch.name,
                 "icons/git_branch.svg",
-                LOCAL_SECTION,
+                language.text(LOCAL_SECTION, "本機分支"),
                 now,
+                language,
             ));
             rows.push(BranchPickerNavTarget::Ref(branch.name.clone()));
         }
@@ -209,7 +225,13 @@ pub(super) fn rows(repo: &RepoState, query: &str, now: std::time::SystemTime) ->
                 continue;
             }
             let display = format!("{}/{}", remote_branch.remote, remote_branch.name);
-            items.push(remote_branch_row(repo, display.clone(), &display, now));
+            items.push(remote_branch_row(
+                repo,
+                display.clone(),
+                &display,
+                now,
+                language,
+            ));
             rows.push(BranchPickerNavTarget::RemoteBranch {
                 remote: remote_branch.remote.clone(),
                 branch: remote_branch.name.clone(),
@@ -236,18 +258,19 @@ pub(super) fn rows(repo: &RepoState, query: &str, now: std::time::SystemTime) ->
         // detail line, which also keeps this row the same height as the branch
         // rows above it.
         let base = head_branch.unwrap_or("HEAD");
+        let detail = match language {
+            Language::English => format!("Based off {base}"),
+            Language::TraditionalChinese => format!("以 {base} 為基礎"),
+        };
         items.push(
             components::PickerPromptItem::from_parts([
-                components::PickerPromptItemPart::new("Create branch ")
+                components::PickerPromptItemPart::new(language.text("Create branch ", "建立分支 "))
                     .flexible(false)
                     .searchable(false)
                     .tooltip(false),
                 components::PickerPromptItemPart::new(query.to_string()).flexible(false),
             ])
-            .secondary_parts([
-                components::PickerPromptItemPart::new(format!("Based off {base}"))
-                    .searchable(false),
-            ])
+            .secondary_parts([components::PickerPromptItemPart::new(detail).searchable(false)])
             .icon("icons/plus.svg"),
         );
         rows.push(BranchPickerNavTarget::CreateBranch(query.to_string()));
@@ -434,27 +457,51 @@ pub(super) fn rows_signature(repo: &RepoState) -> u64 {
 /// Every caller goes through the cache, so a frame that only repaints (a hover
 /// moving between rows is the common one) reuses the rows instead of rebuilding
 /// every branch label.
+#[cfg(test)]
 pub(super) fn cached(
     this: &PopoverHost,
     query: &str,
 ) -> Rc<super::rows_cache::CachedRows<BranchPickerNavTarget>> {
+    localized_cached(this, query, Language::English)
+}
+
+pub(super) fn localized_cached(
+    this: &PopoverHost,
+    query: &str,
+    language: Language,
+) -> Rc<super::rows_cache::CachedRows<BranchPickerNavTarget>> {
+    use std::hash::Hash;
+
     let Some(repo) = this.active_repo() else {
         return super::rows_cache::CachedRows::empty();
     };
+    let signature = super::rows_cache::signature(|hasher| {
+        rows_signature(repo).hash(hasher);
+        language.key().hash(hasher);
+    });
     let key = super::rows_cache::RowsCacheKey::new(
         super::rows_cache::RowsCacheOwner::BranchCheckout,
-        rows_signature(repo),
+        signature,
         query,
     )
     .with_query_dependent_model();
     super::rows_cache::get_or_build(&this.branch_picker_rows_cache, key, |now| {
-        let built = rows(repo, query, now);
+        let built = rows_for_language(repo, query, now, language);
         (built.items, built.rows, built.marked_index)
     })
 }
 
+#[cfg(test)]
 pub(super) fn nav_targets(this: &PopoverHost, query: &str) -> Vec<BranchPickerNavTarget> {
     cached(this, query).filtered_payloads()
+}
+
+pub(super) fn localized_nav_targets(
+    this: &PopoverHost,
+    query: &str,
+    language: Language,
+) -> Vec<BranchPickerNavTarget> {
+    localized_cached(this, query, language).filtered_payloads()
 }
 
 /// Activates a checkout-picker row.
@@ -505,6 +552,7 @@ pub(super) fn activate(
 
 pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let ui_scale = super::popover_ui_scale(cx);
     let ui_scale_percent = ui_scale.percent();
     let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
@@ -526,13 +574,28 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
             purpose: BranchPickerPurpose::RebaseOnto
         })
     );
+    let is_merge = matches!(
+        this.popover,
+        Some(PopoverKind::BranchPicker {
+            purpose: BranchPickerPurpose::Merge
+        })
+    );
     let title = if is_delete {
-        "Delete Branch"
+        language.text("Delete Branch", "刪除分支")
     } else if is_rebase_onto {
-        "Rebase Onto"
+        language.text("Rebase Onto", "選擇變基目標")
+    } else if is_merge {
+        language.text("Merge into Current Branch", "合併到目前的分支")
     } else {
-        "Checkout Branch"
+        language.text("Checkout Branch", "切換分支")
     };
+
+    if let Some(search) = this.branch_picker_search_input.as_ref() {
+        let placeholder = language.text("Filter branches", "篩選分支");
+        if search.read(cx).placeholder() != placeholder {
+            search.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        }
+    }
 
     let mut menu = div()
         .flex()
@@ -553,13 +616,15 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
         // Read the query from the same input PickerPrompt filters with, so the
         // rows built here are the rows it displays.
         let query = search.read_with(cx, |input, _| input.text().trim().to_string());
-        let built = cached(this, &query);
+        let built = localized_cached(this, &query, language);
         let row_payloads = Rc::clone(&built.payloads);
         let menu_payloads = Rc::clone(&built.payloads);
         let empty_text = match this.active_repo().map(|repo| &repo.branches) {
-            Some(Loadable::Loading) | Some(Loadable::NotLoaded) => "Loading",
-            Some(Loadable::Error(_)) => "Could not list branches",
-            _ => "No branches",
+            Some(Loadable::Loading) | Some(Loadable::NotLoaded) => {
+                language.text("Loading", "載入中")
+            }
+            Some(Loadable::Error(_)) => language.text("Could not list branches", "無法列出分支"),
+            _ => language.text("No branches", "沒有分支"),
         };
 
         menu = menu.child(
@@ -627,9 +692,9 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
             Loadable::Ready(branches) => {
                 if let Some(search) = this.branch_picker_search_input.clone() {
                     let repo_id = repo.id;
-                    // The current branch cannot be rebased onto itself; deleting
-                    // it is impossible too.
-                    let spec = RefRowsSpec::branches(is_delete || is_rebase_onto);
+                    // The current branch cannot be rebased onto or merged into
+                    // itself; deleting it is impossible too.
+                    let spec = RefRowsSpec::branches(is_delete || is_rebase_onto || is_merge);
                     let query = search.read(cx).text().trim().to_string();
                     let built = ref_rows_cached(this, spec, &query);
                     let names = Rc::clone(&built.payloads);
@@ -637,7 +702,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                     menu = menu.child(
                         ref_picker_prompt(search, this.picker_prompt_scroll.clone(), &built, cx)
                             .tooltip_host(this.tooltip_host.clone())
-                            .empty_text("No branches")
+                            .empty_text(text(cx, "No branches", "沒有分支"))
                             .max_height(scaled_px(REF_PICKER_LIST_MAX_HEIGHT_PX))
                             .selected_index(this.branch_picker_selected_index)
                             .render(
@@ -694,13 +759,21 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 }
             }
             Loadable::Loading => {
-                menu = menu.child(branch_picker_status_panel(this, "Loading", cx));
+                menu = menu.child(branch_picker_status_panel(
+                    this,
+                    language.text("Loading", "載入中"),
+                    cx,
+                ));
             }
             Loadable::Error(e) => {
                 menu = menu.child(branch_picker_status_panel(this, e.clone(), cx));
             }
             Loadable::NotLoaded => {
-                menu = menu.child(branch_picker_status_panel(this, "Not loaded", cx));
+                menu = menu.child(branch_picker_status_panel(
+                    this,
+                    language.text("Not loaded", "尚未載入"),
+                    cx,
+                ));
             }
         }
     }
@@ -768,6 +841,34 @@ mod tests {
                 BranchPickerNavTarget::RowAction(ix) => format!("#{ix}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn traditional_chinese_checkout_rows_keep_the_original_ref_payloads() {
+        let mut repo = RepoState::new_opening(
+            RepoId(1),
+            gitcomet_core::domain::RepoSpec {
+                workdir: std::path::PathBuf::from("/tmp/branch_picker_language"),
+            },
+        );
+        repo.head_branch = Loadable::Ready("main".to_owned());
+        repo.branches = Loadable::Ready(Arc::new(vec![branch("main")]));
+        let now = std::time::UNIX_EPOCH;
+        let english = rows(&repo, "feature/example", now);
+        let localized =
+            rows_for_language(&repo, "feature/example", now, Language::TraditionalChinese);
+
+        assert_eq!(localized.rows, english.rows);
+        assert_eq!(localized.marked_index, english.marked_index);
+        assert_eq!(localized.items[0].debug_display_text(), "main");
+        assert_eq!(
+            localized.items[0].section_label().map(AsRef::as_ref),
+            Some("本機分支"),
+        );
+        assert_eq!(
+            localized.items[1].debug_display_text(),
+            "建立分支 feature/example",
+        );
     }
 
     #[test]

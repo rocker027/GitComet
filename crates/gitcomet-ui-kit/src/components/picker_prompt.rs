@@ -50,6 +50,7 @@ pub struct PickerPrompt {
     query_row_trailing: Option<gpui::AnyElement>,
     list_override: Option<gpui::AnyElement>,
     remove_tooltip: Option<SharedString>,
+    section_labels: &'static [(&'static str, &'static str)],
     on_toggle_section: Option<Rc<OnToggleSectionFn>>,
     on_context_menu: Option<Rc<OnContextMenuFn>>,
 }
@@ -68,6 +69,7 @@ pub struct PickerPromptContextMenuEvent {
 pub struct PickerPromptItem {
     display_text: SharedString,
     match_text: SharedString,
+    search_alias: Option<SharedString>,
     parts: Vec<PickerPromptItemPart>,
     /// Supporting detail, rendered on a second, quieter line below `parts`.
     /// Empty for the single-line rows most pickers use.
@@ -586,6 +588,7 @@ impl PickerPrompt {
             query_row_trailing: None,
             list_override: None,
             remove_tooltip: None,
+            section_labels: &[],
             on_toggle_section: None,
             on_context_menu: None,
         }
@@ -680,6 +683,13 @@ impl PickerPrompt {
     /// [`PickerPromptItem::removable`] rows.
     pub fn remove_tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
         self.remove_tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// Substitutes display text for section labels while keeping the layout,
+    /// identifiers, and labels passed to section toggle callbacks unchanged.
+    pub fn section_labels(mut self, labels: &'static [(&'static str, &'static str)]) -> Self {
+        self.section_labels = labels;
         self
     }
 
@@ -861,10 +871,18 @@ impl PickerPrompt {
                     .iter()
                     .filter(|(header_slot, _)| *header_slot == slot)
                     .fold(list, |list, (_, header)| {
+                        let display_label = self
+                            .section_labels
+                            .iter()
+                            .find_map(|&(key, label)| {
+                                (key == header.label.as_ref()).then_some(label)
+                            })
+                            .map_or_else(|| header.label.clone(), SharedString::from);
                         list.child(section_header_row(
                             theme,
                             ui_scale,
                             header,
+                            display_label,
                             on_toggle_section.clone(),
                         ))
                     })
@@ -1008,6 +1026,7 @@ impl PickerPromptItem {
         Self {
             display_text: display_text.into(),
             match_text: match_text.into(),
+            search_alias: None,
             parts: built_parts,
             secondary: Vec::new(),
             icon: None,
@@ -1032,6 +1051,12 @@ impl PickerPromptItem {
         let mut match_text = self.match_text.to_string();
         self.secondary = accumulate_parts(parts, None, &mut match_text);
         self.match_text = match_text.into();
+        self
+    }
+
+    /// Supplies a fallback search alias with no visible span to highlight.
+    pub fn with_search_alias(mut self, alias: impl Into<SharedString>) -> Self {
+        self.search_alias = Some(alias.into());
         self
     }
 
@@ -1328,22 +1353,29 @@ fn match_items(
 
     for (index, item) in items.iter().enumerate() {
         let match_text = item.match_text();
-        if match_text.is_empty() {
-            continue;
-        }
-
-        let Some(range) = find_ascii_case_insensitive_precomputed(
+        let visible_match = find_ascii_case_insensitive_precomputed(
             match_text.as_bytes(),
             needle_bytes,
             first_lower,
             first_upper,
-        ) else {
+        );
+        let start = if let Some(range) = &visible_match {
+            range.start
+        } else if let Some(alias_match) = item.search_alias.as_ref().and_then(|alias| {
+            find_ascii_case_insensitive_precomputed(
+                alias.as_bytes(),
+                needle_bytes,
+                first_lower,
+                first_upper,
+            )
+        }) {
+            match_text.len() + alias_match.start
+        } else {
             continue;
         };
-        let start = range.start;
         out.push(Match {
             index,
-            range: Some(range),
+            range: visible_match,
             sort_key: (
                 group_of(index),
                 start,
@@ -1550,6 +1582,7 @@ fn section_header_row(
     theme: AppTheme,
     ui_scale: UiScale,
     header: &PickerPromptHeader,
+    display_label: SharedString,
     on_toggle: Option<Rc<OnToggleSectionFn>>,
 ) -> Div {
     let scaled_px = crate::ui_scale::scaler(ui_scale);
@@ -1589,7 +1622,7 @@ fn section_header_row(
                 )),
         );
     }
-    label_row = label_row.child(label.clone());
+    label_row = label_row.child(display_label);
     if collapsed && header.hidden_count > 0 {
         label_row = label_row.child(
             div()

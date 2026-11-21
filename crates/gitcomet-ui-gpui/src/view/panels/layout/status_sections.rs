@@ -85,7 +85,7 @@ const STATUS_HEADER_TITLE_CHAR_WIDTH_PX: f32 = 7.4;
 /// The header's own `px_2`, and the `gap_2` between the title and the action
 /// group and between the buttons themselves.
 const STATUS_HEADER_PAD_X_PX: f32 = 8.0;
-const STATUS_HEADER_GAP_PX: f32 = 8.0;
+pub(super) const STATUS_HEADER_GAP_PX: f32 = 8.0;
 /// A change-tracking dropdown title's `px_1` either side, its `gap_1`, and the
 /// 12px chevron.
 const STATUS_HEADER_DROPDOWN_EXTRA_PX: f32 = 24.0;
@@ -175,10 +175,11 @@ pub(super) fn status_action_count_label(
 pub(super) fn status_action_all_label(
     labels: StatusActionLabels,
     full: &'static str,
+    compact: &'static str,
 ) -> &'static str {
     match labels {
         StatusActionLabels::Full => full,
-        StatusActionLabels::Compact => "All",
+        StatusActionLabels::Compact => compact,
     }
 }
 
@@ -672,8 +673,11 @@ impl DetailsPaneView {
     ) -> AnyElement {
         let theme = self.theme;
         if count == 0 {
-            return components::empty_state_message(theme, "Working tree clean.")
-                .into_any_element();
+            return components::empty_state_message(
+                theme,
+                crate::localization::text(cx, "Working tree clean.", "工作樹沒有變更。"),
+            )
+            .into_any_element();
         }
         // `count` is the file count the header shows; the list is indexed in
         // display rows, which a tree pads with directories.

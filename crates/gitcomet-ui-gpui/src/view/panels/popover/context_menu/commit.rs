@@ -1,7 +1,117 @@
 use super::*;
-use gitcomet_core::services::{InteractiveRebaseAction, InteractiveRebaseEntry};
+use crate::localization::Language;
+use gitcomet_core::services::{GitRepository, InteractiveRebaseAction, InteractiveRebaseEntry};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
+use std::sync::Arc;
+
+struct CommitTitleCopyTask {
+    _task: gpui::Task<()>,
+}
+
+impl gpui::Global for CommitTitleCopyTask {}
+
+fn read_titles(repo: &dyn GitRepository, commit_ids: &[CommitId]) -> Result<String, String> {
+    let mut titles = String::new();
+    // Keep peak memory bounded even if a large selection has long message bodies.
+    for batch in commit_ids.chunks(128) {
+        let messages = repo
+            .commit_messages(batch)
+            .map_err(|error| error.to_string())?;
+        for title in messages
+            .iter()
+            .filter_map(|message| message.lines().next())
+            .filter(|title| !title.trim().is_empty())
+        {
+            if !titles.is_empty() {
+                titles.push('\n');
+            }
+            titles.push_str(title);
+        }
+    }
+    Ok(titles)
+}
+
+pub(super) fn copy_titles(
+    this: &mut PopoverHost,
+    repo_id: RepoId,
+    mut commit_ids: Arc<Vec<CommitId>>,
+    cx: &mut gpui::Context<PopoverHost>,
+) {
+    let Some(repo) = this.state.repos.iter().find(|repo| repo.id == repo_id) else {
+        return;
+    };
+    let page = crate::view::panes::history::HistoryView::display_log_page_for_repo(repo);
+    let indexed = &repo.history_state.indexed;
+    let index = indexed.displayed_index.clone().or_else(|| {
+        if page.is_none() {
+            indexed.range_index.clone()
+        } else {
+            None
+        }
+    });
+    let lifetime = repo.lifetime();
+    let store = this.store.clone();
+    let language = Language::current(cx);
+    let clipboard_rev = crate::clipboard::files_revision();
+    let read = cx.background_executor().spawn(async move {
+        if commit_ids.len() > 1 {
+            let ids = Arc::make_mut(&mut commit_ids);
+            if let Some(index) = index {
+                ids.sort_by_cached_key(|id| index.position(id.as_ref()).unwrap_or(usize::MAX));
+            } else if let Some(page) = page {
+                let positions: FxHashMap<_, _> = page
+                    .commits
+                    .iter()
+                    .enumerate()
+                    .map(|(row, commit)| (&commit.id, row))
+                    .collect();
+                ids.sort_by_cached_key(|id| positions.get(id).copied().unwrap_or(usize::MAX));
+            }
+        }
+        let repository = store.repository(repo_id, lifetime).ok_or_else(|| {
+            language
+                .text("The repository is unavailable.", "無法存取儲存庫。")
+                .to_owned()
+        })?;
+        read_titles(repository.as_ref(), &commit_ids)
+    });
+    let task = cx.spawn(async move |this, cx| {
+        let result = read.await;
+        let _ = this.update(cx, |this, cx| {
+            // A copy made while the objects were loading takes precedence.
+            if crate::clipboard::files_revision() != clipboard_rev {
+                return;
+            }
+            match result {
+                Ok(titles) if !titles.is_empty() => {
+                    crate::clipboard::write_text(
+                        cx,
+                        titles,
+                        crate::clipboard::CopySource::CommitTitle,
+                    );
+                }
+                Ok(_) => this.push_toast(
+                    components::ToastKind::Warning,
+                    language
+                        .text("No commit titles to copy.", "沒有可複製的提交標題。")
+                        .to_owned(),
+                    cx,
+                ),
+                Err(error) => this.push_toast(
+                    components::ToastKind::Error,
+                    format!(
+                        "{} {error}",
+                        language.text("Could not copy commit titles.", "無法複製提交標題。")
+                    ),
+                    cx,
+                ),
+            }
+        });
+    });
+    // A newer title copy replaces the pending one, including across windows.
+    cx.set_global(CommitTitleCopyTask { _task: task });
+}
 
 type InteractiveRebaseSourceColor = (String, u8);
 type MultiCherryPickPlan = (
@@ -204,16 +314,102 @@ pub(super) fn model(
     repo_id: RepoId,
     commit_id: &CommitId,
     refs: &CommitMenuRefs,
+    language: Language,
 ) -> ContextMenuModel {
-    model_with_header(this, repo_id, commit_id, refs, true)
+    model_with_header(this, repo_id, commit_id, refs, true, language)
 }
 
 pub(super) fn action_items(
     this: &PopoverHost,
     repo_id: RepoId,
     commit_id: &CommitId,
+    language: Language,
 ) -> ContextMenuModel {
-    model_with_header(this, repo_id, commit_id, &CommitMenuRefs::All, false)
+    model_with_header(
+        this,
+        repo_id,
+        commit_id,
+        &CommitMenuRefs::All,
+        false,
+        language,
+    )
+}
+
+pub(super) fn cherry_pick_entry(
+    repo_id: RepoId,
+    commit_id: &CommitId,
+    disabled: bool,
+    shortcut: Option<&'static str>,
+    language: Language,
+) -> ContextMenuItem {
+    ContextMenuItem::Entry {
+        label: language
+            .text("Cherry-pick", "摘取提交（Cherry-pick）")
+            .into(),
+        icon: Some("icons/arrow_up.svg".into()),
+        shortcut: shortcut.map(Into::into),
+        disabled,
+        action: Box::new(ContextMenuAction::CherryPickCommit {
+            repo_id,
+            commit_id: commit_id.clone(),
+        }),
+    }
+}
+
+pub(super) fn revert_entry(
+    repo_id: RepoId,
+    commit_id: &CommitId,
+    disabled: bool,
+    shortcut: Option<&'static str>,
+    language: Language,
+) -> ContextMenuItem {
+    let sha = commit_id.as_ref();
+    let short = sha.get(..8).unwrap_or(sha);
+    ContextMenuItem::Entry {
+        label: format!("{} {short}…", language.text("Revert", "還原")).into(),
+        icon: Some("icons/undo.svg".into()),
+        shortcut: shortcut.map(Into::into),
+        disabled,
+        action: Box::new(ContextMenuAction::RevertCommit {
+            repo_id,
+            commit_id: commit_id.clone(),
+        }),
+    }
+}
+
+pub(super) fn reset_entries(
+    repo_id: RepoId,
+    commit_id: &CommitId,
+    disabled: bool,
+    language: Language,
+) -> [ContextMenuItem; 3] {
+    [
+        (
+            language.text("Reset (--soft) to here", "軟重設（--soft）至此提交"),
+            ResetMode::Soft,
+        ),
+        (
+            language.text("Reset (--mixed) to here", "混合重設（--mixed）至此提交"),
+            ResetMode::Mixed,
+        ),
+        (
+            language.text("Reset (--hard) to here", "硬重設（--hard）至此提交"),
+            ResetMode::Hard,
+        ),
+    ]
+    .map(|(label, mode)| ContextMenuItem::Entry {
+        label: label.into(),
+        icon: Some("icons/refresh.svg".into()),
+        shortcut: None,
+        disabled,
+        action: Box::new(ContextMenuAction::OpenPopover {
+            kind: PopoverKind::ResetPrompt {
+                repo_id,
+                target: commit_id.as_ref().to_string(),
+                mode,
+            },
+        }),
+    })
 }
 
 fn model_with_header(
@@ -222,6 +418,7 @@ fn model_with_header(
     commit_id: &CommitId,
     refs: &CommitMenuRefs,
     include_header: bool,
+    language: Language,
 ) -> ContextMenuModel {
     let sha = commit_id.as_ref().to_string();
     let short: SharedString = sha.get(0..8).unwrap_or(&sha).to_string().into();
@@ -265,7 +462,7 @@ fn model_with_header(
         .unwrap_or_default();
 
     let header_text: SharedString = match branch_names.as_slice() {
-        [] => format!("Commit {short}").into(),
+        [] => format!("{} {short}", language.text("Commit", "提交")).into(),
         [name] => name.clone().into(),
         names => names.join(", ").into(),
     };
@@ -294,10 +491,12 @@ fn model_with_header(
     // Cherry-pick, revert, squash, and rebase all contend for git's single
     // sequencer slot, so any in-flight operation (or a merge waiting to be
     // concluded) disables starting every one of them, not just its own kind.
+    let worktree_finish_busy = this.state.worktree_finish_blocks_workdir_mutation(repo_id);
     let history_rewrite_disabled = this
         .active_repo()
         .filter(|repo| repo.id == repo_id)
-        .is_some_and(|repo| repo.history_rewrite_busy());
+        .is_some_and(|repo| repo.history_rewrite_busy())
+        || worktree_finish_busy;
 
     // "Squash N commits" appears only when the right-clicked commit is part
     // of the active multi-selection and the whole selection passes the squash
@@ -314,9 +513,12 @@ fn model_with_header(
             repo.history_squash_plan()
         });
     if let Some(plan) = squash_plan {
-        let label = format!("Squash {} commits", plan.commit_count).into();
+        let label = match language {
+            Language::English => format!("Squash {} commits", plan.commit_count),
+            Language::TraditionalChinese => format!("壓縮合併 {} 筆提交", plan.commit_count),
+        };
         items.push(ContextMenuItem::Entry {
-            label,
+            label: label.into(),
             // The branch menu's "Squash into current" icon.
             icon: Some("icons/arrow_right.svg".into()),
             shortcut: None,
@@ -326,9 +528,12 @@ fn model_with_header(
         items.push(ContextMenuItem::Separator);
     }
     if !is_head_commit && let Some((entries, source_colors)) = multi_cherry_pick_plan {
-        let label = format!("Cherry-pick {} commits…", entries.len()).into();
+        let label = match language {
+            Language::English => format!("Cherry-pick {} commits…", entries.len()),
+            Language::TraditionalChinese => format!("摘取 {} 筆提交…", entries.len()),
+        };
         items.push(ContextMenuItem::Entry {
-            label,
+            label: label.into(),
             icon: Some("icons/arrow_up.svg".into()),
             shortcut: Some("P".into()),
             disabled: history_rewrite_disabled,
@@ -341,7 +546,7 @@ fn model_with_header(
         items.push(ContextMenuItem::Separator);
     }
     items.push(ContextMenuItem::Entry {
-        label: "Start file browsing".into(),
+        label: language.text("Start file browsing", "開始瀏覽檔案").into(),
         icon: Some("icons/history.svg".into()),
         shortcut: None,
         disabled: false,
@@ -354,7 +559,7 @@ fn model_with_header(
     // offers its own "Copy SHA" among its file entries.
     if include_header {
         items.push(ContextMenuItem::Entry {
-            label: "Copy commit SHA".into(),
+            label: language.text("Copy commit SHA", "複製提交 SHA").into(),
             icon: Some("icons/copy.svg".into()),
             shortcut: Some("C".into()),
             disabled: false,
@@ -367,9 +572,13 @@ fn model_with_header(
         for name in names {
             items.push(ContextMenuItem::Entry {
                 label: if single {
-                    "Copy branch name".into()
+                    language.text("Copy branch name", "複製分支名稱").into()
                 } else {
-                    format!("Copy branch name {name}").into()
+                    format!(
+                        "{} {name}",
+                        language.text("Copy branch name", "複製分支名稱")
+                    )
+                    .into()
                 },
                 icon: Some("icons/copy.svg".into()),
                 shortcut: None,
@@ -377,6 +586,30 @@ fn model_with_header(
                 action: Box::new(ContextMenuAction::CopyText { text: name }),
             });
         }
+        let commit_ids = this
+            .active_repo()
+            .filter(|repo| repo.id == repo_id && *refs == CommitMenuRefs::All)
+            .map(|repo| &repo.history_state.multi_selection)
+            .filter(|selection| selection.is_multi() && selection.contains(commit_id))
+            .map_or_else(
+                || Arc::new(vec![commit_id.clone()]),
+                |selection| Arc::clone(&selection.commits),
+            );
+        let label = if commit_ids.len() > 1 {
+            language.text("Copy selected commit titles", "複製所選提交標題")
+        } else {
+            language.text("Copy commit title", "複製提交標題")
+        };
+        items.push(ContextMenuItem::Entry {
+            label: label.into(),
+            icon: Some("icons/copy.svg".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::CopyCommitTitles {
+                repo_id,
+                commit_ids,
+            }),
+        });
     }
     if let Some(permalink) = this
         .state
@@ -389,7 +622,9 @@ fn model_with_header(
         })
     {
         items.push(ContextMenuItem::Entry {
-            label: "Copy commit permalink".into(),
+            label: language
+                .text("Copy commit permalink", "複製提交永久連結")
+                .into(),
             icon: Some("icons/copy.svg".into()),
             shortcut: None,
             disabled: false,
@@ -407,7 +642,11 @@ fn model_with_header(
         .find(|repo| repo.id == repo_id)
         .and_then(|repo| repo.navigation.comparison_mark.clone());
     items.push(ContextMenuItem::Entry {
-        label: format!("Mark {short} for comparison").into(),
+        label: match language {
+            Language::English => format!("Mark {short} for comparison"),
+            Language::TraditionalChinese => format!("標記 {short} 以便比較"),
+        }
+        .into(),
         icon: Some("icons/git_commit.svg".into()),
         shortcut: None,
         disabled: false,
@@ -418,7 +657,9 @@ fn model_with_header(
         }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Compare with working tree".into(),
+        label: language
+            .text("Compare with working tree", "與工作樹比較")
+            .into(),
         icon: Some("icons/open_external.svg".into()),
         shortcut: None,
         disabled: false,
@@ -435,6 +676,7 @@ fn model_with_header(
         comparison_mark
             .as_ref()
             .map(|mark| (&mark.commit_id, mark.label.as_str())),
+        language,
     ));
     items.extend(super::ref_menu::entries(
         this,
@@ -444,7 +686,7 @@ fn model_with_header(
         },
     ));
     items.push(ContextMenuItem::Entry {
-        label: "Export patch…".into(),
+        label: language.text("Export patch…", "匯出修補檔…").into(),
         icon: Some("icons/arrow_down.svg".into()),
         shortcut: None,
         disabled: false,
@@ -456,7 +698,7 @@ fn model_with_header(
     let add_tag_disabled = !this.state.git_log_settings.show_history_tags;
     let add_tag_ix = items.len();
     items.push(ContextMenuItem::Entry {
-        label: "Add tag…".into(),
+        label: language.text("Add tag…", "新增標籤…").into(),
         icon: Some("icons/tag.svg".into()),
         shortcut: Some("T".into()),
         disabled: add_tag_disabled,
@@ -470,21 +712,48 @@ fn model_with_header(
     if add_tag_disabled {
         entry_tooltips.insert(
             add_tag_ix,
-            "Enable “Show tags in history view” in Settings > Git log to add tags.".into(),
+            language
+                .text(
+                    "Enable “Show tags in history view” in Settings > Git log to add tags.",
+                    "請先在「設定 → Git 歷史」啟用「在歷史檢視中顯示標籤」。",
+                )
+                .into(),
         );
     }
     items.push(ContextMenuItem::Entry {
-        label: "Checkout (detached)".into(),
+        label: language
+            .text("Checkout (detached)", "切換至此提交（分離 HEAD）")
+            .into(),
         icon: Some("icons/git_branch.svg".into()),
         shortcut: Some("D".into()),
-        disabled: false,
+        disabled: worktree_finish_busy,
         action: Box::new(ContextMenuAction::CheckoutCommit {
             repo_id,
             commit_id: commit_id.clone(),
         }),
     });
     items.push(ContextMenuItem::Entry {
-        label: "Create branch from this commit".into(),
+        label: language
+            .text("Create worktree from this commit…", "從此提交建立工作樹…")
+            .into(),
+        icon: Some("icons/git_worktree.svg".into()),
+        shortcut: None,
+        disabled: false,
+        action: Box::new(ContextMenuAction::OpenWorktreeAddPrompt {
+            repo_id,
+            prefill: WorktreeAddPrefill {
+                source: sha.clone(),
+                source_upstream: None,
+                create_branch: true,
+                new_branch: String::new(),
+                open_after: true,
+            },
+        }),
+    });
+    items.push(ContextMenuItem::Entry {
+        label: language
+            .text("Create branch from this commit", "從此提交建立分支")
+            .into(),
         icon: Some("icons/git_branch.svg".into()),
         shortcut: None,
         disabled: false,
@@ -498,27 +767,61 @@ fn model_with_header(
         }),
     });
     if !has_multi_cherry_pick && !is_head_commit {
-        items.push(ContextMenuItem::Entry {
-            label: "Cherry-pick".into(),
-            icon: Some("icons/arrow_up.svg".into()),
-            shortcut: Some("P".into()),
-            disabled: history_rewrite_disabled,
-            action: Box::new(ContextMenuAction::CherryPickCommit {
-                repo_id,
-                commit_id: commit_id.clone(),
-            }),
+        items.push(cherry_pick_entry(
+            repo_id,
+            commit_id,
+            history_rewrite_disabled,
+            Some("P"),
+            language,
+        ));
+    }
+    // The commit-details pencil, offered here too. Its rules decide: HEAD
+    // amends; an older commit must be on HEAD's linear first-parent history.
+    // The first-parent position is prepared for HEAD and the selected commit
+    // only; other rows are judged once their details load.
+    let reword_blocker = this
+        .active_repo()
+        .filter(|repo| repo.id == repo_id)
+        .and_then(|repo| {
+            let judged = repo.head_commit_id().as_ref() == Some(commit_id)
+                || repo.history_state.selected_commit.as_ref() == Some(commit_id);
+            if !judged {
+                return None;
+            }
+            let parent_count = repo
+                .log
+                .ready()
+                .and_then(|page| page.commits.iter().find(|c| c.id == *commit_id))
+                .map(|commit| commit.parent_ids.len())?;
+            crate::view::panels::commit_reword_availability_for_commit(
+                repo,
+                commit_id,
+                parent_count,
+            )
+            .blocker
         });
+    if let Some(blocker) = reword_blocker {
+        entry_tooltips.insert(items.len(), blocker.into());
     }
     items.push(ContextMenuItem::Entry {
-        label: format!("Revert {short}…").into(),
-        icon: Some("icons/undo.svg".into()),
-        shortcut: Some("R".into()),
-        disabled: history_rewrite_disabled,
-        action: Box::new(ContextMenuAction::RevertCommit {
+        label: language
+            .text("Edit commit message…", "編輯提交訊息…")
+            .into(),
+        icon: Some("icons/pencil.svg".into()),
+        shortcut: Some("E".into()),
+        disabled: reword_blocker.is_some() || worktree_finish_busy,
+        action: Box::new(ContextMenuAction::EditCommitMessage {
             repo_id,
             commit_id: commit_id.clone(),
         }),
     });
+    items.push(revert_entry(
+        repo_id,
+        commit_id,
+        history_rewrite_disabled,
+        Some("R"),
+        language,
+    ));
     let current_branch: SharedString = this
         .active_repo()
         .and_then(|r| match &r.head_branch {
@@ -543,7 +846,13 @@ fn model_with_header(
             .into();
         let onto_ref = branch_names.first().cloned().unwrap_or_else(|| sha.clone());
         items.push(ContextMenuItem::Entry {
-            label: format!("Rebase {current_branch} onto {target_label}").into(),
+            label: match language {
+                Language::English => format!("Rebase {current_branch} onto {target_label}"),
+                Language::TraditionalChinese => {
+                    format!("將 {current_branch} 變基至 {target_label}")
+                }
+            }
+            .into(),
             icon: Some("icons/arrow_up.svg".into()),
             shortcut: Some("B".into()),
             disabled: history_rewrite_disabled,
@@ -572,15 +881,23 @@ fn model_with_header(
                     _ => None,
                 }
             });
-        let irebase_label: SharedString = match children_count {
-            Some(count) => {
+        let irebase_label = match (language, children_count) {
+            (Language::English, Some(count)) => {
                 let noun = if count == 1 { "child" } else { "children" };
-                format!("Interactive rebase {count} {noun} of {short}").into()
+                format!("Interactive rebase {count} {noun} of {short}")
             }
-            None => format!("Interactive rebase {current_branch} onto {target_label}").into(),
+            (Language::English, None) => {
+                format!("Interactive rebase {current_branch} onto {target_label}")
+            }
+            (Language::TraditionalChinese, Some(count)) => {
+                format!("互動式變基 {short} 之後的 {count} 筆提交")
+            }
+            (Language::TraditionalChinese, None) => {
+                format!("將 {current_branch} 互動式變基至 {target_label}")
+            }
         };
         items.push(ContextMenuItem::Entry {
-            label: irebase_label,
+            label: irebase_label.into(),
             icon: Some("icons/refresh.svg".into()),
             shortcut: Some("I".into()),
             disabled: history_rewrite_disabled,
@@ -605,14 +922,20 @@ fn model_with_header(
     // about to refuse. `commit_is_ancestor_of_head` already looks the repository
     // up this way.
     let merge_repo = this.state.repos.iter().find(|repo| repo.id == repo_id);
-    let merge_into_current_disabled = !super::super::merge_commit_confirm::merge_commit_is_allowed(
-        merge_repo,
-        &this.state.large_file_settings,
-    ) || commit_is_ancestor_of_head(this, repo_id, commit_id);
+    let merge_into_current_disabled = worktree_finish_busy
+        || !super::super::merge_commit_confirm::merge_commit_is_allowed(
+            merge_repo,
+            &this.state.large_file_settings,
+        )
+        || commit_is_ancestor_of_head(this, repo_id, commit_id);
     let merge_destination =
         super::super::merge_commit_confirm::merge_commit_destination_label(merge_repo);
     items.push(ContextMenuItem::Entry {
-        label: format!("Merge {short} into {merge_destination}").into(),
+        label: match language {
+            Language::English => format!("Merge {short} into {merge_destination}"),
+            Language::TraditionalChinese => format!("將 {short} 合併至 {merge_destination}"),
+        }
+        .into(),
         icon: Some("icons/swap.svg".into()),
         shortcut: Some("M".into()),
         disabled: merge_into_current_disabled,
@@ -625,37 +948,47 @@ fn model_with_header(
     });
 
     items.push(ContextMenuItem::Separator);
-    for (label, icon, mode) in [
-        (
-            "Reset (--soft) to here",
-            "icons/refresh.svg",
-            ResetMode::Soft,
-        ),
-        (
-            "Reset (--mixed) to here",
-            "icons/refresh.svg",
-            ResetMode::Mixed,
-        ),
-        (
-            "Reset (--hard) to here",
-            "icons/refresh.svg",
-            ResetMode::Hard,
-        ),
-    ] {
-        items.push(ContextMenuItem::Entry {
-            label: label.into(),
-            icon: Some(icon.into()),
-            shortcut: None,
-            disabled: false,
-            action: Box::new(ContextMenuAction::OpenPopover {
-                kind: PopoverKind::ResetPrompt {
-                    repo_id,
-                    target: sha.clone(),
-                    mode,
-                },
-            }),
-        });
+    // Undo the last commit: a soft reset to its parent, through the usual
+    // reset confirmation. Its changes stay staged for a new commit.
+    if is_head_commit {
+        let parent = this
+            .active_repo()
+            .filter(|repo| repo.id == repo_id)
+            .and_then(|repo| repo.log.ready())
+            .and_then(|page| page.commits.iter().find(|c| c.id == *commit_id))
+            .filter(|commit| commit.parent_ids.len() == 1)
+            .and_then(|commit| commit.parent_ids.first().cloned());
+        if let Some(parent) = parent {
+            entry_tooltips.insert(
+                items.len(),
+                language
+                    .text(
+                        "Soft reset to the parent commit; the changes stay staged",
+                        "軟重設至父提交，變更會保留在暫存區。",
+                    )
+                    .into(),
+            );
+            items.push(ContextMenuItem::Entry {
+                label: language.text("Undo commit…", "復原提交…").into(),
+                icon: Some("icons/undo.svg".into()),
+                shortcut: Some("U".into()),
+                disabled: history_rewrite_disabled,
+                action: Box::new(ContextMenuAction::OpenPopover {
+                    kind: PopoverKind::ResetPrompt {
+                        repo_id,
+                        target: parent.as_ref().to_string(),
+                        mode: ResetMode::Soft,
+                    },
+                }),
+            });
+        }
     }
+    items.extend(reset_entries(
+        repo_id,
+        commit_id,
+        worktree_finish_busy,
+        language,
+    ));
 
     ContextMenuModel::new(items).with_entry_tooltips(entry_tooltips)
 }

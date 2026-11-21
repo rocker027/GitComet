@@ -14,6 +14,7 @@
 
 use super::*;
 use crate::kit::click::PointerClickExt as _;
+use crate::localization::Language;
 
 /// The row whose menu is open, and where to draw it.
 #[derive(Clone)]
@@ -53,7 +54,7 @@ impl PickerRowMenuTarget {
     /// rendered and the entries the arrow keys walk are one derivation.
     fn model(&self, this: &PopoverHost, cx: &gpui::Context<PopoverHost>) -> ContextMenuModel {
         match self {
-            Self::Repo(entry) => this.repo_picker_row_menu_model(entry),
+            Self::Repo(entry) => this.localized_repo_picker_row_menu_model(entry, cx),
             Self::Branch { .. } | Self::Worktree { .. } => self
                 .popover_kind(this)
                 .and_then(|kind| this.context_menu_model(&kind, cx))
@@ -112,17 +113,17 @@ impl PickerRowMenuTarget {
     /// Where this row sits in the picker's list now, so dismissing the menu puts
     /// the selection back on it wherever it has moved to. `None` when the row is
     /// gone — filtered out, or closed from under the menu.
-    fn row_position(&self, this: &PopoverHost, query: &str) -> Option<usize> {
+    fn row_position(&self, this: &PopoverHost, query: &str, language: Language) -> Option<usize> {
         match self {
-            Self::Repo(entry) => repo_picker::filtered_layout(this, query)
-                .0
+            Self::Repo(entry) => repo_picker::cached_for_language(this, query, language)
+                .filtered_payloads()
                 .iter()
                 .position(|candidate| candidate == entry),
-            Self::Branch { row, .. } => branch_picker::nav_targets(this, query)
+            Self::Branch { row, .. } => branch_picker::localized_nav_targets(this, query, language)
                 .iter()
                 .position(|candidate| candidate == row),
             Self::Worktree { repo_id, row } => {
-                worktree_badge_picker::nav_targets(this, *repo_id, query)
+                worktree_badge_picker::nav_targets(this, *repo_id, query, language)
                     .iter()
                     .position(|candidate| candidate == row)
             }
@@ -254,7 +255,9 @@ pub(super) fn close(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
     // than trusting the index it had when the menu opened. Gone means gone: a
     // kept index would highlight a different repository.
     let query = current_query(this, cx);
-    let restored = menu.target.row_position(this, &query);
+    let restored = menu
+        .target
+        .row_position(this, &query, Language::current(cx));
     if let Some(index) = this.open_picker_selected_index() {
         *index = restored;
     }
@@ -407,7 +410,11 @@ pub(super) fn layer(
                     nav_ix += 1;
                 }
                 let (icon_slot, tone) = crate::view::menu_presentation::entry_presentation(
-                    label.as_ref(),
+                    model
+                        .entry_source_labels
+                        .get(&ix)
+                        .unwrap_or(&label)
+                        .as_ref(),
                     icon,
                     reserve_icon_column,
                 );

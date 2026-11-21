@@ -3,7 +3,7 @@ use super::branch_sidebar::{
     branch_sidebar_source_matches_cached,
 };
 use super::*;
-use gitcomet_core::domain::{Branch, LogPage, LogScope, RemoteBranch, StashEntry, Tag};
+use gitcomet_core::domain::{Branch, LogPage, LogScope, RemoteBranch, StashEntry, Tag, Worktree};
 use rustc_hash::FxHasher;
 use smallvec::SmallVec;
 use std::cell::RefCell;
@@ -396,20 +396,26 @@ pub(in crate::view) fn history_text_hash(text: &str) -> u64 {
     hasher.finish()
 }
 
-/// Cached once with row presentation, including Unicode case expansion.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// Name and the mirrored mark every surface paints for this author.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::view) struct HistoryAuthorVm {
     name: HistoryTextVm,
-    pub(in crate::view) initials: HistoryTextVm,
+    pub(in crate::view) pattern: [u8; components::AUTHOR_MARK_ROWS],
 }
 
 impl HistoryAuthorVm {
     pub(in crate::view) fn new(name: SharedString) -> Self {
-        let initials = HistoryTextVm::new(components::author_initials(name.as_ref()).into());
+        let pattern = components::author_mark(name.as_ref());
         Self {
             name: HistoryTextVm::new(name),
-            initials,
+            pattern,
         }
+    }
+}
+
+impl Default for HistoryAuthorVm {
+    fn default() -> Self {
+        Self::new(SharedString::default())
     }
 }
 
@@ -609,7 +615,7 @@ pub(super) struct HistoryDecorationRowVm {
     pub(super) tag_names: Arc<[HistoryTextVm]>,
     /// Compact branch decorations painted in the history table. Unlike
     /// `ref_items`, these group same-named local and remote refs that share a
-    /// target while retaining every exact identity for context-menu routing.
+    /// target. Remote-only collisions get separate qualified labels.
     pub(super) branch_chips: Arc<[HistoryBranchChipVm]>,
     pub(super) ref_items: Arc<[HistoryRefListItem]>,
     /// Branch this commit belongs to, as an index into
@@ -623,6 +629,8 @@ pub(super) struct HistoryDecorationRowVm {
 pub(in crate::view) struct HistoryBranchChipVm {
     pub(in crate::view) text: HistoryTextVm,
     pub(in crate::view) kind: HistoryBranchChipKind,
+    /// Fold into the ref picker if truncation would hide an exact remote identity.
+    pub(in crate::view) requires_full_label: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1121,12 +1129,30 @@ fn history_branch_chips_from_groups(
         chips.push(HistoryBranchChipVm {
             text: HistoryTextVm::new("HEAD".into()),
             kind: HistoryBranchChipKind::DetachedHead,
+            requires_full_label: false,
         });
     }
 
     for (name, mut group) in groups {
         group.remote_targets.sort_unstable();
         group.remote_targets.dedup();
+
+        if !group.has_local && group.remote_targets.len() > 1 {
+            chips.extend(
+                group
+                    .remote_targets
+                    .into_iter()
+                    .map(|target| HistoryBranchChipVm {
+                        text: HistoryTextVm::new(target.display_name().into()),
+                        kind: HistoryBranchChipKind::Branch {
+                            is_head: false,
+                            targets: [target].into(),
+                        },
+                        requires_full_label: true,
+                    }),
+            );
+            continue;
+        }
 
         let mut targets = Vec::with_capacity(
             usize::from(group.has_local).saturating_add(group.remote_targets.len()),
@@ -1142,6 +1168,7 @@ fn history_branch_chips_from_groups(
                 is_head: head_branch == Some(name.as_str()),
                 targets: targets.into(),
             },
+            requires_full_label: false,
         });
     }
 
@@ -1260,12 +1287,12 @@ fn history_branch_ref_items_with_extra_head(
     let include_extra = names
         .iter()
         .copied()
-        .all(|name| cmp_history_branch_display(name, extra) != Ordering::Equal);
+        .all(|name| cmp_history_branch_ref_item(name, extra) != Ordering::Equal);
     let mut out = Vec::with_capacity(names.len() + usize::from(include_extra));
     let mut extra_pending = include_extra;
 
     for name in names.iter().copied() {
-        if extra_pending && cmp_history_branch_display(extra, name) == Ordering::Less {
+        if extra_pending && cmp_history_branch_ref_item(extra, name) == Ordering::Less {
             out.push(history_head_ref_item(head_branch));
             extra_pending = false;
         }
@@ -1608,6 +1635,21 @@ pub(super) struct HistoryStashIdsCache {
     pub(super) ids: Arc<FxHashSet<CommitId>>,
 }
 
+/// A local ref is checked out only if both its name and its tip match the
+/// worktree listing. Other refs on the same commit can be unrelated.
+pub(in crate::view) fn history_worktree_for_local_ref<'a>(
+    worktrees: &'a [Worktree],
+    commit_id: &CommitId,
+    branch: &str,
+) -> Option<&'a Worktree> {
+    worktrees.iter().find(|worktree| {
+        !worktree.bare
+            && !worktree.detached
+            && worktree.head.as_ref() == Some(commit_id)
+            && worktree.branch.as_deref() == Some(branch)
+    })
+}
+
 /// Another worktree, marked on the commit it has checked out.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::view) struct HistoryWorktreeChip {
@@ -1699,7 +1741,6 @@ impl GitCometView {
 }
 
 #[cfg(test)]
-mod author_initials_tests;
 #[cfg(test)]
 mod history_list_plan_tests;
 #[cfg(test)]

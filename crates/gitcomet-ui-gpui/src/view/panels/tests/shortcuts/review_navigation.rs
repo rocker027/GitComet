@@ -96,6 +96,62 @@ fn open_file(cx: &mut gpui::VisualTestContext, view: &Entity<GitCometView>, path
     assert!(diff_panel_is_focused(cx, view));
 }
 
+#[gpui::test]
+fn historical_diff_opens_staged_changes_and_back_restores_the_commit(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    prepare(cx, &view);
+    let mut repo = review_repo();
+    let repo_id = repo.id;
+    let commit = repo.history_state.selected_commit.clone().unwrap();
+    repo.staged_status = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::FileStatus {
+        path: "staged.rs".into(),
+        kind: FileStatusKind::Modified,
+        conflict: None,
+    }]));
+    repo.staged_status_rev += 1;
+    apply_state(cx, &view, app_state_with_active_repo(repo));
+    let target = DiffTarget::commit(commit.clone(), "a.rs".into());
+    cx.update(|_, app| {
+        view.read(app).store.dispatch(Msg::SelectDiff {
+            repo_id,
+            target: target.clone(),
+        });
+    });
+    wait_until_store_diff_target_path(cx, &view, std::path::Path::new("a.rs"));
+    sync_store_snapshot(cx, &view);
+    draw_and_drain_test_window(cx);
+    let changes = cx
+        .debug_bounds("diff_bar_working_tree_changes")
+        .expect("staged-only changes are reachable from a historical diff");
+    cx.simulate_click(changes.center(), gpui::Modifiers::default());
+    wait_until(cx, "working tree changes selected", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.update(|_, app| {
+            let snapshot = view.read(app).store.snapshot();
+            let repo = &snapshot.repos[0];
+            repo.history_state.selected_commit.is_none()
+                && repo.diff_state.diff_target.is_none()
+                && repo.navigation.main_history.can_back()
+        })
+    });
+    cx.update(|_, app| {
+        view.update(app, |root, cx| root.dispatch_global_nav(false, cx));
+    });
+    wait_until(cx, "original commit and file restored", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.update(|_, app| {
+            let snapshot = view.read(app).store.snapshot();
+            let repo = &snapshot.repos[0];
+            repo.history_state.selected_commit.as_ref() == Some(&commit)
+                && repo.diff_state.diff_target.as_ref() == Some(&target)
+        })
+    });
+}
+
 fn close_commit_details(
     cx: &mut gpui::VisualTestContext,
     view: &Entity<GitCometView>,
@@ -148,6 +204,8 @@ fn review_close_commit_details_focuses_graph_when_status_is_empty(cx: &mut gpui:
         cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
     close_commit_details(cx, &view, None);
     assert!(graph_focused(cx, &view));
+    assert!(cx.debug_bounds("details_pane").is_none());
+    assert!(cx.debug_bounds("pane_resize_details").is_none());
     cx.simulate_keystrokes("secondary-f");
     draw_and_drain_test_window(cx);
     assert!(cx.debug_bounds("history_find").is_some());
@@ -201,6 +259,8 @@ fn assert_close_focuses_status(
     let (view, cx) =
         cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
     close_commit_details(cx, &view, Some(area));
+    assert!(cx.debug_bounds("details_pane").is_some());
+    assert!(cx.debug_bounds("pane_resize_details").is_some());
     assert!(cx.update(|window, app| {
         view.read(app)
             .details_pane
@@ -230,6 +290,152 @@ fn review_close_commit_details_focuses_staged_rows(cx: &mut gpui::TestAppContext
     assert_close_focuses_status(cx, DiffArea::Staged, StatusSection::Staged);
 }
 
+#[gpui::test]
+fn review_close_commit_details_reopens_for_changes_or_commit_selection(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    close_commit_details(cx, &view, None);
+    assert!(cx.debug_bounds("details_pane").is_none());
+
+    let mut dirty = working_copy_repo(&[], &["working.rs"]);
+    dirty.status_rev += 1;
+    apply_state(cx, &view, app_state_with_active_repo(dirty));
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("status_row_9071_unstaged_0").is_some());
+    focus_status(cx, &view, StatusSection::CombinedUnstaged);
+
+    let mut clean = working_copy_repo(&[], &[]);
+    clean.status_rev += 2;
+    apply_state(cx, &view, app_state_with_active_repo(clean));
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_none());
+    assert!(graph_focused(cx, &view));
+
+    let commit = cx.debug_bounds("history_row_0").unwrap();
+    cx.simulate_click(commit.center(), gpui::Modifiers::default());
+    wait_until(cx, "commit details reopened", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.debug_bounds("commit_details_heading").is_some()
+    });
+}
+
+/// At startup a clean working copy keeps the details pane hidden until a
+/// commit is selected.
+#[gpui::test]
+fn a_clean_working_copy_opens_with_the_details_pane_hidden(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    apply_state(
+        cx,
+        &view,
+        app_state_with_active_repo(working_copy_repo(&[], &[])),
+    );
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_none());
+    assert!(cx.debug_bounds("pane_resize_details").is_none());
+
+    let commit = cx.debug_bounds("history_row_0").unwrap();
+    cx.simulate_click(commit.center(), gpui::Modifiers::default());
+    wait_until(cx, "commit details shown", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.debug_bounds("commit_details_heading").is_some()
+    });
+}
+
+/// The highlighted commit is what the details pane shows: closing the pane
+/// drops the selection, and selecting a commit opens the pane again.
+#[gpui::test]
+fn the_commit_highlight_and_the_details_pane_go_together(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    prepare(cx, &view);
+    assert!(cx.debug_bounds("details_pane").is_some());
+
+    cx.update(|_, app| view.update(app, |root, cx| root.toggle_details(cx)));
+    wait_until(cx, "selection cleared", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.update(|_, app| {
+            view.read(app).state.repos[0]
+                .history_state
+                .selected_commit
+                .is_none()
+        })
+    });
+    draw_and_drain_test_window(cx);
+    assert!(cx.update(|_, app| view.read(app).details_collapsed));
+
+    let commit = cx.debug_bounds("history_row_0").unwrap();
+    cx.simulate_click(commit.center(), gpui::Modifiers::default());
+    wait_until(cx, "details reopened for the selected commit", |cx| {
+        sync_store_snapshot(cx, &view);
+        cx.update(|_, app| !view.read(app).details_collapsed)
+            && cx.debug_bounds("commit_details_heading").is_some()
+    });
+}
+
+/// With changes at startup the pane shows: it holds the commit form.
+#[gpui::test]
+fn a_dirty_working_copy_opens_with_the_details_pane_shown(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    apply_state(
+        cx,
+        &view,
+        app_state_with_active_repo(working_copy_repo(&[], &["working.rs"])),
+    );
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_some());
+}
+
+#[gpui::test]
+fn review_close_commit_details_allows_manually_reopening_clean_working_copy(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    close_commit_details(cx, &view, None);
+    assert!(cx.debug_bounds("details_pane").is_none());
+
+    cx.update(|_, app| view.update(app, |root, cx| root.toggle_details(cx)));
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_some());
+}
+
+/// Focus Commit Message asks for the commit box, so it shows the pane a
+/// clean working copy hid, and the message takes the focus.
+#[gpui::test]
+fn focus_commit_message_shows_the_pane_a_clean_working_copy_hid(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    close_commit_details(cx, &view, None);
+    assert!(cx.debug_bounds("details_pane").is_none());
+
+    cx.update(|window, app| {
+        view.update(app, |root, cx| {
+            root.execute_command("focus-commit-message", Some(window), cx)
+        })
+    });
+    draw_and_drain_test_window(cx);
+    assert!(cx.debug_bounds("details_pane").is_some());
+    assert!(cx.update(|window, app| {
+        view.read(app)
+            .details_pane
+            .read(app)
+            .commit_message_input
+            .read(app)
+            .focus_handle()
+            .is_focused(window)
+    }));
+}
+
 fn working_copy_repo(staged: &[&str], unstaged: &[&str]) -> RepoState {
     let mut repo = review_repo();
     repo.history_state.selected_commit = None;
@@ -253,6 +459,41 @@ fn working_copy_repo(staged: &[&str], unstaged: &[&str]) -> RepoState {
         .into(),
     );
     repo
+}
+
+#[gpui::test]
+fn working_copy_header_closes_details_with_no_unstaged_changes(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    apply_state(
+        cx,
+        &view,
+        app_state_with_active_repo(working_copy_repo(&["a.rs"], &[])),
+    );
+
+    for (mode, header) in [
+        (ChangeTrackingView::Combined, "unstaged_header"),
+        (ChangeTrackingView::SplitUntracked, "untracked_header"),
+    ] {
+        cx.update(|_, app| {
+            view.update(app, |root, cx| root.set_change_tracking_view(mode, cx));
+        });
+        draw_and_drain_test_window(cx);
+
+        let header = cx.debug_bounds(header).unwrap();
+        let close = cx.debug_bounds("status_details_close").unwrap();
+        assert!(header.contains(&close.center()));
+        cx.simulate_click(close.center(), Modifiers::default());
+        draw_and_drain_test_window(cx);
+        cx.update(|_, app| assert!(view.read(app).details_collapsed));
+        assert!(cx.debug_bounds("status_details_close").is_none());
+
+        let toggle = cx.debug_bounds("details_toggle").unwrap();
+        cx.simulate_click(toggle.center(), Modifiers::default());
+        draw_and_drain_test_window(cx);
+        assert!(cx.debug_bounds("status_details_close").is_some());
+    }
 }
 
 fn focus_status(

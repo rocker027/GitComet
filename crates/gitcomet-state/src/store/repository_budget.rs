@@ -36,6 +36,10 @@ fn has_pending_continuation(state: &AppState, repo_id: RepoId) -> bool {
             | AuthRetryOperation::SafePushAfterCommit { repo_id: id, .. }
             | AuthRetryOperation::Commit { repo_id: id, .. } => *id == repo_id,
             AuthRetryOperation::Clone { .. } => false,
+            AuthRetryOperation::WorktreeFinish { run_id } => state
+                .worktree_finish_runs
+                .iter()
+                .any(|run| run.id == *run_id && run.origin_repo_id == repo_id),
         })
         || state
             .branch_exists_prompt
@@ -448,6 +452,7 @@ mod tests {
                     amend: false,
                     push_after_commit: false,
                     hooks: gitcomet_core::services::GitHooks::Run,
+                    stage_paths: Vec::new(),
                 },
             },
         ] {

@@ -150,6 +150,9 @@ impl GitCometView {
     /// Tells the repository tabs, the action bar and extensions which
     /// terminals are open.
     fn terminal_sessions_changed(&mut self, cx: &mut gpui::Context<Self>) {
+        // F9: keep Worktree Finish running-terminal occupancy live across terminal open/exit/close.
+        self.store
+            .set_running_terminal_paths(self.worktree_paths_with_running_terminals());
         if let Some(extension_window) = &self.extension_window {
             extension_window.set_terminals(self.open_terminals());
         }
@@ -764,6 +767,26 @@ impl GitCometView {
             })
             .map(|(_, session)| session.repo_name.clone())
             .collect()
+    }
+
+    pub(crate) fn worktree_paths_with_running_terminals(&self) -> Vec<std::path::PathBuf> {
+        let mut paths = Vec::new();
+        for (repo_id, session) in &self.terminal_sessions {
+            if !session.instances.iter().any(|i| i.connected) {
+                continue;
+            }
+            let path = self
+                .state
+                .repos
+                .iter()
+                .find(|repo| repo.id == *repo_id)
+                .map(|repo| repo.spec.workdir.clone())
+                .unwrap_or_else(|| session.workdir.clone());
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        paths
     }
 
     fn terminal_shutdown_summary_for_action(

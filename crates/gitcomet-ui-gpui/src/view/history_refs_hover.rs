@@ -1,5 +1,7 @@
 use super::*;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
+use crate::localization::Language;
+use gitcomet_core::domain::Worktree;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -13,6 +15,7 @@ const HISTORY_REFS_HOVER_WIDTH_PX: f32 = 240.0;
 const HISTORY_REFS_HOVER_MAX_HEIGHT_PX: f32 = 260.0;
 const HISTORY_REFS_HOVER_POINTER_INSET_PX: f32 = 16.0;
 pub(in crate::view) const HISTORY_REFS_HOVER_MENU_INVOKER_PREFIX: &str = "history_refs_hover_menu_";
+pub(in crate::view) const HISTORY_REFS_PICKER_MENU_INVOKER_PREFIX: &str = "history_refs_picker_";
 
 #[derive(Clone, Debug)]
 struct HistoryRefsHoverState {
@@ -21,6 +24,22 @@ struct HistoryRefsHoverState {
     source_bounds: Bounds<Pixels>,
     source_pointer_x: Pixels,
     items: Arc<[HistoryRefListItem]>,
+    worktrees: Option<Arc<Vec<Worktree>>>,
+}
+
+impl HistoryRefsHoverState {
+    fn worktree_for_item(&self, item: &HistoryRefListItem) -> Option<&Worktree> {
+        let branch = match &item.kind {
+            HistoryRefListItemKind::LocalBranch { name }
+            | HistoryRefListItemKind::AttachedHead { branch: name } => name,
+            _ => return None,
+        };
+        super::caches::history_worktree_for_local_ref(
+            self.worktrees.as_deref()?,
+            &self.commit_id,
+            branch,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -36,6 +55,7 @@ fn same_history_refs_hover_state(lhs: &HistoryRefsHoverState, rhs: &HistoryRefsH
         && lhs.commit_id == rhs.commit_id
         && lhs.source_bounds == rhs.source_bounds
         && *lhs.items == *rhs.items
+        && lhs.worktrees == rhs.worktrees
 }
 
 pub(in crate::view) struct HistoryRefsHoverHost {
@@ -72,12 +92,14 @@ impl HistoryRefsHoverHost {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::view) fn show(
         &mut self,
         repo_id: RepoId,
         commit_id: CommitId,
         source_bounds: Bounds<Pixels>,
         items: Arc<[HistoryRefListItem]>,
+        worktrees: Option<Arc<Vec<Worktree>>>,
         pointer: Point<Pixels>,
         cx: &mut gpui::Context<Self>,
     ) {
@@ -98,6 +120,7 @@ impl HistoryRefsHoverHost {
             source_bounds,
             source_pointer_x: pointer.x,
             items,
+            worktrees,
         };
 
         if self
@@ -396,7 +419,7 @@ impl HistoryRefsHoverHost {
             HISTORY_REFS_HOVER_MENU_INVOKER_PREFIX,
             repo_id.0,
             commit_id.as_ref(),
-            item.text.as_ref()
+            item_ix
         )
         .into();
         self.pinned_item_ix = Some(item_ix);
@@ -468,6 +491,7 @@ impl Render for HistoryRefsHoverHost {
         };
 
         let theme = self.theme;
+        let language = Language::current(cx);
         let ui_scale = ui_scale::UiScale::current(cx);
         let panel_w = ui_scale.px(HISTORY_REFS_HOVER_WIDTH_PX);
         let max_panel_h = ui_scale.px(HISTORY_REFS_HOVER_MAX_HEIGHT_PX);
@@ -490,7 +514,35 @@ impl Render for HistoryRefsHoverHost {
 
         let items = state.items.iter().enumerate().map(|(ix, item)| {
             let label = item.text.shared().clone();
-            let tooltip = label.clone();
+            let worktree = state.worktree_for_item(item);
+            let tooltip = worktree.map_or_else(
+                || label.clone(),
+                |worktree| {
+                    let worktree_label = language.text("Worktree", "工作樹");
+                    format!("{label}\n{worktree_label}\n{}", worktree.path.display()).into()
+                },
+            );
+            let worktree_badge = worktree.map(|worktree| {
+                div()
+                    .debug_selector(|| format!("{}_worktree", Self::item_debug_selector(item)))
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .min_w(px(0.0))
+                    .max_w(layout.panel_w * 0.40)
+                    .text_color(theme.colors.foreground.secondary)
+                    .child(svg_icon(
+                        "icons/git_worktree.svg",
+                        theme.colors.accent.foreground,
+                        ui_scale.px(12.0),
+                    ))
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .child(path_display::repo_path_name(&worktree.path)),
+                    )
+            });
             let frozen = self.item_menu_open;
             let pinned = self.pinned_item_ix == Some(ix);
             let icon = Self::item_icon(item);
@@ -518,14 +570,8 @@ impl Render for HistoryRefsHoverHost {
                         .selected(pinned, theme.colors.interaction.selected_background),
                 )
                 .child(svg_icon(icon, icon_color, ui_scale.px(12.0)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(label),
-                )
+                .child(div().flex_1().min_w(px(0.0)).truncate().child(label))
+                .children(worktree_badge)
                 .gitcomet_tooltip(theme, tooltip)
                 // `on_click`/`on_aux_click` rather than raw mouse-up: the panel
                 // shows on hover, so it can slide under a button that is
@@ -648,6 +694,55 @@ fn slug_for_debug_selector(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refs_hover_only_shows_worktrees_for_matching_local_refs() {
+        let commit_id = CommitId("tip".into());
+        let worktree = Worktree {
+            path: std::path::PathBuf::from("/worktrees/topic"),
+            bare: false,
+            head: Some(commit_id.clone()),
+            branch: Some("feature/topic".to_string()),
+            detached: false,
+        };
+        let state = HistoryRefsHoverState {
+            repo_id: RepoId(1),
+            commit_id,
+            source_bounds: Bounds::default(),
+            source_pointer_x: px(0.0),
+            items: Arc::from([]),
+            worktrees: Some(Arc::new(vec![worktree.clone()])),
+        };
+        let item = |kind| HistoryRefListItem {
+            text: HistoryTextVm::new("feature/topic".into()),
+            kind,
+        };
+        let local = item(HistoryRefListItemKind::LocalBranch {
+            name: "feature/topic".to_string(),
+        });
+        let attached_head = item(HistoryRefListItemKind::AttachedHead {
+            branch: "feature/topic".to_string(),
+        });
+        let other_local = item(HistoryRefListItemKind::LocalBranch {
+            name: "other/topic".to_string(),
+        });
+        let remote = item(HistoryRefListItemKind::RemoteBranch {
+            name: "origin/feature/topic".to_string(),
+            remote: "origin".to_string(),
+            branch: "feature/topic".to_string(),
+        });
+
+        assert_eq!(state.worktree_for_item(&local), Some(&worktree));
+        assert_eq!(state.worktree_for_item(&attached_head), Some(&worktree));
+        assert!(state.worktree_for_item(&other_local).is_none());
+        assert!(state.worktree_for_item(&remote).is_none());
+
+        let previous_commit = HistoryRefsHoverState {
+            commit_id: CommitId("previous".into()),
+            ..state
+        };
+        assert!(previous_commit.worktree_for_item(&local).is_none());
+    }
 
     #[test]
     fn local_branch_computer_icons_match_the_sidebar_accent() {

@@ -875,7 +875,9 @@ pub(super) fn prompt_open_repository(cx: &mut App, backend: Arc<dyn GitBackend>)
         files: false,
         directories: true,
         multiple: false,
-        prompt: Some("Open Git Repository".into()),
+        prompt: Some(
+            crate::localization::text(cx, "Open Git Repository", "開啟 Git 儲存庫").into(),
+        ),
         directory: None,
     });
 
@@ -936,7 +938,7 @@ pub(super) fn prompt_apply_patch(cx: &mut App) {
         files: true,
         directories: false,
         multiple: false,
-        prompt: Some("Select patch file".into()),
+        prompt: Some(crate::localization::text(cx, "Select patch file", "選擇修補檔").into()),
         directory: None,
     });
 

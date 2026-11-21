@@ -169,6 +169,8 @@ pub struct HistoryState {
     /// The worktree moved again while a load was in flight; re-run once it
     /// lands, so the list still ends up describing the final state.
     pub range_files_refresh_queued: bool,
+    /// Changes the live comparison has not confirmed in its file list yet.
+    pub(crate) range_diff_refresh: Option<crate::msg::RepoExternalChange>,
     /// Stops the outstanding range-file load once a newer one or leaving the
     /// comparison makes its reply unread.
     pub(crate) range_files_cancellation: gitcomet_core::services::CancellationToken,
@@ -315,6 +317,7 @@ impl Default for HistoryState {
             range_files_request: 0,
             range_files_in_flight: false,
             range_files_refresh_queued: false,
+            range_diff_refresh: None,
             range_files_cancellation: Default::default(),
             squash_preview: Loadable::NotLoaded,
             squash_preview_rev: 0,
@@ -502,6 +505,8 @@ pub enum ComparisonSource {
     /// Exactly two selected commits that are not consecutive: the direct diff
     /// between them, older (lower in the log) to newer.
     SelectedPair,
+    /// The user switched two consecutive selected commits to their direct diff.
+    AdjacentPair,
     /// Mark/compare, a branch, a tag, or the working tree. Any multi-selection
     /// left over from earlier clicks describes something else and is dropped.
     Explicit,
@@ -842,7 +847,26 @@ impl RepoState {
             self.history_state.range_files_request.wrapping_add(1);
         self.history_state.range_files_in_flight = false;
         self.history_state.range_files_refresh_queued = false;
+        self.history_state.range_diff_refresh = None;
         self.history_state.range_files_cancellation.cancel();
+    }
+
+    pub(crate) fn selected_live_comparison_diff(&self) -> Option<&DiffTarget> {
+        let range = self.history_state.range_selection.as_ref()?;
+        let target @ DiffTarget::CommitRange {
+            from_commit_id,
+            to_commit_id: None,
+            path: Some(_),
+            ..
+        } = self.diff_state.diff_target.as_ref()?
+        else {
+            return None;
+        };
+        (!self.diff_state.content_preview
+            && self.diff_state.inline_submodule_diff.is_none()
+            && range.to.is_none()
+            && range.diff_from() == from_commit_id)
+            .then_some(target)
     }
 
     /// Claim the next range-file load. Returns the request id to carry through
@@ -880,6 +904,9 @@ impl RepoState {
     pub(crate) fn set_range_selection(&mut self, v: Option<RangeSelection>) {
         if self.history_state.range_selection == v {
             return;
+        }
+        if !RangeSelection::same_optional(self.history_state.range_selection.as_ref(), v.as_ref()) {
+            self.history_state.range_diff_refresh = None;
         }
         self.history_state.range_selection = v;
         // The details pane keys its comparison-vs-single/multi decision off the

@@ -85,10 +85,10 @@ The packaging and notarization scripts already run the important checks for you:
 After a successful local run, you can manually spot-check the finished artifacts:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 dist/stage/gitcomet-v0.2.0-macos-arm64/GitComet.app
-spctl --assess --type open --context context:primary-signature --verbose=4 dist/stage/gitcomet-v0.2.0-macos-arm64/GitComet.app
+codesign --verify --deep --strict --verbose=2 dist/stage/gitcomet-v0.2.0-macos-arm64/RevWeave.app
+spctl --assess --type open --context context:primary-signature --verbose=4 dist/stage/gitcomet-v0.2.0-macos-arm64/RevWeave.app
 spctl --assess --type open --context context:primary-signature --verbose=4 dist/gitcomet-v0.2.0-macos-arm64.dmg
-xcrun stapler validate dist/stage/gitcomet-v0.2.0-macos-arm64/GitComet.app
+xcrun stapler validate dist/stage/gitcomet-v0.2.0-macos-arm64/RevWeave.app
 xcrun stapler validate dist/gitcomet-v0.2.0-macos-arm64.dmg
 ```
 
@@ -152,6 +152,6 @@ The workflow imports the `.p12` certificate into a temporary keychain, signs the
 Treat the DMG as the canonical trusted macOS download.
 
 - The DMG is the notarized and stapled end-user artifact.
-- The DMG is the only macOS artifact. The `.tar.gz` that used to accompany it was dropped: it duplicated the binary the DMG already ships, and the bare copy at its root was the one file that could not be notarized, since Apple's notary service does not accept `.tar.gz` uploads and that copy was not inside the submitted DMG. Users who want `gitcomet` on `PATH` get a notarized one from the Homebrew cask, which symlinks `GitComet.app/Contents/MacOS/gitcomet`.
+- The DMG is the macOS installation artifact. The cross-platform corresponding-source archive is published on the same Release. The macOS binary `.tar.gz` that used to accompany it was dropped: it duplicated the binary the DMG already ships, and the bare copy at its root was the one file that could not be notarized, since Apple's notary service does not accept `.tar.gz` uploads and that copy was not inside the submitted DMG. Users who want `gitcomet` on `PATH` get a notarized one from the Homebrew cask, which symlinks `RevWeave.app/Contents/MacOS/gitcomet`.
 
 If you want a separately trusted CLI-only macOS artifact, publish it in a notary-supported container such as a ZIP, DMG, or signed flat PKG and update downstream packaging accordingly.

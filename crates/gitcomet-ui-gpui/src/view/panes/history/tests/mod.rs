@@ -385,6 +385,7 @@ pub(super) fn install_index(
     history.indexed.rev += 1;
 }
 
+mod author_filter_header;
 mod base_cache;
 mod branch_names;
 mod columns;
@@ -397,6 +398,8 @@ mod lane_attribution;
 mod mark_menu;
 mod navigation;
 pub(super) mod refresh;
+mod refs_drag;
+mod refs_overflow;
 mod reveal;
 mod row_tooltips;
 mod selection;

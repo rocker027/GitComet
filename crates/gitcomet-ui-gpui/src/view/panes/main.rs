@@ -24,6 +24,11 @@ pub(crate) struct MainPaneView {
     view_mode: GitCometViewMode,
     active_context_menu_invoker: Option<SharedString>,
     pub(in crate::view) interactive_rebase_states: FxHashMap<RepoId, IRebaseViewState>,
+    /// Focus for the interactive rebase / cherry-pick editor, so its rows
+    /// accept single-key actions.
+    irebase_focus_handle: gpui::FocusHandle,
+    /// The editor row last clicked, which single keys act on.
+    irebase_key_target: Option<(RepoId, String)>,
     _subscription: gpui::Subscription,
 }
 
@@ -99,6 +104,8 @@ impl MainPaneView {
             view_mode,
             active_context_menu_invoker: None,
             interactive_rebase_states: FxHashMap::default(),
+            irebase_focus_handle: cx.focus_handle(),
+            irebase_key_target: None,
             _subscription: subscription,
         }
     }
@@ -499,11 +506,15 @@ impl Render for MainPaneView {
             pane.sync_layout_snapshot(cx);
             pane.main_pane_content_width()
         });
+        let content = self.active_content(cx);
         self.history_view.update(cx, |history, _| {
             history.set_last_window_size(window.viewport_size());
             history.set_history_content_width(width);
+            if content != MainPaneContent::History {
+                history.history_first_pointer_click = None;
+            }
         });
-        match self.active_content(cx) {
+        match content {
             MainPaneContent::History => self.history_view.clone().into_any_element(),
             MainPaneContent::Diff => self.diff_renderer.clone().into_any_element(),
             MainPaneContent::InteractiveRebase => {

@@ -38,9 +38,54 @@ pub(super) fn write_branch_upstream_config(
     upstream: &Upstream,
     upstream_branch: UpstreamBranch,
 ) -> Result<()> {
+    write_branch_upstream_config_inner(repo, branch, upstream, upstream_branch, false)
+}
+
+pub(super) fn branch_upstream_needs_setup(
+    config: &gix::config::File,
+    branch: &str,
+    upstream: &Upstream,
+) -> Result<bool> {
+    let subsection = Some(gix::bstr::BStr::new(branch));
+    let remote = config.raw_value_by("branch", subsection, "remote").ok();
+    let merges = config.raw_values_by("branch", subsection, "merge").ok();
+    match (remote, merges.as_ref().and_then(|values| values.first())) {
+        (_, None) => Ok(true),
+        (Some(remote), Some(merge))
+            if remote.as_bstr() == upstream.remote.as_str()
+                && merge.as_bstr() == format!("refs/heads/{}", upstream.branch).as_str() =>
+        {
+            Ok(false)
+        }
+        _ => Err(Error::new(ErrorKind::Backend(format!(
+            "The upstream configuration for {branch} has changed. Reopen the branch menu and try again."
+        )))),
+    }
+}
+
+pub(super) fn write_new_branch_upstream_config(
+    repo: &gix::Repository,
+    branch: &str,
+    upstream: &Upstream,
+) -> Result<()> {
+    write_branch_upstream_config_inner(repo, branch, upstream, UpstreamBranch::Published, true)
+}
+
+fn write_branch_upstream_config_inner(
+    repo: &gix::Repository,
+    branch: &str,
+    upstream: &Upstream,
+    upstream_branch: UpstreamBranch,
+    only_if_unset: bool,
+) -> Result<()> {
     let merge_ref = format!("refs/heads/{}", upstream.branch);
     let rebase = auto_setup_rebase(&repo.config_snapshot());
     edit_local_config_strict(repo, |config| {
+        // The ref may already be published when this lock is acquired. Do not
+        // replace an upstream configured while the push was in progress.
+        if only_if_unset && !branch_upstream_needs_setup(config, branch, upstream)? {
+            return Ok(false);
+        }
         if let Ok(mut merges) =
             config.raw_values_mut_by("branch", Some(gix::bstr::BStr::new(branch)), "merge")
         {
@@ -610,6 +655,34 @@ impl GixRepo {
         }
 
         Ok(refspecs)
+    }
+
+    /// Destinations of `remote_name`'s configured fetch refspecs, read fresh, without
+    /// negative or destination-less refspecs.
+    pub(super) fn configured_fetch_destinations_impl(
+        &self,
+        remote_name: &str,
+    ) -> Result<Vec<String>> {
+        validate_ref_like_arg(remote_name, "remote name")?;
+        let repo = self.reopen_repo()?;
+        let remote = repo.find_remote(remote_name).map_err(|e| {
+            Error::new(ErrorKind::Backend(format!(
+                "gix find_remote {remote_name}: {e}"
+            )))
+        })?;
+        Ok(remote
+            .refspecs(gix::remote::Direction::Fetch)
+            .iter()
+            .filter_map(|refspec| {
+                let refspec = refspec.to_ref();
+                if refspec.to_bstring().starts_with(b"^") {
+                    return None;
+                }
+                refspec
+                    .destination()
+                    .map(|destination| destination.to_str_lossy().into_owned())
+            })
+            .collect())
     }
 
     /// Return only configured fetch refspecs whose destinations are in the
@@ -1778,10 +1851,13 @@ impl GixRepo {
 
         if !present.is_empty() {
             let mut cmd = self.git_workdir_cmd();
+            // `--refmap=` keeps this to the refspecs below: without it Git also applies the
+            // configured `remote.<name>.fetch` refspecs, which may write local branches.
             cmd.arg("fetch")
                 .arg("--no-prune")
                 .arg("--no-prune-tags")
                 .arg("--no-tags")
+                .arg("--refmap=")
                 .arg("--")
                 .arg(remote);
             for branch in present {

@@ -2,6 +2,7 @@
 //! details dialog shows and offers for each.
 
 use super::*;
+use crate::localization::Language;
 use gitcomet_core::text_format::TextFormat;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -10,7 +11,9 @@ use std::time::SystemTime;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ErrorReport {
     pub(crate) repo_id: Option<RepoId>,
+    /// The source message is also the key for repeated errors.
     pub(crate) message: String,
+    pub(crate) display_message: Option<String>,
     pub(crate) actions: Vec<ErrorAction>,
 }
 
@@ -19,6 +22,7 @@ impl ErrorReport {
         Self {
             repo_id,
             message: message.into(),
+            display_message: None,
             actions: Vec::new(),
         }
     }
@@ -31,32 +35,79 @@ impl ErrorReport {
     pub(crate) fn command_failure(
         repo_id: RepoId,
         entry: &gitcomet_state::model::CommandLogEntry,
+        language: Language,
     ) -> Self {
         if entry.failure_id != Some(gitcomet_core::error::GitFailureId::WorktreeWouldBeOverwritten)
             || entry.kind != gitcomet_state::model::CommandLogKind::Pull
         {
-            return Self::message(Some(repo_id), entry.summary.clone());
+            let mut report = Self::message(Some(repo_id), entry.summary.clone());
+            if language == Language::TraditionalChinese {
+                report.display_message = localized_command_failure(&entry.summary, language);
+            }
+            return report;
         }
 
-        let mut message = format!(
-            "Pull blocked by local changes:\n\n    {}\n\nCommit or stash your changes, then pull again.",
-            entry.command
-        );
+        let mut details = String::new();
         for output in [&entry.stdout, &entry.stderr] {
             if !output.trim().is_empty() {
-                message.push_str("\n\n");
+                details.push_str("\n\n");
                 for (index, line) in output.lines().enumerate() {
                     if index != 0 {
-                        message.push('\n');
+                        details.push('\n');
                     }
-                    message.push_str("    ");
-                    message.push_str(line);
+                    details.push_str("    ");
+                    details.push_str(line);
                 }
             }
         }
-        Self::message(Some(repo_id), message)
-            .with_action(ErrorAction::ReviewLocalChanges { repo_id })
+        let message = |heading, next_step| {
+            format!("{heading}\n\n    {}\n\n{next_step}{details}", entry.command)
+        };
+        let mut report = Self::message(
+            Some(repo_id),
+            message(
+                "Pull blocked by local changes:",
+                "Commit or stash your changes, then pull again.",
+            ),
+        )
+        .with_action(ErrorAction::ReviewLocalChanges { repo_id });
+        if language == Language::TraditionalChinese {
+            report.display_message = Some(message(
+                "本機變更阻擋了拉取",
+                "請先提交或貯藏變更，再重新拉取。",
+            ));
+        }
+        report
     }
+
+    fn display_text(&self) -> ErrorText {
+        ErrorText::parse(self.display_message.as_deref().unwrap_or(&self.message))
+    }
+}
+
+fn localized_command_failure(message: &str, language: Language) -> Option<String> {
+    // Only translate the app-generated heading. Keep the detail block as given by Git.
+    let (heading, details) = message.split_once('\n').unwrap_or((message, ""));
+    let heading = heading.trim_end_matches(':');
+    for (suffix, outcome) in [
+        (" failed", "失敗"),
+        (" cancelled", "已取消"),
+        (" timed out", "逾時"),
+        (" stopped at conflicts", "遇到衝突，已停止"),
+        (" blocked by local changes", "因本機變更受阻"),
+    ] {
+        if let Some(label) = heading.strip_suffix(suffix) {
+            let translation = git_operation_label(label, language);
+            if translation != label {
+                return Some(if details.is_empty() {
+                    format!("{translation}{outcome}")
+                } else {
+                    format!("{translation}{outcome}\n{details}")
+                });
+            }
+        }
+    }
+    None
 }
 
 /// Something the details dialog can do about an error.
@@ -88,10 +139,12 @@ pub(crate) enum ErrorAction {
 }
 
 impl ErrorAction {
-    pub(crate) fn label(&self) -> String {
+    pub(crate) fn label(&self, language: Language) -> String {
         match self {
             Self::Hosted(action) => action.label().to_string(),
-            Self::ReviewLocalChanges { .. } => "Review local changes".to_string(),
+            Self::ReviewLocalChanges { .. } => language
+                .text("Review local changes", "查看本機變更")
+                .to_owned(),
             Self::SaveEditorAs { format, .. } => {
                 let bom = if format.bom && !format.encoding.is_utf16() {
                     " with BOM"
@@ -122,7 +175,7 @@ pub(crate) struct ErrorNotice {
 impl ErrorNotice {
     pub(crate) fn new(report: ErrorReport) -> Self {
         Self {
-            text: ErrorText::parse(&report.message),
+            text: report.display_text(),
             repo_id: report.repo_id,
             message: report.message,
             actions: report.actions,
@@ -136,6 +189,7 @@ impl ErrorNotice {
         self.count = self.count.saturating_add(1);
         self.time = SystemTime::now();
         self.repo_id = self.repo_id.or(report.repo_id);
+        self.text = report.display_text();
         if !report.actions.is_empty() {
             self.actions = report.actions;
         }
@@ -388,13 +442,16 @@ mod tests {
             path: "a.txt".into(),
             format,
         };
-        assert_eq!(save(TextFormat::UTF_8).label(), "Save as UTF-8");
+        assert_eq!(
+            save(TextFormat::UTF_8).label(Language::English),
+            "Save as UTF-8"
+        );
         assert_eq!(
             save(TextFormat {
                 encoding: gitcomet_core::text_format::TextEncoding::UTF_8,
                 bom: true,
             })
-            .label(),
+            .label(Language::English),
             "Save as UTF-8 with BOM"
         );
     }

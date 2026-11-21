@@ -363,6 +363,10 @@ pub enum WorktreeCheckout {
     NewBranch { name: String, start: Option<String> },
     /// `--track -b <name>` from the remote-tracking ref of `upstream`.
     TrackRemote { name: String, upstream: Upstream },
+    /// `--no-track -b <name>` from the live remote-tracking ref of `upstream`.
+    NewBranchFromRemote { name: String, upstream: Upstream },
+    /// `--detach` at the live remote-tracking ref of `upstream`.
+    ExistingRemote { upstream: Upstream },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1716,6 +1720,14 @@ pub trait GitRepository: Send + Sync {
             "listing the remotes a fetch contacts is not implemented for this backend",
         )))
     }
+    /// Destinations of `remote`'s configured `remote.<name>.fetch` refspecs, read fresh;
+    /// negative and destination-less refspecs are left out. Git writes these on any fetch
+    /// or pull that contacts `remote`, even one naming its own refspecs.
+    fn configured_fetch_destinations(&self, _remote: &str) -> Result<Vec<String>> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "reading configured fetch refspecs is not implemented for this backend",
+        )))
+    }
     /// Hash of what decides this worktree's incoming count, without counting:
     /// HEAD, its branch's upstream configuration and every reference.
     fn tracking_stamp(&self, cancellation: &CancellationToken) -> Result<u64> {
@@ -1743,6 +1755,18 @@ pub trait GitRepository: Send + Sync {
     }
     fn pull(&self, mode: PullMode) -> Result<CommandOutput>;
     fn push_with_output(&self) -> Result<CommandOutput>;
+
+    /// Push an explicitly named local branch independently of the worktree's HEAD.
+    fn push_branch_with_output(
+        &self,
+        _local_branch: &str,
+        _upstream: &Upstream,
+        _set_upstream: bool,
+    ) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "pushing a named branch is not implemented for this backend",
+        )))
+    }
 
     fn push_with_tags(&self, _request: &crate::tag_push::TagPushRequest) -> Result<CommandOutput> {
         Err(Error::new(ErrorKind::Unsupported(
@@ -2073,6 +2097,145 @@ pub trait GitRepository: Send + Sync {
     fn force_remove_worktree_with_output(&self, _path: &Path) -> Result<CommandOutput> {
         Err(Error::new(ErrorKind::Unsupported(
             "worktree force remove is not implemented for this backend",
+        )))
+    }
+
+    /// Read-only preview of integrating `source` into/onto `target` via `git merge-tree`.
+    fn integration_preview(
+        &self,
+        _target: &CommitId,
+        _source: &CommitId,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::worktree_finish::IntegrationPreview> {
+        cancellation.check_cancelled()?;
+        Err(Error::new(ErrorKind::Unsupported(
+            "integration preview is not implemented for this backend",
+        )))
+    }
+
+    /// Captures the authoritative worktree state snapshot for worktree-finish transitions.
+    fn finish_snapshot(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::worktree_finish::FinishSnapshot> {
+        cancellation.check_cancelled()?;
+        Err(Error::new(ErrorKind::Unsupported(
+            "worktree finish snapshot is not implemented for this backend",
+        )))
+    }
+
+    /// Merges a locked commit ID into HEAD with `--ff --no-edit -m <message>`.
+    fn merge_commit_at(
+        &self,
+        _reference: &CommitId,
+        _message: &str,
+    ) -> Result<crate::worktree_finish::FinishStepCommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "worktree finish merge is not implemented for this backend",
+        )))
+    }
+
+    /// Runs `git merge --squash --no-commit -- <reference>` on a locked commit ID.
+    fn squash_merge_at(
+        &self,
+        _reference: &CommitId,
+    ) -> Result<crate::worktree_finish::FinishStepCommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "worktree finish squash merge is not implemented for this backend",
+        )))
+    }
+
+    /// Runs `git rebase --no-rebase-merges --no-update-refs --no-autosquash --no-autostash -- <target>`.
+    fn rebase_onto_at(
+        &self,
+        _target: &CommitId,
+    ) -> Result<crate::worktree_finish::FinishStepCommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "worktree finish rebase is not implemented for this backend",
+        )))
+    }
+
+    /// Runs `git rebase --continue` (with `GIT_EDITOR=true`) returning exit status alongside output.
+    fn rebase_continue_step(&self) -> Result<crate::worktree_finish::FinishStepCommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "worktree finish rebase continue is not implemented for this backend",
+        )))
+    }
+
+    /// Aborts a conflicted `git merge --squash` via `git reset --merge` and removes leftover `SQUASH_MSG`.
+    fn abort_squash_merge(&self) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "aborting squash merge is not implemented for this backend",
+        )))
+    }
+
+    /// Restores only the specified squash-owned paths back to `HEAD` (removing newly added
+    /// squash-only paths and `SQUASH_MSG`) while preserving unrelated staged/working-tree user files.
+    fn abort_squash_merge_paths(&self, _owned_paths: &[PathBuf]) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "path-scoped squash merge abort is not implemented for this backend",
+        )))
+    }
+
+    /// Runs `git merge --abort` only after proving that restoring `HEAD` deletes or overwrites
+    /// nothing Git does not track (ignored and untracked files included). Otherwise fails
+    /// without touching the index, working tree or merge state.
+    fn abort_merge_checked(&self) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "checked merge abort is not implemented for this backend",
+        )))
+    }
+
+    /// Runs `git rebase --abort` only after proving that restoring the commit the rebase started
+    /// from deletes or overwrites nothing Git does not track (ignored and untracked files
+    /// included). Otherwise fails without touching the index, working tree or rebase state.
+    fn abort_rebase_checked(&self) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "checked rebase abort is not implemented for this backend",
+        )))
+    }
+
+    /// Concludes a resolved merge or squash merge by creating a commit through the standard commit path.
+    fn conclude_merge(&self, _message: Option<&str>) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "concluding merge is not implemented for this backend",
+        )))
+    }
+
+    /// Re-verifies that the target linked worktree is still at `expected_head` and clean, then removes
+    /// it without `--force` and without deleting its branch ref.
+    fn remove_worktree_checked(
+        &self,
+        _path: &Path,
+        _expected_head: &CommitId,
+    ) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "checked worktree removal is not implemented for this backend",
+        )))
+    }
+
+    /// Resolves a local ref (such as `refs/heads/<branch>` or `<branch>`) to its commit ID, if present.
+    fn resolve_ref_commit(&self, _reference: &str) -> Result<Option<CommitId>> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "ref commit resolution is not implemented for this backend",
+        )))
+    }
+
+    /// Returns `(oldest_commit_after_base, linear_commit_count)` along `base..head` on first-parent history.
+    fn linear_range_after(
+        &self,
+        _base: &CommitId,
+        _head: &CommitId,
+    ) -> Result<Option<(CommitId, usize)>> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "linear range lookup is not implemented for this backend",
+        )))
+    }
+
+    /// Returns whether `ancestor` is an ancestor of `descendant` (`git merge-base --is-ancestor`).
+    fn is_commit_ancestor(&self, _ancestor: &CommitId, _descendant: &CommitId) -> Result<bool> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "ancestor check is not implemented for this backend",
         )))
     }
 

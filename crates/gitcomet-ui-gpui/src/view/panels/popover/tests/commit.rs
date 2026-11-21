@@ -15,6 +15,86 @@ fn open_repo(repo_id: RepoId, workdir: &str) -> RepoState {
 }
 
 #[gpui::test]
+fn graph_commit_worktree_prompt_uses_the_full_sha(cx: &mut gpui::TestAppContext) {
+    use gitcomet_core::domain::RepositoryMode;
+    use gitcomet_core::services::WorktreeCheckout;
+
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let repo_id = RepoId(1);
+    let mut repo = open_repo(repo_id, "/tmp/commit-worktree-source");
+    repo.repository_mode = Some(RepositoryMode::Bare);
+    repo.head_branch = Loadable::Ready("main".into());
+    repo.branches = Loadable::Ready(Arc::new(vec![Branch {
+        name: "main".into(),
+        target: CommitId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+        upstream: None,
+        divergence: None,
+    }]));
+    store.replace_snapshot_for_test(Arc::new(AppState {
+        repos: vec![repo],
+        active_repo: Some(repo_id),
+        ..AppState::test_default()
+    }));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+    let commit_id = CommitId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into());
+    cx.update(|window, app| {
+        view.read(app).popover_host.clone().update(app, |host, cx| {
+            let action = host
+                .context_menu_model(
+                    &PopoverKind::CommitMenu {
+                        repo_id,
+                        commit_id: commit_id.clone(),
+                        refs: CommitMenuRefs::All,
+                    },
+                    cx,
+                )
+                .expect("commit context menu")
+                .items
+                .into_iter()
+                .find_map(|item| match item {
+                    ContextMenuItem::Entry {
+                        disabled: false,
+                        action,
+                        ..
+                    } if matches!(
+                        action.as_ref(),
+                        ContextMenuAction::OpenWorktreeAddPrompt { .. }
+                    ) =>
+                    {
+                        Some(*action)
+                    }
+                    _ => None,
+                })
+                .expect("enabled worktree action");
+            host.context_menu_activate_action(action, window, cx);
+            assert!(matches!(
+                host.popover,
+                Some(PopoverKind::Repo {
+                    repo_id: owner,
+                    kind: RepoPopoverKind::Worktree(WorktreePopoverKind::AddPrompt)
+                }) if owner == repo_id
+            ));
+            assert!(!host.can_submit_worktree_add(cx));
+            assert!(host.worktree_add_open_after);
+            let destination = "/tmp/commit-worktree-target";
+            host.worktree_path_input
+                .update(cx, |input, cx| input.set_text(destination, cx));
+            assert_eq!(
+                host.worktree_add_request(repo_id, cx).unwrap(),
+                (
+                    destination.into(),
+                    WorktreeCheckout::NewBranch {
+                        name: "commit-worktree-target".into(),
+                        start: Some(commit_id.as_ref().to_string()),
+                    },
+                )
+            );
+        });
+    });
+}
+
+#[gpui::test]
 fn commit_prompt_field_aligns_with_its_footer_and_scrolls_inside_the_border(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -50,6 +130,9 @@ fn commit_prompt_field_aligns_with_its_footer_and_scrolls_inside_the_border(
             let field = cx.debug_bounds("scrollable_text_input_field").unwrap();
             let submit = cx.debug_bounds("commit_prompt_submit").unwrap();
             let rule = cx.debug_bounds("commit_prompt_rule").unwrap();
+            let scope = cx.debug_bounds("commit_prompt_scope_summary").unwrap();
+            assert!(scope.bottom() <= rule.top());
+            assert!(scope.left() >= field.left() && scope.right() <= field.right());
             assert!(
                 ((field.top() - rule.bottom()) - (submit.top() - field.bottom())).abs()
                     <= gpui::px(1.0),
@@ -388,6 +471,150 @@ fn merge_entry_names_and_gates_on_the_commits_own_repository(cx: &mut gpui::Test
         !active_disabled,
         "the other repository being busy says nothing about this one"
     );
+}
+
+#[gpui::test]
+fn commit_menu_copies_titles_in_history_order_including_uncached_commits(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gitcomet_core::domain::LogScope;
+    use gitcomet_core::services::CancellationToken;
+    use gitcomet_core::test_support::git_fixture::{
+        LinearCommit, git_command, import_linear_history,
+    };
+    use gitcomet_state::model::CommitMultiSelection;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let mut git = git_command();
+    git.arg("-C").arg(root);
+    assert!(
+        git.args(["init", "-q", "-b", "main"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let titles = ["修正舊流程", "單獨複製這筆", "", "fix: 修正新流程"];
+    let messages = [
+        format!("{}\r\n\r\n舊流程的正文\r\n", titles[0]),
+        format!("{}\n\n單筆的正文\n", titles[1]),
+        " \t\n\n沒有標題的正文\n".to_owned(),
+        format!("{}\n\n新流程的正文\n", titles[3]),
+    ];
+    import_linear_history(
+        git_command().arg("-C").arg(root),
+        "main",
+        messages
+            .iter()
+            .enumerate()
+            .map(|(i, message)| LinearCommit {
+                author: "Test <test@example.com>",
+                timestamp: 1_600_000_000 + i as i64,
+                message,
+                path: "fixture.txt",
+                contents: "fixture",
+            }),
+    );
+
+    let backend = gitcomet_git_gix::GixBackend.open(root).unwrap();
+    let token = CancellationToken::new();
+    let page = backend
+        .log_history_mode_page(LogScope::AllBranches, 4, None, &token)
+        .unwrap();
+    let [newest, untitled, unselected, oldest] = page.commits.as_slice() else {
+        panic!("expected four fixture commits in newest-first history order")
+    };
+    assert_eq!(newest.summary.as_ref(), titles[3]);
+    assert_eq!(oldest.summary.as_ref(), titles[0]);
+    let index = backend
+        .build_history_index(
+            &LogScope::AllBranches.into(),
+            None,
+            &Default::default(),
+            &token,
+            &mut |_| {},
+        )
+        .unwrap()
+        .expect("indexed history for the fixture");
+    let repo_id = RepoId(1);
+    let expected = format!("{}\n{}", titles[3], titles[0]);
+
+    for indexed in [false, true] {
+        let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+        store.disable_repo_monitors_for_test();
+        let mut repo = open_repo(repo_id, root.to_str().unwrap());
+        // Click order intentionally differs from the order in the graph.
+        repo.history_state.multi_selection = CommitMultiSelection {
+            commits: Arc::new(vec![
+                oldest.id.clone(),
+                untitled.id.clone(),
+                newest.id.clone(),
+            ]),
+            ..Default::default()
+        };
+        if indexed {
+            // Keep the graph order available without loading either the bootstrap
+            // page or any cached range containing a title.
+            repo.history_state.log_snapshot = Some(index.snapshot.clone());
+            repo.history_state.indexed.index = Some(index.clone());
+            repo.history_state.indexed.displayed_index = Some(index.clone());
+            repo.history_state.indexed.range_index = Some(index.clone());
+        } else {
+            repo.log = Loadable::Ready(page.clone());
+        }
+        store.replace_snapshot_for_test(Arc::new(AppState {
+            repos: vec![repo],
+            active_repo: Some(repo_id),
+            ..AppState::test_default()
+        }));
+        store.insert_repo_for_test(repo_id, backend.clone());
+        let (view, vcx) =
+            cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+
+        for (commit_id, label, expected) in [
+            (&newest.id, "Copy selected commit titles", expected.as_str()),
+            (&unselected.id, "Copy commit title", titles[1]),
+        ] {
+            vcx.write_to_clipboard(gpui::ClipboardItem::new_string("before copy".to_string()));
+            vcx.update(|window, app| {
+                let host = view.read(app).popover_host.clone();
+                host.update(app, |host, cx| {
+                    let model = host
+                        .context_menu_model(
+                            &PopoverKind::CommitMenu {
+                                repo_id,
+                                commit_id: commit_id.clone(),
+                                refs: CommitMenuRefs::All,
+                            },
+                            cx,
+                        )
+                        .expect("commit context menu");
+                    let action = model
+                        .items
+                        .into_iter()
+                        .find_map(|item| match item {
+                            ContextMenuItem::Entry {
+                                label: text,
+                                disabled: false,
+                                action,
+                                ..
+                            } if text.as_ref() == label => Some(*action),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("missing enabled entry: {label}"));
+                    host.context_menu_activate_action(action, window, cx);
+                });
+            });
+            vcx.run_until_parked();
+            assert_eq!(
+                vcx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some(expected),
+                "{label} must copy one title per line, indexed={indexed}"
+            );
+        }
+    }
 }
 
 #[gpui::test]

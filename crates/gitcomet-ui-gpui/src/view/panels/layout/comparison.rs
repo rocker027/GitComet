@@ -2,6 +2,7 @@
 //! changed files between two points.
 
 use super::*;
+use crate::localization::{Language, text};
 use crate::view::panes::{ComparisonCardCache, ComparisonOrderCache};
 use crate::view::rows::CommitCard;
 use gitcomet_state::model::{ComparisonSource, RangeSelection};
@@ -62,7 +63,9 @@ impl DetailsPaneView {
         let range = repo.history_state.range_selection.as_ref()?;
         match range.source {
             ComparisonSource::MergedSelection => None,
-            ComparisonSource::SelectedPair | ComparisonSource::Explicit => Some(range),
+            ComparisonSource::SelectedPair
+            | ComparisonSource::AdjacentPair
+            | ComparisonSource::Explicit => Some(range),
         }
     }
 
@@ -429,7 +432,7 @@ impl DetailsPaneView {
                     .text_size(theme.ui_text(14.0))
                     .font_weight(FontWeight::BOLD)
                     .line_clamp(1)
-                    .child(SharedString::from(format!("{count} commits selected"))),
+                    .child(selected_commits_label(count, Language::current(cx))),
             )
             .child(
                 components::Button::new("commit_details_close", "")
@@ -442,7 +445,10 @@ impl DetailsPaneView {
                     .on_click(theme, cx, |this, _e, window, cx| {
                         this.close_review_details(window, cx);
                     })
-                    .gitcomet_tooltip(theme, "Close commit details".into()),
+                    .gitcomet_tooltip(
+                        theme,
+                        text(cx, "Close commit details", "關閉提交詳情").into(),
+                    ),
             );
 
         // Shown when the selection has no comparison: three or more commits
@@ -452,7 +458,7 @@ impl DetailsPaneView {
             .debug_selector(|| "multi_commit_no_merged_diff".to_string())
             .text_size(theme.ui_text(14.0))
             .text_color(theme.colors.foreground.secondary)
-            .child("Select two commits to compare them, or consecutive commits to see their combined changes.");
+            .child(text(cx, "Select two commits to compare them, or consecutive commits to see their combined changes.", "選取兩筆提交來比較，或選取一段連續的提交以查看合併後的變更。"));
         let body = self.commit_cards_list(repo_id, count, cx);
 
         div()
@@ -501,7 +507,8 @@ impl DetailsPaneView {
             Loaded(usize),
         }
 
-        let (card_count, range, files_state) = {
+        let language = Language::current(cx);
+        let (card_count, range, files_state, untracked_notice, toggle_label) = {
             let Some(repo) = self.active_repo() else {
                 return div().into_any_element();
             };
@@ -514,10 +521,25 @@ impl DetailsPaneView {
                 Loadable::Error(e) => RangeFilesState::Failed(e.clone()),
                 Loadable::Loading | Loadable::NotLoaded => RangeFilesState::Loading,
             };
-            (card_count, range, files_state)
+            let untracked_notice = comparison_untracked_notice(repo, &range, language);
+            let toggle_label = adjacent_comparison_toggle_label(
+                &range,
+                repo.history_state.multi_selection.commits.len(),
+                language,
+            );
+            (
+                card_count,
+                range,
+                files_state,
+                untracked_notice,
+                toggle_label,
+            )
         };
 
-        let (header_title, subheader) = comparison_titles(&range, card_count);
+        let (header_title, subheader) = comparison_titles(&range, card_count, language);
+        let revisions = comparison_revision_labels(&range, language, true);
+        let full_revisions = comparison_revision_labels(&range, language, false);
+        let revision_count = if range.to.is_some() { 2 } else { 1 };
 
         let header = components::content_header_bar(theme, ui_scale)
             .justify_between()
@@ -544,7 +566,7 @@ impl DetailsPaneView {
                         }
                         cx.notify();
                     })
-                    .gitcomet_tooltip(theme, "Close comparison".into()),
+                    .gitcomet_tooltip(theme, text(cx, "Close comparison", "關閉比較").into()),
             );
 
         // Compared-commit preview cards. A two-point comparison has one or two,
@@ -576,11 +598,16 @@ impl DetailsPaneView {
         // selector names which of the two the label is, so a test can tell them
         // apart without reading painted text.
         let (files_label, files_label_selector): (SharedString, &'static str) = match &files_state {
-            RangeFilesState::Loading | RangeFilesState::Failed(_) => {
-                ("Changed files".into(), "range_files_label_pending")
-            }
+            RangeFilesState::Loading | RangeFilesState::Failed(_) => (
+                text(cx, "Changed files", "變更的檔案").into(),
+                "range_files_label_pending",
+            ),
             RangeFilesState::Loaded(count) => {
-                (format!("{count} changed").into(), "range_files_label_count")
+                let label = match language {
+                    Language::English => format!("{count} changed"),
+                    Language::TraditionalChinese => format!("{count} 個檔案有變更"),
+                };
+                (label.into(), "range_files_label_count")
             }
         };
         let (range_row_count, range_counts) = self
@@ -621,7 +648,7 @@ impl DetailsPaneView {
                 .debug_selector(|| "range_files_loading".to_string())
                 .text_size(theme.ui_text(14.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child("Loading")
+                .child(text(cx, "Loading", "載入中"))
                 .into_any_element(),
             // An error must not render as "No files." — that is exactly what a
             // pair of identical commits looks like, so the user would read a
@@ -636,7 +663,7 @@ impl DetailsPaneView {
                 .debug_selector(|| "range_files_empty".to_string())
                 .text_size(theme.ui_text(14.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child("No files.")
+                .child(text(cx, "No files.", "沒有檔案。"))
                 .into_any_element(),
             RangeFilesState::Loaded(_) => Self::vertical_scroll_frame_content(
                 theme,
@@ -680,11 +707,111 @@ impl DetailsPaneView {
                     .p_2()
                     .child(
                         div()
+                            .id("range_comparison_mode")
+                            .w_full()
+                            .min_w(px(0.0))
                             .text_size(theme.ui_text(14.0))
                             .text_color(theme.colors.foreground.secondary)
-                            .line_clamp(1)
+                            .line_clamp(2)
+                            .gitcomet_tooltip(theme, subheader.clone())
                             .child(subheader),
                     )
+                    .when_some(toggle_label.zip(range.to.clone()), |body, (label, to)| {
+                        let from = range.from.clone();
+                        body.child(
+                            div().flex().w_full().min_w(px(0.0)).child(
+                                components::Button::new("range_comparison_toggle_mode", label)
+                                    .truncate_label()
+                                    .on_click(theme, cx, move |this, _, _, _| {
+                                        this.store.dispatch(Msg::ToggleAdjacentComparison {
+                                            repo_id,
+                                            from: from.clone(),
+                                            to: to.clone(),
+                                        });
+                                    })
+                                    .gitcomet_tooltip(theme, label.into())
+                                    .max_w_full()
+                                    .min_w(px(0.0)),
+                            ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .debug_selector(|| "range_comparison_revisions".to_string())
+                            .w_full()
+                            .min_w(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .children(
+                                revisions
+                                    .into_iter()
+                                    .zip(full_revisions)
+                                    .take(revision_count)
+                                    .enumerate()
+                                    .map(|(index, (label, full_label))| {
+                                        div()
+                                            .id(("range_comparison_revision", index))
+                                            .w_full()
+                                            .min_w(px(0.0))
+                                            .text_size(theme.ui_text(11.0))
+                                            .text_color(theme.colors.foreground.secondary)
+                                            .line_clamp(1)
+                                            .gitcomet_tooltip(theme, full_label.into())
+                                            .child(label)
+                                    }),
+                            ),
+                    )
+                    .when(range.to.is_none(), |body| {
+                        let label = if range.options.include_untracked {
+                            text(cx, "Hide untracked files", "隱藏未追蹤檔案")
+                        } else {
+                            text(cx, "Show untracked files", "顯示未追蹤檔案")
+                        };
+                        let expected = range.clone();
+                        body.child(
+                            div()
+                                .w_full()
+                                .min_w(px(0.0))
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .when_some(untracked_notice, |scope, notice| {
+                                    scope.child(
+                                        div()
+                                            .id("range_comparison_untracked_notice")
+                                            .debug_selector(|| {
+                                                "range_comparison_untracked_notice".to_string()
+                                            })
+                                            .w_full()
+                                            .text_size(theme.ui_text(11.0))
+                                            .text_color(theme.colors.foreground.secondary)
+                                            .line_clamp(2)
+                                            .gitcomet_tooltip(theme, notice.clone().into())
+                                            .child(notice),
+                                    )
+                                })
+                                .child(
+                                    div().flex().w_full().min_w(px(0.0)).child(
+                                        components::Button::new(
+                                            "range_comparison_toggle_untracked",
+                                            label,
+                                        )
+                                        .truncate_label()
+                                        .on_click(theme, cx, move |this, _, _, _| {
+                                            this.store.dispatch(
+                                                Msg::ToggleWorkingTreeComparisonUntracked {
+                                                    repo_id,
+                                                    expected: expected.clone(),
+                                                },
+                                            );
+                                        })
+                                        .gitcomet_tooltip(theme, label.into())
+                                        .max_w_full()
+                                        .min_w(px(0.0)),
+                                    ),
+                                ),
+                        )
+                    })
                     .children(cards)
                     .child(
                         div()
@@ -763,17 +890,171 @@ impl DetailsPaneView {
 
 /// The comparison view's header and subheader. Only a merged selection is a
 /// "merged diff"; a selected pair and an explicit compare name their endpoints.
-fn comparison_titles(range: &RangeSelection, card_count: usize) -> (SharedString, SharedString) {
-    let endpoints = || format!("Viewing diff: {} → {}", range.from_label, range.to_label).into();
+fn comparison_titles(
+    range: &RangeSelection,
+    card_count: usize,
+    language: Language,
+) -> (SharedString, SharedString) {
+    let endpoints = || {
+        match language {
+            Language::English => format!(
+                "Two-point comparison: {} → {}",
+                range.from_label, range.to_label
+            ),
+            Language::TraditionalChinese => {
+                format!("兩端比較：{} → {}", range.from_label, range.to_label)
+            }
+        }
+        .into()
+    };
     match range.source {
         ComparisonSource::MergedSelection => (
-            format!("{card_count} commits selected").into(),
-            format!("Viewing merged diff of {card_count} commits").into(),
+            selected_commits_label(card_count, language).into(),
+            match language {
+                Language::English => format!(
+                    "Cumulative changes of {card_count} commits: {} → {}",
+                    range.from_label, range.to_label
+                ),
+                Language::TraditionalChinese => format!(
+                    "{card_count} 筆提交的累計變更：{} → {}",
+                    range.from_label, range.to_label
+                ),
+            }
+            .into(),
         ),
-        ComparisonSource::SelectedPair => {
-            (format!("{card_count} commits selected").into(), endpoints())
+        ComparisonSource::SelectedPair | ComparisonSource::AdjacentPair => (
+            selected_commits_label(card_count, language).into(),
+            endpoints(),
+        ),
+        ComparisonSource::Explicit => (
+            match language {
+                Language::English => "Comparison",
+                Language::TraditionalChinese => "比較",
+            }
+            .into(),
+            endpoints(),
+        ),
+    }
+}
+
+fn adjacent_comparison_toggle_label(
+    range: &RangeSelection,
+    selected_count: usize,
+    language: Language,
+) -> Option<&'static str> {
+    if selected_count != 2 || range.to.is_none() {
+        return None;
+    }
+    match range.source {
+        ComparisonSource::MergedSelection => Some(language.text("Compare endpoints", "比較兩端")),
+        ComparisonSource::AdjacentPair => {
+            Some(language.text("Show cumulative changes", "查看累計變更"))
         }
-        ComparisonSource::Explicit => ("Comparison".into(), endpoints()),
+        _ => None,
+    }
+}
+
+/// The effective diff revisions, rather than the selected commit cards.
+fn comparison_revision_labels(
+    range: &RangeSelection,
+    language: Language,
+    abbreviated: bool,
+) -> [String; 2] {
+    let revision = |id: &CommitId| {
+        let sha = id.as_ref();
+        let shown = if abbreviated {
+            sha.get(..12).unwrap_or(sha)
+        } else {
+            sha
+        };
+        if gitcomet_core::domain::is_empty_tree_id(sha) {
+            let algorithm = if sha.len() == 40 { "SHA-1" } else { "SHA-256" };
+            format!(
+                "{shown} · {} ({algorithm})",
+                language.text("Empty tree", "空樹")
+            )
+        } else {
+            shown.to_string()
+        }
+    };
+    let from = if range.options.base == gitcomet_core::services::ComparisonBase::MergeBase {
+        match &range.base {
+            Some(base) => format!(
+                "{} {} · {}",
+                language.text("From", "起點"),
+                revision(base),
+                language.text("merge base", "共同祖先")
+            ),
+            None => language
+                .text("From merge base (resolving)", "正在解析共同祖先起點")
+                .to_string(),
+        }
+    } else {
+        let label = if range.source == ComparisonSource::MergedSelection
+            && !gitcomet_core::domain::is_empty_tree_id(range.diff_from().as_ref())
+        {
+            Some(language.text("oldest selected commit's parent", "最早選取提交的父提交"))
+        } else {
+            None
+        };
+        let from = format!(
+            "{} {}",
+            language.text("From", "起點"),
+            revision(range.diff_from())
+        );
+        match label {
+            Some(label) => format!("{from} · {label}"),
+            None => from,
+        }
+    };
+    let to = match &range.to {
+        Some(id) => format!("{} {}", language.text("To", "終點"), revision(id)),
+        None => language.text("To working tree", "終點為工作樹").to_string(),
+    };
+    [from, to]
+}
+
+/// Git's tracked-only working-tree diff omits every untracked path.
+fn comparison_untracked_notice(
+    repo: &RepoState,
+    range: &RangeSelection,
+    language: Language,
+) -> Option<String> {
+    if range.to.is_some() || range.options.include_untracked {
+        return None;
+    }
+    let entries = match &repo.worktree_status {
+        Loadable::Ready(entries) => Some(entries.as_slice()),
+        Loadable::NotLoaded if repo.worktree_status_rev == 0 => match &repo.status {
+            Loadable::Ready(status) => Some(status.unstaged.as_slice()),
+            _ => None,
+        },
+        Loadable::NotLoaded | Loadable::Loading | Loadable::Error(_) => None,
+    };
+    let Some(entries) = entries else {
+        return Some(
+            language
+                .text(
+                    "Tracked files only · untracked file count unavailable",
+                    "僅比較已追蹤檔案 · 未追蹤檔案數量尚未可用",
+                )
+                .to_string(),
+        );
+    };
+    let count = entries
+        .iter()
+        .filter(|entry| entry.kind == gitcomet_core::domain::FileStatusKind::Untracked)
+        .count();
+    Some(match language {
+        Language::English => format!("Tracked files only · {count} untracked files excluded"),
+        Language::TraditionalChinese => format!("僅比較已追蹤檔案 · 已排除 {count} 個未追蹤檔案"),
+    })
+}
+
+fn selected_commits_label(count: usize, language: Language) -> String {
+    match language {
+        Language::English => format!("{count} commits selected"),
+        Language::TraditionalChinese => format!("已選取 {count} 筆提交"),
     }
 }
 
@@ -795,22 +1076,189 @@ mod tests {
 
     #[test]
     fn a_selected_pair_names_its_endpoints_not_a_merged_diff() {
-        let (title, subheader) = comparison_titles(&range(ComparisonSource::SelectedPair), 2);
+        let (title, subheader) =
+            comparison_titles(&range(ComparisonSource::SelectedPair), 2, Language::English);
         assert_eq!(title.as_ref(), "2 commits selected");
-        assert_eq!(subheader.as_ref(), "Viewing diff: aaaa → bbbb");
+        assert_eq!(subheader.as_ref(), "Two-point comparison: aaaa → bbbb");
+        assert_eq!(
+            comparison_titles(&range(ComparisonSource::AdjacentPair), 2, Language::English),
+            (title, subheader),
+        );
+    }
+
+    #[test]
+    fn adjacent_mode_toggle_requires_exactly_two_selected_commit_endpoints() {
+        for language in [Language::English, Language::TraditionalChinese] {
+            for source in [
+                ComparisonSource::MergedSelection,
+                ComparisonSource::AdjacentPair,
+            ] {
+                let mut compared = range(source);
+                assert_eq!(
+                    adjacent_comparison_toggle_label(&compared, 2, language),
+                    Some(if source == ComparisonSource::MergedSelection {
+                        language.text("Compare endpoints", "比較兩端")
+                    } else {
+                        language.text("Show cumulative changes", "查看累計變更")
+                    })
+                );
+                for count in [0, 1, 3] {
+                    assert!(adjacent_comparison_toggle_label(&compared, count, language).is_none());
+                }
+                compared.to = None;
+                assert!(adjacent_comparison_toggle_label(&compared, 2, language).is_none());
+            }
+            for source in [ComparisonSource::Explicit, ComparisonSource::SelectedPair] {
+                assert!(adjacent_comparison_toggle_label(&range(source), 2, language).is_none());
+            }
+        }
     }
 
     #[test]
     fn a_merged_selection_names_its_commit_count() {
-        let (title, subheader) = comparison_titles(&range(ComparisonSource::MergedSelection), 3);
+        let (title, subheader) = comparison_titles(
+            &range(ComparisonSource::MergedSelection),
+            3,
+            Language::English,
+        );
         assert_eq!(title.as_ref(), "3 commits selected");
-        assert_eq!(subheader.as_ref(), "Viewing merged diff of 3 commits");
+        assert_eq!(
+            subheader.as_ref(),
+            "Cumulative changes of 3 commits: aaaa → bbbb"
+        );
     }
 
     #[test]
     fn an_explicit_comparison_names_its_endpoints() {
-        let (title, subheader) = comparison_titles(&range(ComparisonSource::Explicit), 2);
+        let (title, subheader) =
+            comparison_titles(&range(ComparisonSource::Explicit), 2, Language::English);
         assert_eq!(title.as_ref(), "Comparison");
-        assert_eq!(subheader.as_ref(), "Viewing diff: aaaa → bbbb");
+        assert_eq!(subheader.as_ref(), "Two-point comparison: aaaa → bbbb");
+    }
+
+    #[test]
+    fn localized_comparison_keeps_range_endpoints() {
+        let (title, subheader) = comparison_titles(
+            &range(ComparisonSource::Explicit),
+            2,
+            Language::TraditionalChinese,
+        );
+        assert_eq!(title.as_ref(), "比較");
+        assert_eq!(subheader.as_ref(), "兩端比較：aaaa → bbbb");
+    }
+
+    #[test]
+    fn cumulative_comparison_names_its_parent_revision_and_empty_tree_algorithm() {
+        let mut range = range(ComparisonSource::MergedSelection);
+        range.from = CommitId("0123456789abcdef0123456789abcdef01234567".into());
+        assert_eq!(
+            comparison_revision_labels(&range, Language::English, true),
+            [
+                "From 0123456789ab · oldest selected commit's parent",
+                "To bbbb"
+            ]
+        );
+        assert!(
+            comparison_revision_labels(&range, Language::TraditionalChinese, false)[0]
+                .contains(range.from.as_ref())
+        );
+        for (id, algorithm) in [
+            (gitcomet_core::domain::EMPTY_TREE_ID_SHA1, "SHA-1"),
+            (gitcomet_core::domain::EMPTY_TREE_ID_SHA256, "SHA-256"),
+        ] {
+            range.from = CommitId(id.into());
+            let labels = comparison_revision_labels(&range, Language::TraditionalChinese, false);
+            assert_eq!(labels[0], format!("起點 {id} · 空樹 ({algorithm})"));
+            assert!(!labels[0].contains("父提交"));
+        }
+    }
+
+    #[test]
+    fn comparison_revision_labels_keep_refs_and_show_the_effective_merge_base() {
+        let mut range = range(ComparisonSource::Explicit);
+        range.from_label = "feature/topic".into();
+        range.to_label = "main".into();
+        range.options = gitcomet_core::services::ComparisonOptions::merge_base();
+        assert_eq!(
+            comparison_titles(&range, 2, Language::English).1.as_ref(),
+            "Two-point comparison: feature/topic → main"
+        );
+        assert_eq!(
+            comparison_revision_labels(&range, Language::English, false)[0],
+            "From merge base (resolving)"
+        );
+        range.base = Some(CommitId("cccc".into()));
+        assert_eq!(
+            comparison_revision_labels(&range, Language::English, false),
+            ["From cccc · merge base", "To bbbb"]
+        );
+    }
+
+    #[test]
+    fn working_tree_comparison_counts_only_loaded_untracked_paths() {
+        use gitcomet_core::domain::{FileStatus, FileStatusKind, RepoSpec, RepoStatus};
+        let mut repo = RepoState::new_opening(
+            RepoId(1),
+            RepoSpec {
+                workdir: "/tmp/compare-untracked".into(),
+            },
+        );
+        let entries = Arc::new(vec![
+            FileStatus {
+                path: "new.txt".into(),
+                kind: FileStatusKind::Untracked,
+                conflict: None,
+            },
+            FileStatus {
+                path: "tracked.txt".into(),
+                kind: FileStatusKind::Modified,
+                conflict: None,
+            },
+        ]);
+        let mut range = range(ComparisonSource::Explicit);
+        assert_eq!(
+            comparison_untracked_notice(&repo, &range, Language::English),
+            None
+        );
+        range.to = None;
+        range.to_label = "Working tree".into();
+        assert_eq!(
+            comparison_revision_labels(&range, Language::English, false)[1],
+            "To working tree"
+        );
+        repo.status = Loadable::Ready(
+            RepoStatus {
+                staged: Arc::new(Vec::new()),
+                unstaged: entries.clone(),
+            }
+            .into(),
+        );
+        assert_eq!(
+            comparison_untracked_notice(&repo, &range, Language::TraditionalChinese).as_deref(),
+            Some("僅比較已追蹤檔案 · 已排除 1 個未追蹤檔案")
+        );
+        repo.worktree_status = Loadable::Ready(Arc::new(Vec::new()));
+        assert_eq!(
+            comparison_untracked_notice(&repo, &range, Language::English).as_deref(),
+            Some("Tracked files only · 0 untracked files excluded")
+        );
+        for unavailable in [Loadable::Loading, Loadable::Error("status failed".into())] {
+            repo.worktree_status = unavailable;
+            assert_eq!(
+                comparison_untracked_notice(&repo, &range, Language::English).as_deref(),
+                Some("Tracked files only · untracked file count unavailable")
+            );
+        }
+        repo.worktree_status = Loadable::NotLoaded;
+        repo.worktree_status_rev = 1;
+        assert_eq!(
+            comparison_untracked_notice(&repo, &range, Language::English).as_deref(),
+            Some("Tracked files only · untracked file count unavailable")
+        );
+        range.options.include_untracked = true;
+        assert_eq!(
+            comparison_untracked_notice(&repo, &range, Language::English),
+            None
+        );
     }
 }

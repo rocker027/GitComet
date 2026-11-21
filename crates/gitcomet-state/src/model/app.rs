@@ -1,6 +1,6 @@
 //! App-wide state: settings, prompts, and notifications.
 
-use super::{CloneOpState, CommitRequest, RepoId, RepoState};
+use super::{CloneOpState, CommitRequest, Loadable, RepoId, RepoState};
 use crate::msg::RepoCommandKind;
 use gitcomet_core::domain::SignatureFormats;
 use gitcomet_core::process::GitRuntimeState;
@@ -193,6 +193,10 @@ pub struct AppState {
     pub watch_leases: Arc<FxHashMap<RepoId, u32>>,
     /// Leases for linked worktrees, scoped to the owning repository lifetime.
     pub worktree_watch_leases: Arc<FxHashMap<(RepoId, u64, std::path::PathBuf), u32>>,
+    /// Active or recently finished Worktree Finish runs (at most one active run per `common_dir`).
+    pub worktree_finish_runs: Vec<super::WorktreeFinishRun>,
+    /// Latest worktree paths reported by the UI as having an open embedded terminal.
+    pub running_terminal_paths: Vec<std::path::PathBuf>,
 }
 
 impl AppState {
@@ -225,6 +229,199 @@ impl AppState {
     /// `through_seq`.
     pub fn acknowledge_notifications(&mut self, through_seq: u64) {
         super::acknowledge_feedback(&mut self.notifications, self.notifications_seq, through_seq);
+    }
+
+    /// Whether `repo_id` belongs to the same Git repository (`common_dir`) as `run`.
+    fn repo_matches_worktree_finish_run(
+        &self,
+        repo_id: RepoId,
+        run: &super::WorktreeFinishRun,
+    ) -> bool {
+        if run.origin_repo_id == repo_id {
+            return true;
+        }
+        let Some(repo) = self.repos.iter().find(|r| r.id == repo_id) else {
+            return false;
+        };
+        if let Some(repo_common) = repo
+            .common_dir
+            .as_ref()
+            .filter(|path| !path.as_os_str().is_empty())
+            && !run.common_dir.as_os_str().is_empty()
+        {
+            return gitcomet_core::path_utils::canonicalize_or_original(repo_common.to_path_buf())
+                == gitcomet_core::path_utils::canonicalize_or_original(run.common_dir.clone());
+        }
+        let repo_workdir =
+            gitcomet_core::path_utils::canonicalize_or_original(repo.spec.workdir.clone());
+        run.affected_worktree_paths()
+            .into_iter()
+            .any(|p| gitcomet_core::path_utils::canonicalize_or_original(p) == repo_workdir)
+    }
+
+    /// Whether an active Worktree Finish run currently owns `workdir`.
+    pub fn worktree_finish_owns_workdir(&self, workdir: &std::path::Path) -> bool {
+        let target = gitcomet_core::path_utils::canonicalize_or_original(workdir.to_path_buf());
+        self.worktree_finish_runs.iter().any(|run| {
+            run.affected_worktree_paths()
+                .into_iter()
+                .any(|path| gitcomet_core::path_utils::canonicalize_or_original(path) == target)
+        })
+    }
+
+    /// Whether `repo_id` is currently blocked from history-rewriting or conflicting
+    /// checkout/merge/rebase/reset actions by either a Git operation or an active Worktree Finish run.
+    pub fn repo_history_rewrite_busy(&self, repo_id: RepoId) -> bool {
+        self.repos.iter().any(|repo| {
+            repo.id == repo_id
+                && (repo.history_rewrite_busy()
+                    || self.worktree_finish_owns_workdir(&repo.spec.workdir)
+                    || self.worktree_finish_protects_repo_head(repo_id))
+        })
+    }
+
+    /// Whether an active (non-draft) Worktree Finish run protects local branch `branch`
+    /// for `repo_id` (either as target branch or as any source branch) across the shared
+    /// canonical `common_dir`.
+    pub fn worktree_finish_protects_branch(&self, repo_id: RepoId, branch: &str) -> bool {
+        if branch == "HEAD" || branch == "@" {
+            return self.worktree_finish_protects_repo_head(repo_id);
+        }
+        let normalized = branch
+            .strip_prefix("refs/heads/")
+            .map(|rest| rest.trim_start_matches('/'))
+            .unwrap_or(branch);
+        if normalized.is_empty() {
+            return false;
+        }
+        self.worktree_finish_runs.iter().any(|run| {
+            if !run.is_active() || run.is_initial_draft() {
+                return false;
+            }
+            self.repo_matches_worktree_finish_run(repo_id, run)
+                && (run.target.branch == normalized
+                    || run.sources.iter().any(|src| src.branch == normalized))
+        })
+    }
+
+    /// Local branches that active (non-draft) Worktree Finish runs protect in `repo_id`'s
+    /// repository: every name [`Self::worktree_finish_protects_branch`] accepts, without
+    /// duplicates. Empty when no run is active there.
+    pub fn worktree_finish_protected_branches(&self, repo_id: RepoId) -> Vec<String> {
+        let mut branches: Vec<String> = self
+            .worktree_finish_runs
+            .iter()
+            .filter(|run| {
+                run.is_active()
+                    && !run.is_initial_draft()
+                    && self.repo_matches_worktree_finish_run(repo_id, run)
+            })
+            .flat_map(|run| {
+                std::iter::once(run.target.branch.clone())
+                    .chain(run.sources.iter().map(|src| src.branch.clone()))
+            })
+            .filter(|branch| !branch.is_empty())
+            .collect();
+        branches.sort();
+        branches.dedup();
+        branches
+    }
+
+    /// Whether `workdir` is protected from mutation or removal for `repo_id`, including
+    /// direct run-owned sites, open tabs checking out a protected branch (such as `RebaseOnto`
+    /// target tabs), and linked worktrees whose loaded branch is protected.
+    pub fn worktree_finish_protects_worktree(
+        &self,
+        repo_id: RepoId,
+        workdir: &std::path::Path,
+    ) -> bool {
+        if self.worktree_finish_owns_workdir(workdir) {
+            return true;
+        }
+        let target = gitcomet_core::path_utils::canonicalize_or_original(workdir.to_path_buf());
+        if self.repos.iter().any(|repo| {
+            gitcomet_core::path_utils::canonicalize_or_original(repo.spec.workdir.clone()) == target
+                && self.worktree_finish_protects_repo_head(repo.id)
+        }) {
+            return true;
+        }
+        let matching_runs: Vec<&super::WorktreeFinishRun> = self
+            .worktree_finish_runs
+            .iter()
+            .filter(|run| {
+                run.is_active()
+                    && !run.is_initial_draft()
+                    && self.repo_matches_worktree_finish_run(repo_id, run)
+            })
+            .collect();
+        if matching_runs.is_empty() {
+            return false;
+        }
+        self.repos.iter().any(|repo| {
+            if !matching_runs
+                .iter()
+                .any(|run| self.repo_matches_worktree_finish_run(repo.id, run))
+            {
+                return false;
+            }
+            let Loadable::Ready(worktrees) = &repo.worktrees else {
+                return false;
+            };
+            worktrees.iter().any(|wt| {
+                !wt.bare
+                    && !wt.detached
+                    && gitcomet_core::path_utils::canonicalize_or_original(wt.path.clone())
+                        == target
+                    && wt
+                        .branch
+                        .as_deref()
+                        .is_some_and(|branch| self.worktree_finish_protects_branch(repo_id, branch))
+            })
+        })
+    }
+
+    /// Whether `repo_id` currently has a checked-out branch protected by an active Worktree
+    /// Finish run (for example, the target branch tab during `RebaseOnto`).
+    pub fn worktree_finish_protects_repo_head(&self, repo_id: RepoId) -> bool {
+        let Some(repo) = self.repos.iter().find(|r| r.id == repo_id) else {
+            return false;
+        };
+        match &repo.head_branch {
+            Loadable::Ready(branch) if !branch.is_empty() && branch != "HEAD" => {
+                self.worktree_finish_protects_branch(repo_id, branch)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `repo_id`'s working tree or checked-out HEAD is protected from mutating actions
+    /// by an active Worktree Finish run.
+    pub fn worktree_finish_blocks_workdir_mutation(&self, repo_id: RepoId) -> bool {
+        let Some(repo) = self.repos.iter().find(|r| r.id == repo_id) else {
+            return false;
+        };
+        self.worktree_finish_owns_workdir(&repo.spec.workdir)
+            || self.worktree_finish_protects_repo_head(repo_id)
+    }
+
+    /// Whether `repo_id` belongs to a repository (`common_dir`) with an active (non-draft)
+    /// Worktree Finish run.
+    pub fn has_active_worktree_finish_run(&self, repo_id: RepoId) -> bool {
+        self.worktree_finish_runs.iter().any(|run| {
+            run.is_active()
+                && !run.is_initial_draft()
+                && self.repo_matches_worktree_finish_run(repo_id, run)
+        })
+    }
+
+    /// Most recent non-draft Worktree Finish run belonging to `repo_id`'s repository (`common_dir`).
+    pub fn worktree_finish_run_for_repo(
+        &self,
+        repo_id: RepoId,
+    ) -> Option<&super::WorktreeFinishRun> {
+        self.worktree_finish_runs.iter().rev().find(|run| {
+            !run.is_initial_draft() && self.repo_matches_worktree_finish_run(repo_id, run)
+        })
     }
 
     /// The signature formats to verify: none when the preference is off,
@@ -311,6 +508,9 @@ pub enum AuthRetryOperation {
     Clone {
         url: String,
         dest: PathBuf,
+    },
+    WorktreeFinish {
+        run_id: super::WorktreeFinishRunId,
     },
 }
 

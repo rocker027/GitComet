@@ -1,5 +1,6 @@
 use super::*;
 use crate::kit::interaction as controls;
+use crate::localization::Language;
 use gitcomet_core::domain::{Remote, RemoteBranch, Upstream};
 use gitcomet_core::services::WorktreeCheckout;
 use gitcomet_state::model::RepoState;
@@ -10,20 +11,22 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum WorktreeAddBlocked {
     Incomplete,
-    Refused(String),
+    InvalidBranchName(String),
+    BranchAlreadyExists(String),
     CheckedOut(PathBuf),
 }
 
 pub(super) struct WorktreeAddFields<'a> {
     pub(super) folder: &'a str,
     pub(super) source: &'a str,
+    pub(super) source_upstream: Option<&'a Upstream>,
     pub(super) create_branch: bool,
     pub(super) new_branch: &'a str,
 }
 
 /// The ref the dialog starts from: the remote's default branch, preferring the
 /// local branch that tracks it, then a local `main` or `master`, then HEAD's branch.
-pub(super) fn default_worktree_source(repo: &RepoState) -> String {
+pub(super) fn default_worktree_source(repo: &RepoState) -> (String, Option<Upstream>) {
     let branches = repo.branches.ready().map_or(&[][..], |b| b.as_slice());
     let remotes = repo.remotes.ready().map_or(&[][..], |r| r.as_slice());
     let remote_branches = repo.remote_branches.ready().map(|b| b.as_slice());
@@ -44,19 +47,26 @@ pub(super) fn default_worktree_source(repo: &RepoState) -> String {
                 .is_some_and(|upstream| upstream.remote == remote && upstream.branch == default)
         });
         if let Some(tracking) = tracking {
-            return tracking.name.clone();
+            return (tracking.name.clone(), None);
         }
         if branches.iter().any(|branch| branch.name == default) {
-            return default.to_string();
+            return (default.to_string(), None);
         }
-        return format!("{remote}/{default}");
+        return (
+            format!("{remote}/{default}"),
+            Some(Upstream {
+                remote: remote.to_string(),
+                branch: default.to_string(),
+            }),
+        );
     }
-    ["main", "master"]
+    let local = ["main", "master"]
         .into_iter()
         .find(|name| branches.iter().any(|branch| branch.name == *name))
         .or(head)
         .unwrap_or_default()
-        .to_string()
+        .to_string();
+    (local, None)
 }
 
 /// The first remote with a known default branch, as `(remote, branch)`: the one
@@ -104,8 +114,14 @@ pub(super) fn worktree_add_request(
     // The folder starts as the current worktree's path; it needs a new one.
     let new_folder = (!folder.is_empty() && !is_listed_worktree(repo, &path)).then_some(&path);
     let source = fields.source.trim();
+    let upstream = fields
+        .source_upstream
+        .cloned()
+        .or_else(|| unambiguous_remote_source(repo, source));
     let checkout = if fields.create_branch {
-        new_branch_checkout(repo, new_folder, source, fields.new_branch.trim())?
+        new_branch_checkout(repo, new_folder, source, upstream, fields.new_branch.trim())?
+    } else if let Some(upstream) = upstream {
+        WorktreeCheckout::ExistingRemote { upstream }
     } else {
         existing_checkout(repo, source)?
     };
@@ -113,6 +129,37 @@ pub(super) fn worktree_add_request(
         Some(path) => Ok((path.clone(), checkout)),
         None => Err(WorktreeAddBlocked::Incomplete),
     }
+}
+
+/// A typed label may refer to a local branch or tag as well as a remote.
+/// A preselected remote carries its identity separately from this inference.
+fn unambiguous_remote_source(repo: &RepoState, source: &str) -> Option<Upstream> {
+    if !source.contains('/') {
+        return None;
+    }
+    if repo
+        .branches
+        .ready()?
+        .iter()
+        .any(|branch| branch.name == source)
+        || repo
+            .tags
+            .ready()
+            .is_some_and(|tags| tags.iter().any(|tag| tag.name == source))
+    {
+        return None;
+    }
+    let mut matches = repo.remote_branches.ready()?.iter().filter(|branch| {
+        source
+            .strip_prefix(branch.remote.as_str())
+            .and_then(|rest| rest.strip_prefix('/'))
+            == Some(branch.name.as_str())
+    });
+    let branch = matches.next()?;
+    matches.next().is_none().then(|| Upstream {
+        remote: branch.remote.clone(),
+        branch: branch.name.clone(),
+    })
 }
 
 /// Compared lexically: a filesystem check here would run on every render.
@@ -172,6 +219,7 @@ fn new_branch_checkout(
     repo: &RepoState,
     new_folder: Option<&PathBuf>,
     source: &str,
+    upstream: Option<Upstream>,
     typed_name: &str,
 ) -> Result<WorktreeCheckout, WorktreeAddBlocked> {
     let name = match typed_name {
@@ -185,36 +233,20 @@ fn new_branch_checkout(
         return Err(WorktreeAddBlocked::Incomplete);
     }
     if !gitcomet_core::branch_name::is_valid_branch_name(&name) {
-        return Err(WorktreeAddBlocked::Refused(format!(
-            "'{name}' is not a valid branch name"
-        )));
+        return Err(WorktreeAddBlocked::InvalidBranchName(name));
     }
     if repo
         .branches
         .ready()
         .is_some_and(|branches| branches.iter().any(|branch| branch.name == name))
     {
-        return Err(WorktreeAddBlocked::Refused(format!(
-            "Branch '{name}' already exists"
-        )));
+        return Err(WorktreeAddBlocked::BranchAlreadyExists(name));
     }
-    let tracked = repo.remote_branches.ready().and_then(|branches| {
-        branches.iter().find(|branch| {
-            branch.name == name
-                && source
-                    .strip_prefix(branch.remote.as_str())
-                    .and_then(|rest| rest.strip_prefix('/'))
-                    == Some(branch.name.as_str())
-        })
-    });
-    Ok(match tracked {
-        Some(branch) => WorktreeCheckout::TrackRemote {
-            name,
-            upstream: Upstream {
-                remote: branch.remote.clone(),
-                branch: branch.name.clone(),
-            },
-        },
+    Ok(match upstream {
+        Some(upstream) if name == upstream.branch => {
+            WorktreeCheckout::TrackRemote { name, upstream }
+        }
+        Some(upstream) => WorktreeCheckout::NewBranchFromRemote { name, upstream },
         None => WorktreeCheckout::NewBranch {
             name,
             start: (!source.is_empty()).then(|| source.to_string()),
@@ -229,39 +261,66 @@ pub(super) fn panel(
     cx: &mut gpui::Context<PopoverHost>,
 ) -> gpui::Div {
     let theme = this.theme;
+    let language = Language::current(cx);
     let blocked = this.worktree_add_request(repo_id, cx).err();
     let can_submit = blocked.is_none();
     let (refused, checked_out_at) = match blocked {
-        Some(WorktreeAddBlocked::Refused(reason)) => (Some(reason), None),
+        Some(WorktreeAddBlocked::InvalidBranchName(name)) => (
+            Some(match language {
+                Language::English => format!("'{name}' is not a valid branch name"),
+                Language::TraditionalChinese => format!("「{name}」不是有效的分支名稱"),
+            }),
+            None,
+        ),
+        Some(WorktreeAddBlocked::BranchAlreadyExists(name)) => (
+            Some(match language {
+                Language::English => format!("Branch '{name}' already exists"),
+                Language::TraditionalChinese => format!("分支「{name}」已存在"),
+            }),
+            None,
+        ),
         Some(WorktreeAddBlocked::CheckedOut(at)) => (None, Some(at)),
         _ => (None, None),
     };
     let checked_out = checked_out_at.map(|at| {
-        format!(
-            "'{}' is already checked out in {}.",
-            this.worktree_ref_source_target.trim(),
-            at.display()
-        )
+        let reference = this.worktree_ref_source_target.trim();
+        let path = at.display();
+        match language {
+            Language::English => format!("'{reference}' is already checked out in {path}."),
+            Language::TraditionalChinese => format!("工作樹 {path} 已切換至「{reference}」。"),
+        }
     });
     // Unticked, a branch that is checked out already opens where it is.
     let submit = match checked_out {
-        Some(_) => components::Button::new("worktree_add_open", "Open worktree")
-            .separated_end_slot(super::hotkey_hint(theme, "worktree_add_open_hint", "Enter")),
-        None => components::Button::new("worktree_add_go", "Add")
+        Some(_) => components::Button::new(
+            "worktree_add_open",
+            language.text("Open worktree", "開啟工作樹"),
+        )
+        .separated_end_slot(super::hotkey_hint(theme, "worktree_add_open_hint", "Enter")),
+        None => components::Button::new("worktree_add_go", language.text("Add", "新增"))
             .disabled(!can_submit)
             .separated_end_slot(super::hotkey_hint(theme, "worktree_add_go_hint", "Enter")),
     };
     let create_branch = this.worktree_add_create_branch;
-    let detached = this
-        .state
-        .repos
-        .iter()
-        .find(|repo| repo.id == repo_id)
-        .is_some_and(|repo| {
-            checks_out_detached(repo, create_branch, &this.worktree_ref_source_target)
-        });
+    let detached = !create_branch
+        && (this.worktree_ref_source_upstream.is_some()
+            || this
+                .state
+                .repos
+                .iter()
+                .find(|repo| repo.id == repo_id)
+                .is_some_and(|repo| {
+                    checks_out_detached(repo, create_branch, &this.worktree_ref_source_target)
+                }));
     let ui_scale_percent = super::popover_ui_scale_percent(cx);
     let scaled_px = crate::ui_scale::scaler(ui_scale_percent);
+
+    let new_branch_placeholder = language.text("Defaults to the folder name", "預設使用資料夾名稱");
+    if this.worktree_new_branch_input.read(cx).placeholder() != new_branch_placeholder {
+        this.worktree_new_branch_input.update(cx, |input, cx| {
+            input.set_placeholder(new_branch_placeholder, cx);
+        });
+    }
 
     let ref_row = if let Some(search) = this.branch_picker_search_input.clone() {
         let is_focused = search
@@ -289,7 +348,7 @@ pub(super) fn panel(
                     cx,
                 )
                 .tooltip_host(this.tooltip_host.clone())
-                .empty_text("No matches")
+                .empty_text(language.text("No matches", "找不到相符的參照"))
                 .max_height(scaled_px(branch_picker::REF_PICKER_LIST_MAX_HEIGHT_PX))
                 .selected_index(this.branch_picker_selected_index)
                 .render(
@@ -309,6 +368,11 @@ pub(super) fn panel(
             div().px_2().pb_1().w_full().min_w(px(0.0)).child(search)
         }
     } else {
+        let placeholder = language.text("branch-or-commit", "分支或提交");
+        if this.worktree_ref_input.read(cx).placeholder() != placeholder {
+            this.worktree_ref_input
+                .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        }
         div()
             .px_2()
             .pb_1()
@@ -321,9 +385,15 @@ pub(super) fn panel(
         .flex()
         .flex_col()
         .w(scaled_px(640.0))
-        .child(popover_title(theme, "Add worktree"))
+        .child(popover_title(
+            theme,
+            language.text("Add worktree", "新增工作樹"),
+        ))
         .child(super::popover_rule(theme))
-        .child(input_label(theme, "Worktree folder"))
+        .child(input_label(
+            theme,
+            language.text("Worktree folder", "工作樹資料夾"),
+        ))
         .child(
             div()
                 .px_2()
@@ -340,7 +410,7 @@ pub(super) fn panel(
                         .child(this.worktree_path_input.clone()),
                 )
                 .child(
-                    components::Button::new("worktree_browse", "Browse")
+                    components::Button::new("worktree_browse", language.text("Browse", "瀏覽"))
                         .focus_handle(this.worktree_browse_focus_handle.clone())
                         .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, move |this, _e, window, cx| {
@@ -361,7 +431,11 @@ pub(super) fn panel(
                                 files: false,
                                 directories: true,
                                 multiple: false,
-                                prompt: Some("Select worktree folder".into()),
+                                prompt: Some(
+                                    language
+                                        .text("Select worktree folder", "選擇工作樹資料夾")
+                                        .into(),
+                                ),
                                 directory,
                             });
 
@@ -392,7 +466,7 @@ pub(super) fn panel(
                 checkbox_row(
                     "worktree_add_create_branch",
                     "worktree_add_create_branch",
-                    "Create new branch",
+                    language.text("Create new branch", "建立新分支"),
                     create_branch,
                     &this.worktree_add_create_branch_focus_handle,
                     theme,
@@ -411,9 +485,9 @@ pub(super) fn panel(
         .child(input_label(
             theme,
             if create_branch {
-                "Start from"
+                language.text("Start from", "起始參照")
             } else {
-                "Checkout branch"
+                language.text("Checkout branch", "要切換的分支")
             },
         ))
         .child(ref_row)
@@ -425,19 +499,27 @@ pub(super) fn panel(
                     .pb_1()
                     .text_size(theme.ui_text(12.0))
                     .text_color(theme.colors.foreground.secondary)
-                    .child("Not a local branch: the worktree starts on a detached HEAD."),
+                    .child(language.text(
+                        "Not a local branch: the worktree starts on a detached HEAD.",
+                        "此參照不是本機分支，工作樹的 HEAD 將處於分離狀態。",
+                    )),
             )
         })
         .when(create_branch, |panel| {
-            panel.child(input_label(theme, "New branch name")).child(
-                div()
-                    .debug_selector(|| "worktree_add_new_branch".to_string())
-                    .px_2()
-                    .pb_1()
-                    .w_full()
-                    .min_w(px(0.0))
-                    .child(this.worktree_new_branch_input.clone()),
-            )
+            panel
+                .child(input_label(
+                    theme,
+                    language.text("New branch name", "新分支名稱"),
+                ))
+                .child(
+                    div()
+                        .debug_selector(|| "worktree_add_new_branch".to_string())
+                        .px_2()
+                        .pb_1()
+                        .w_full()
+                        .min_w(px(0.0))
+                        .child(this.worktree_new_branch_input.clone()),
+                )
         })
         .when_some(checked_out, |panel, notice| {
             panel.child(
@@ -465,11 +547,16 @@ pub(super) fn panel(
         .child(
             super::prompt_footer_row()
                 .child(
-                    cancel_button("worktree_add_cancel", "worktree_add_cancel_hint", theme)
-                        .focus_handle(this.worktree_focus.cancel.clone())
-                        .on_click(theme, cx, |this, _e, window, cx| {
-                            this.dismiss_prompt_popover(window, cx);
-                        }),
+                    cancel_button_labeled(
+                        "worktree_add_cancel",
+                        "worktree_add_cancel_hint",
+                        language.text("Cancel", "取消"),
+                        theme,
+                    )
+                    .focus_handle(this.worktree_focus.cancel.clone())
+                    .on_click(theme, cx, |this, _e, window, cx| {
+                        this.dismiss_prompt_popover(window, cx);
+                    }),
                 )
                 .child(
                     submit
@@ -508,6 +595,13 @@ mod tests {
         }
     }
 
+    fn upstream(remote: &str, branch: &str) -> Upstream {
+        Upstream {
+            remote: remote.into(),
+            branch: branch.into(),
+        }
+    }
+
     fn repo(head: &str, branches: Vec<Branch>, remotes: Vec<Remote>) -> RepoState {
         let mut repo = RepoState::new_opening(
             RepoId(1),
@@ -531,7 +625,7 @@ mod tests {
             ],
             vec![remote("origin", Some("main"))],
         );
-        assert_eq!(default_worktree_source(&repo), "trunk");
+        assert_eq!(default_worktree_source(&repo), ("trunk".into(), None));
     }
 
     #[test]
@@ -541,7 +635,10 @@ mod tests {
             vec![branch("feature", None)],
             vec![remote("origin", Some("main"))],
         );
-        assert_eq!(default_worktree_source(&repo), "origin/main");
+        assert_eq!(
+            default_worktree_source(&repo),
+            ("origin/main".into(), Some(upstream("origin", "main")))
+        );
     }
 
     #[test]
@@ -554,7 +651,13 @@ mod tests {
                 remote("upstream", Some("develop")),
             ],
         );
-        assert_eq!(default_worktree_source(&repo), "upstream/develop");
+        assert_eq!(
+            default_worktree_source(&repo),
+            (
+                "upstream/develop".into(),
+                Some(upstream("upstream", "develop"))
+            )
+        );
     }
 
     #[test]
@@ -564,9 +667,12 @@ mod tests {
             vec![branch("feature", None), branch("master", None)],
             vec![remote("origin", None)],
         );
-        assert_eq!(default_worktree_source(&with_master), "master");
+        assert_eq!(
+            default_worktree_source(&with_master),
+            ("master".into(), None)
+        );
         let bare = repo("feature", vec![branch("feature", None)], Vec::new());
-        assert_eq!(default_worktree_source(&bare), "feature");
+        assert_eq!(default_worktree_source(&bare), ("feature".into(), None));
     }
 
     /// A repo on `main` with `origin/x` fetched and `main` also listed as a worktree.
@@ -605,6 +711,7 @@ mod tests {
             &WorktreeAddFields {
                 folder,
                 source,
+                source_upstream: None,
                 create_branch,
                 new_branch,
             },
@@ -671,11 +778,59 @@ mod tests {
             request("/tmp/ws/y", "origin/x", true, "y"),
             Ok((
                 PathBuf::from("/tmp/ws/y"),
-                WorktreeCheckout::NewBranch {
+                WorktreeCheckout::NewBranchFromRemote {
                     name: "y".to_string(),
-                    start: Some("origin/x".to_string()),
+                    upstream: upstream("origin", "x"),
                 }
             ))
+        );
+    }
+
+    #[test]
+    fn a_selected_remote_survives_a_same_named_local_branch() {
+        let mut repo = request_repo();
+        repo.branches = Loadable::Ready(Arc::new(vec![branch("origin/x", None)]));
+        let selected = upstream("origin", "x");
+        let checkout = |create_branch, new_branch, source_upstream| {
+            worktree_add_request(
+                &repo,
+                &WorktreeAddFields {
+                    folder: "/tmp/ws/y",
+                    source: "origin/x",
+                    source_upstream,
+                    create_branch,
+                    new_branch,
+                },
+            )
+            .unwrap()
+            .1
+        };
+        assert_eq!(
+            checkout(true, "y", Some(&selected)),
+            WorktreeCheckout::NewBranchFromRemote {
+                name: "y".into(),
+                upstream: selected.clone(),
+            }
+        );
+        assert_eq!(
+            checkout(true, "x", Some(&selected)),
+            WorktreeCheckout::TrackRemote {
+                name: "x".into(),
+                upstream: selected.clone(),
+            }
+        );
+        assert_eq!(
+            checkout(false, "", Some(&selected)),
+            WorktreeCheckout::ExistingRemote {
+                upstream: selected.clone()
+            }
+        );
+        assert_eq!(
+            checkout(true, "x", None),
+            WorktreeCheckout::NewBranch {
+                name: "x".into(),
+                start: Some("origin/x".into()),
+            }
         );
     }
 
@@ -697,15 +852,11 @@ mod tests {
     fn a_new_branch_that_exists_is_refused() {
         assert_eq!(
             request("/tmp/ws/free", "main", true, "free"),
-            Err(WorktreeAddBlocked::Refused(
-                "Branch 'free' already exists".to_string()
-            ))
+            Err(WorktreeAddBlocked::BranchAlreadyExists("free".to_string()))
         );
         assert_eq!(
             request("/tmp/ws/free", "main", true, ""),
-            Err(WorktreeAddBlocked::Refused(
-                "Branch 'free' already exists".to_string()
-            )),
+            Err(WorktreeAddBlocked::BranchAlreadyExists("free".to_string())),
             "the folder-name fallback is checked too"
         );
     }
@@ -726,6 +877,7 @@ mod tests {
                 &WorktreeAddFields {
                     folder: "/tmp/ws/again",
                     source: "free",
+                    source_upstream: None,
                     create_branch: false,
                     new_branch: "",
                 },
@@ -740,16 +892,14 @@ mod tests {
     fn an_invalid_branch_name_is_refused() {
         assert_eq!(
             request("/tmp/ws/my feature", "main", true, ""),
-            Err(WorktreeAddBlocked::Refused(
-                "'my feature' is not a valid branch name".to_string()
+            Err(WorktreeAddBlocked::InvalidBranchName(
+                "my feature".to_string()
             )),
             "the folder-name fallback is checked too"
         );
         assert_eq!(
             request("/tmp/ws/x", "main", true, "a..b"),
-            Err(WorktreeAddBlocked::Refused(
-                "'a..b' is not a valid branch name".to_string()
-            ))
+            Err(WorktreeAddBlocked::InvalidBranchName("a..b".to_string()))
         );
     }
 
@@ -770,6 +920,7 @@ mod tests {
                 &WorktreeAddFields {
                     folder: "/tmp/ws/detached",
                     source: "HEAD",
+                    source_upstream: None,
                     create_branch: false,
                     new_branch: "",
                 },
@@ -803,14 +954,14 @@ mod tests {
             vec![remote("origin", Some("gone"))],
         );
         repo.remote_branches = Loadable::Ready(Arc::new(Vec::new()));
-        assert_eq!(default_worktree_source(&repo), "master");
+        assert_eq!(default_worktree_source(&repo), ("master".into(), None));
     }
 
     #[test]
     fn a_refusal_shows_before_the_folder_is_filled_in() {
         assert!(matches!(
             request("", "main", true, "a..b"),
-            Err(WorktreeAddBlocked::Refused(_))
+            Err(WorktreeAddBlocked::InvalidBranchName(_))
         ));
         assert_eq!(
             request("", "main", false, ""),

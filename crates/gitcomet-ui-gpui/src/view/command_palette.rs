@@ -1,6 +1,7 @@
 use crate::kit::click::PointerClickExt as _;
 use crate::kit::interaction::{self as controls, ControlInteractionExt as _};
 use crate::kit::{Scrollbar, ScrollbarAxis};
+use crate::localization::Language;
 use crate::theme::AppTheme;
 use crate::ui_scale;
 use gpui::prelude::*;
@@ -9,12 +10,16 @@ use gpui::{
     SharedString, UniformListScrollHandle, WeakEntity, Window, div, px, uniform_list,
 };
 use palette::IntoColor;
+use std::borrow::Cow;
+use std::ops::Range;
 
 use super::commands::Command;
 use super::tooltip::GitCometTooltipExt;
 use super::{GitCometView, components, restrict_scroll_to_vertical_axis};
 use crate::kit::components::Shortcut;
 use gitcomet_core::tag_push::TagPushMode;
+
+mod zh_tw;
 
 pub(crate) struct CommandEntry {
     pub(crate) id: &'static str,
@@ -32,12 +37,33 @@ pub(crate) struct CommandEntry {
 }
 
 impl CommandEntry {
-    /// The label as shown and matched, naming the product for `{app}`.
-    pub(crate) fn label(&self) -> std::borrow::Cow<'static, str> {
-        if self.label.contains("{app}") {
-            std::borrow::Cow::Owned(self.label.replace("{app}", crate::view::product_name()))
+    /// The source label, naming the product for `{app}`.
+    pub(crate) fn label(&self) -> Cow<'static, str> {
+        Self::expand_product_name(self.label)
+    }
+
+    pub(crate) fn localized_title(&self, language: Language) -> Cow<'static, str> {
+        if language == Language::TraditionalChinese
+            && let Some(command) = Command::from_id(self.id)
+        {
+            return Self::expand_product_name(zh_tw::title(command));
+        }
+        self.label()
+    }
+
+    pub(crate) fn localized_category(&self, language: Language) -> &'static str {
+        if language == Language::TraditionalChinese && Command::from_id(self.id).is_some() {
+            zh_tw::category(self.category)
         } else {
-            std::borrow::Cow::Borrowed(self.label)
+            self.category
+        }
+    }
+
+    fn expand_product_name(label: &'static str) -> Cow<'static, str> {
+        if label.contains("{app}") {
+            Cow::Owned(label.replace("{app}", crate::view::product_name()))
+        } else {
+            Cow::Borrowed(label)
         }
     }
 }
@@ -63,6 +89,11 @@ pub(crate) enum Needs {
     RemoteWebPage,
     /// "Check for updates" has a check to run.
     UpdateCheck,
+    /// There is a recorded Git operation to undo (or redo) and nothing runs.
+    GitUndo,
+    GitRedo,
+    /// Nothing is staged and every change can be staged and committed.
+    StageAllAndCommit,
     MacOs,
     Linux,
     /// Git can run `git lfs`.
@@ -108,6 +139,11 @@ pub(crate) struct PaletteContext {
     pub(crate) annex_adjusted: bool,
     /// "Check for updates" has a check to run, as the menus decide.
     pub(crate) update_check: bool,
+    /// Why Undo / Redo cannot run, as the toolbar buttons say.
+    pub(crate) git_undo_unavailable: Option<&'static str>,
+    pub(crate) git_redo_unavailable: Option<&'static str>,
+    /// Why "Stage All and Commit" cannot run, as the commit form decides.
+    pub(crate) stage_all_commit_unavailable: Option<&'static str>,
 }
 
 const GIT_LFS_MISSING: &str = "Install Git LFS where Git can find it first";
@@ -153,6 +189,9 @@ pub(crate) fn unavailable_reason(needs: Needs, ctx: &PaletteContext) -> Option<&
         Needs::Push => ctx.push_unavailable,
         Needs::RemoteWebPage => ctx.remote_web_page_unavailable,
         Needs::UpdateCheck => (!ctx.update_check).then_some("Update checks are not available here"),
+        Needs::GitUndo => ctx.git_undo_unavailable,
+        Needs::GitRedo => ctx.git_redo_unavailable,
+        Needs::StageAllAndCommit => ctx.stage_all_commit_unavailable,
         Needs::MacOs => (!cfg!(target_os = "macos")).then_some("Only available on macOS"),
         Needs::Linux => (!cfg!(any(target_os = "linux", target_os = "freebsd")))
             .then_some("Only available on Linux"),
@@ -195,6 +234,18 @@ pub(crate) fn command_unavailable_reason(
     unavailable_reason(command.needs, ctx)
 }
 
+pub(super) fn localized_unavailable_reason(
+    reason: &'static str,
+    language: Language,
+) -> &'static str {
+    if language == Language::TraditionalChinese
+        && let Some(translation) = zh_tw::unavailable_reason(reason)
+    {
+        return translation;
+    }
+    super::localized_action_reason(reason, language)
+}
+
 pub(crate) const COMMANDS: &[CommandEntry] = &[
     CommandEntry {
         id: Command::Commit.id(),
@@ -204,6 +255,45 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         keywords: "",
         requires_repo: true,
         needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::StageAllAndCommit.id(),
+        label: "Stage All and Commit",
+        shortcut: Shortcut::None,
+        category: "Commit",
+        keywords: "stage all changes commit untracked",
+        requires_repo: true,
+        needs: Needs::StageAllAndCommit,
+    },
+    CommandEntry {
+        id: Command::UndoGitOperation.id(),
+        label: "Undo Git Operation",
+        // Bound in `command_shortcuts`, away from text editing and the
+        // Files explorer's own undo.
+        shortcut: Shortcut::Secondary("Z"),
+        category: "Commit",
+        keywords: "undo revert last commit branch reset",
+        requires_repo: true,
+        needs: Needs::GitUndo,
+    },
+    CommandEntry {
+        id: Command::RedoGitOperation.id(),
+        label: "Redo Git Operation",
+        shortcut: Shortcut::Secondary("Shift+Z"),
+        category: "Commit",
+        keywords: "redo",
+        requires_repo: true,
+        needs: Needs::GitRedo,
+    },
+    CommandEntry {
+        id: Command::FocusCommitMessage.id(),
+        label: "Focus Commit Message",
+        // GitKraken's key for the commit message box.
+        shortcut: Shortcut::Keystrokes("secondary-shift-m"),
+        category: "Commit",
+        keywords: "commit message summary write type",
+        requires_repo: true,
+        needs: Needs::WorkingTree,
     },
     CommandEntry {
         id: Command::StageAll.id(),
@@ -224,6 +314,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::DiscardAll.id(),
+        label: "Discard All Unstaged Changes…",
+        shortcut: Shortcut::None,
+        category: "Working Copy",
+        keywords: "discard all changes reset working tree revert clean",
+        requires_repo: true,
+        needs: Needs::WorkingTree,
+    },
+    CommandEntry {
         id: Command::CreateBranch.id(),
         label: "Create Branch",
         shortcut: Shortcut::Keystrokes("secondary-alt-n"),
@@ -237,7 +336,9 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         label: "Checkout Branch",
         shortcut: Shortcut::Keystrokes("secondary-alt-c"),
         category: "Branch",
-        keywords: "",
+        // The picker lists remote branches too, and checking one out creates
+        // its tracking branch.
+        keywords: "checkout remote branch tracking switch",
         requires_repo: true,
         needs: Needs::Nothing,
     },
@@ -247,6 +348,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         shortcut: Shortcut::None,
         category: "Branch",
         keywords: "",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::DeleteRemoteBranch.id(),
+        label: "Delete Remote Branch…",
+        shortcut: Shortcut::None,
+        category: "Branch",
+        keywords: "delete remote branch origin push",
         requires_repo: true,
         needs: Needs::Nothing,
     },
@@ -267,6 +377,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         keywords: "rebase onto history rewrite",
         requires_repo: true,
         needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::Merge.id(),
+        label: "Merge into Current Branch",
+        shortcut: Shortcut::None,
+        category: "Branch",
+        keywords: "merge branch ref integrate join",
+        requires_repo: true,
+        needs: Needs::WorkingTree,
     },
     CommandEntry {
         id: Command::PruneMergedBranches.id(),
@@ -606,6 +725,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::SearchCommits.id(),
+        label: "Search Commits",
+        shortcut: Shortcut::None,
+        category: "Navigation",
+        keywords: "find commit history message author sha graph",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
         id: Command::OpenActiveViewSearch.id(),
         label: "Search in Current View",
         shortcut: Shortcut::Secondary("F"),
@@ -638,6 +766,15 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         shortcut: Shortcut::None,
         category: "Tags",
         keywords: "",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::DeleteTag.id(),
+        label: "Delete Tag…",
+        shortcut: Shortcut::None,
+        category: "Tags",
+        keywords: "delete tag remove",
         requires_repo: true,
         needs: Needs::Nothing,
     },
@@ -798,6 +935,24 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::EditRemoteUrl.id(),
+        label: "Edit Remote URL",
+        shortcut: Shortcut::None,
+        category: "Remotes",
+        keywords: "remote url fetch change origin address",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::RemoveRemote.id(),
+        label: "Remove Remote…",
+        shortcut: Shortcut::None,
+        category: "Remotes",
+        keywords: "delete remote origin",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
         id: Command::OpenRemoteInBrowser.id(),
         label: crate::menu_labels::OPEN_REMOTE_IN_BROWSER,
         shortcut: Shortcut::Secondary("K"),
@@ -825,11 +980,40 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         needs: Needs::Nothing,
     },
     CommandEntry {
+        id: Command::RemoveSubmodule.id(),
+        label: "Remove Submodule…",
+        shortcut: Shortcut::None,
+        category: "Submodules",
+        keywords: "delete submodule",
+        requires_repo: true,
+        needs: Needs::WorkingTree,
+    },
+    CommandEntry {
         id: Command::AddWorktree.id(),
         label: "Add Worktree",
         shortcut: Shortcut::None,
         category: "Worktrees",
         keywords: "",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    CommandEntry {
+        id: Command::FinishWorktrees.id(),
+        label: "Finish Worktrees…",
+        shortcut: Shortcut::None,
+        category: "Worktrees",
+        keywords: "merge rebase squash cleanup worktree",
+        requires_repo: true,
+        needs: Needs::Nothing,
+    },
+    // The removals below open the same picker and confirmation as their
+    // section menus; nothing is removed before that confirmation.
+    CommandEntry {
+        id: Command::RemoveWorktree.id(),
+        label: "Remove Worktree…",
+        shortcut: Shortcut::None,
+        category: "Worktrees",
+        keywords: "delete worktree",
         requires_repo: true,
         needs: Needs::Nothing,
     },
@@ -863,8 +1047,6 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         requires_repo: true,
         needs: Needs::Nothing,
     },
-    // TODO: "undo"              - Undo (Edit)
-    // TODO: "redo"              - Redo (Edit)
     CommandEntry {
         id: Command::KeyboardShortcuts.id(),
         label: "Keyboard Shortcuts",
@@ -874,16 +1056,6 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
         requires_repo: false,
         needs: Needs::Nothing,
     },
-    // TODO: "search-commits"   - Search Commits (Navigation)
-    // TODO: "checkout-remote-branch" - Checkout Remote Branch
-    // TODO: "delete-remote-branch"   - Delete Remote Branch
-    // TODO: "merge"                  - Merge Branch/Ref
-    // TODO: "delete-tag"             - Delete Tag
-    // TODO: "remove-remote"          - Remove Remote
-    // TODO: "edit-remote-url"        - Edit Remote URL
-    // TODO: "remove-submodule"       - Remove Submodule
-    // TODO: "remove-worktree"        - Remove Worktree
-    // TODO: "discard-all"        - Discard All Changes (Working Copy)
     CommandEntry {
         id: Command::LfsDownloadAll.id(),
         label: "Download All LFS Content",
@@ -1045,6 +1217,7 @@ pub(crate) const COMMANDS: &[CommandEntry] = &[
 #[derive(Clone)]
 pub(crate) struct CommandMatch {
     pub(crate) entry: &'static CommandEntry,
+    display_title: Cow<'static, str>,
     pub(crate) positions: Vec<usize>,
 }
 
@@ -1056,20 +1229,21 @@ impl std::ops::Deref for CommandMatch {
     }
 }
 
-/// Keeps keyword matches below every label match in the ranking, whatever the
-/// two raw scores are.
+/// Source-label aliases and keywords are secondary to the displayed title.
+const SOURCE_LABEL_MATCH_PENALTY: i32 = 50_000;
 const KEYWORD_MATCH_PENALTY: i32 = 100_000;
 
 #[cfg(test)]
 pub(crate) fn filtered_commands(has_active_repo: bool, query: &str) -> Vec<CommandMatch> {
-    filtered_commands_with(&[], has_active_repo, query)
+    filtered_commands_with(&[], has_active_repo, query, Language::English)
 }
 
 /// The built-in commands followed by `extensions`, filtered and ranked.
-pub(crate) fn filtered_commands_with(
+fn filtered_commands_with(
     extensions: &'static [CommandEntry],
     has_active_repo: bool,
     query: &str,
+    language: Language,
 ) -> Vec<CommandMatch> {
     let available = COMMANDS
         .iter()
@@ -1080,39 +1254,46 @@ pub(crate) fn filtered_commands_with(
         return available
             .map(|entry| CommandMatch {
                 entry,
+                display_title: entry.localized_title(language),
                 positions: Vec::new(),
             })
             .collect();
     }
 
-    let mut out: Vec<(i32, usize, CommandMatch)> = available
+    let mut out: Vec<_> = available
         .enumerate()
         .filter_map(|(order, entry)| {
-            fuzzy_subsequence_match(&entry.label(), query)
-                .map(|(score, positions)| (score, order, CommandMatch { entry, positions }))
-                .or_else(|| {
-                    // Keyword hits carry no highlight positions and sort behind
-                    // every label hit.
-                    fuzzy_subsequence_match(entry.keywords, query).map(|(score, _)| {
-                        (
-                            score + KEYWORD_MATCH_PENALTY,
-                            order,
-                            CommandMatch {
-                                entry,
-                                positions: Vec::new(),
-                            },
-                        )
-                    })
-                })
+            let display_title = entry.localized_title(language);
+            let (score, positions, title_len) =
+                if let Some((score, positions)) = fuzzy_subsequence_match(&display_title, query) {
+                    (score, positions, display_title.len())
+                } else {
+                    let source_title = entry.label();
+                    let title_len = source_title.len();
+                    // Aliases use the English ranking tie-breaker. Only a hit in
+                    // displayed text can supply a highlight.
+                    if source_title != display_title
+                        && let Some((score, _)) = fuzzy_subsequence_match(&source_title, query)
+                    {
+                        (score + SOURCE_LABEL_MATCH_PENALTY, Vec::new(), title_len)
+                    } else {
+                        let (score, _) = fuzzy_subsequence_match(entry.keywords, query)?;
+                        (score + KEYWORD_MATCH_PENALTY, Vec::new(), title_len)
+                    }
+                };
+            Some((
+                (score, title_len, order),
+                CommandMatch {
+                    entry,
+                    display_title,
+                    positions,
+                },
+            ))
         })
         .collect();
 
-    out.sort_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then_with(|| a.2.label().len().cmp(&b.2.label().len()))
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    out.into_iter().map(|(_, _, m)| m).collect()
+    out.sort_unstable_by_key(|(key, _)| *key);
+    out.into_iter().map(|(_, m)| m).collect()
 }
 
 /// Translate a selected command index to its visual list index. The unfiltered
@@ -1145,6 +1326,10 @@ enum PaletteRow {
     Command(usize),
 }
 
+fn search_placeholder(language: Language) -> &'static str {
+    language.text("Search commands…", "搜尋命令…")
+}
+
 pub(crate) struct CommandPaletteView {
     pub(crate) query_input: Entity<components::TextInput>,
     pub(crate) restore_focus: Option<FocusHandle>,
@@ -1172,10 +1357,11 @@ impl CommandPaletteView {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
+        let language = Language::current(cx);
         let query_input = cx.new(|cx| {
             components::TextInput::new(
                 components::TextInputOptions {
-                    placeholder: "Search commands…".into(),
+                    placeholder: search_placeholder(language).into(),
                     chromeless: true,
                     ..Default::default()
                 },
@@ -1186,6 +1372,8 @@ impl CommandPaletteView {
         let input_subscription = cx.observe_in(&query_input, window, |this, input, window, cx| {
             this.handle_input_notification(input, window, cx);
         });
+        cx.observe_global::<Language>(Self::refresh_language)
+            .detach();
 
         Self {
             query_input,
@@ -1224,7 +1412,7 @@ impl CommandPaletteView {
         self.context = context;
         if self.open {
             if relist {
-                self.rebuild_cached_results();
+                self.rebuild_cached_results(Language::current(cx));
                 self.clamp_selection();
             }
             cx.notify();
@@ -1234,6 +1422,24 @@ impl CommandPaletteView {
     /// Why `command` cannot run right now, if it cannot.
     fn unavailable(&self, command: &CommandEntry) -> Option<&'static str> {
         command_unavailable_reason(command, &self.context)
+    }
+
+    fn refresh_language(&mut self, cx: &mut gpui::Context<Self>) {
+        let language = Language::current(cx);
+        self.query_input.update(cx, |input, cx| {
+            input.set_placeholder(search_placeholder(language), cx);
+        });
+        if self.open {
+            let selected_command = self
+                .selected_index
+                .and_then(|index| self.matches.get(index))
+                .map(|command| command.id);
+            self.rebuild_cached_results(language);
+            self.selected_index = selected_command
+                .and_then(|id| self.matches.iter().position(|command| command.id == id));
+            self.scroll_to_selected();
+            cx.notify();
+        }
     }
 
     pub(crate) fn open(
@@ -1250,7 +1456,7 @@ impl CommandPaletteView {
         self.context = context;
         self.query = SharedString::default();
         self.selected_index = None;
-        self.rebuild_cached_results();
+        self.rebuild_cached_results(Language::current(cx));
         if !self.rows.is_empty() {
             self.scroll_handle
                 .scroll_to_item_strict(0, ScrollStrategy::Top);
@@ -1283,18 +1489,20 @@ impl CommandPaletteView {
         cx.notify();
     }
 
-    fn rebuild_cached_results(&mut self) {
+    fn rebuild_cached_results(&mut self, language: Language) {
         self.matches = filtered_commands_with(
             self.extension_commands,
             self.context.has_active_repo,
             self.query.as_ref(),
+            language,
         );
         self.rows.clear();
         self.command_row_indices.clear();
 
         if !self.query.is_empty() {
             if !self.matches.is_empty() {
-                self.rows.push(PaletteRow::Header("Results"));
+                self.rows
+                    .push(PaletteRow::Header(language.text("Results", "搜尋結果")));
             }
             for command_index in 0..self.matches.len() {
                 self.command_row_indices.push(self.rows.len());
@@ -1305,9 +1513,11 @@ impl CommandPaletteView {
 
         let mut current_category = None;
         for (command_index, command) in self.matches.iter().enumerate() {
-            if current_category != Some(command.category) {
-                current_category = Some(command.category);
-                self.rows.push(PaletteRow::Header(command.category));
+            let display_category = command.localized_category(language);
+            let category = (command.category, display_category);
+            if current_category != Some(category) {
+                current_category = Some(category);
+                self.rows.push(PaletteRow::Header(display_category));
             }
             self.command_row_indices.push(self.rows.len());
             self.rows.push(PaletteRow::Command(command_index));
@@ -1371,7 +1581,7 @@ impl CommandPaletteView {
             self.query = input.read_with(cx, |input, _| {
                 SharedString::from(input.text().trim().to_owned())
             });
-            self.rebuild_cached_results();
+            self.rebuild_cached_results(Language::current(cx));
             self.selected_index = (!self.matches.is_empty()).then_some(0);
             if !self.rows.is_empty() {
                 self.scroll_handle
@@ -1447,14 +1657,8 @@ impl CommandPaletteView {
             font_weight: Some(FontWeight::BOLD),
             ..gpui::HighlightStyle::default()
         };
-        let mut ranges: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> = Vec::new();
-        for &position in positions {
-            match ranges.last_mut() {
-                Some((range, _)) if range.end == position => range.end = position + 1,
-                _ => ranges.push((position..position + 1, highlight)),
-            }
-        }
-        let focus_range = ranges.first().map(|(range, _)| range.clone());
+        let ranges = highlight_ranges(label, positions);
+        let focus_range = ranges.first().cloned();
         let mut text = components::TruncatedText::new(label.to_owned(), self.theme.ui_text(14.0))
             .profile(components::TextTruncationProfile::End)
             .text_color(color);
@@ -1462,7 +1666,7 @@ impl CommandPaletteView {
             text = text.focus_range(Some(focus_range));
         }
         if !ranges.is_empty() {
-            text = text.highlights(ranges);
+            text = text.highlights(ranges.into_iter().map(|range| (range, highlight)));
         }
         text.render(cx).into_any_element()
     }
@@ -1474,6 +1678,7 @@ impl CommandPaletteView {
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
         let theme = self.theme;
+        let language = Language::current(cx);
         let ui_scale = ui_scale::UiScale::current(cx);
         let scaled_px = crate::ui_scale::scaler(ui_scale);
         let row_height = scaled_px(36.0);
@@ -1502,7 +1707,9 @@ impl CommandPaletteView {
                         let command_id: SharedString = command.id.into();
                         let command_id_for_click = command_id.clone();
                         let selected = self.selected_index == Some(command_index);
-                        let unavailable = self.unavailable(command);
+                        let unavailable = self
+                            .unavailable(command)
+                            .map(|reason| localized_unavailable_reason(reason, language));
                         let command_row = div()
                             // Without an id gpui never repaints on mouse-move,
                             // so the hover fill below would be computed and
@@ -1548,9 +1755,13 @@ impl CommandPaletteView {
                         };
                         let display_label =
                             if self.context.is_bare && command.id == Command::AnnexGetAll.id() {
-                                format!("{} (all versions)", command.label())
+                                Cow::Owned(format!(
+                                    "{}{}",
+                                    command.display_title,
+                                    language.text(" (all versions)", "（所有版本）")
+                                ))
                             } else {
-                                command.label().into_owned()
+                                Cow::Borrowed(command.display_title.as_ref())
                             };
                         let label = div()
                             .flex()
@@ -1656,7 +1867,7 @@ impl Render for CommandPaletteView {
                 .px(scaled_px(12.0))
                 .text_size(theme.ui_text(14.0))
                 .text_color(theme.colors.foreground.secondary)
-                .child("No matching commands")
+                .child(Language::current(cx).text("No matching commands", "沒有符合的命令"))
                 .into_any_element()
         } else {
             let scrollbar_gutter =
@@ -1731,39 +1942,56 @@ impl Render for CommandPaletteView {
     }
 }
 
-/// Case-insensitive subsequence match of `query` inside `label` (both ASCII).
-/// Returns `(score, matched byte positions)`; lower scores are better.
+/// Subsequence match of `query` inside `label`, folding ASCII case.
+/// Returns `(score, matched character start offsets in bytes)`; lower scores are better.
 /// Contiguous matches beat gapped ones, word-boundary hits beat mid-word hits,
 /// and earlier matches beat later ones — so "push" ranks "Push" over
 /// "Force Push", and "cb" still finds "Create Branch".
 fn fuzzy_subsequence_match(label: &str, query: &str) -> Option<(i32, Vec<usize>)> {
-    let label_bytes = label.as_bytes();
-    let mut positions = Vec::with_capacity(query.len());
+    let mut label_chars = label.char_indices();
+    let mut positions = Vec::with_capacity(query.chars().count());
     let mut gaps: i32 = 0;
     let mut boundary_hits: i32 = 0;
-    let mut search_from = 0usize;
+    let mut at_boundary = true;
+    let mut last_match_end = None;
 
-    for query_byte in query.bytes() {
-        let target = query_byte.to_ascii_lowercase();
-        let found = label_bytes
-            .iter()
-            .enumerate()
-            .skip(search_from)
-            .find(|(_, label_byte)| label_byte.to_ascii_lowercase() == target)
-            .map(|(ix, _)| ix)?;
+    for target in query.chars() {
+        let (offset, character, boundary) = label_chars.find_map(|(offset, character)| {
+            let boundary = at_boundary;
+            at_boundary = !character.is_alphanumeric();
+            character
+                .eq_ignore_ascii_case(&target)
+                .then_some((offset, character, boundary))
+        })?;
 
-        if positions.last().is_some_and(|&prev| found > prev + 1) {
+        if last_match_end.is_some_and(|end| offset > end) {
             gaps += 1;
         }
-        if found == 0 || !label_bytes[found - 1].is_ascii_alphanumeric() {
+        if boundary {
             boundary_hits += 1;
         }
-        positions.push(found);
-        search_from = found + 1;
+        positions.push(offset);
+        last_match_end = Some(offset + character.len_utf8());
     }
 
     let first = positions.first().copied().unwrap_or(0) as i32;
     Some((gaps * 100 - boundary_hits * 20 + first, positions))
+}
+
+fn highlight_ranges(label: &str, positions: &[usize]) -> Vec<Range<usize>> {
+    let mut ranges: Vec<Range<usize>> = Vec::new();
+    for &start in positions {
+        let character = label[start..]
+            .chars()
+            .next()
+            .expect("match positions point to characters in the displayed title");
+        let end = start + character.len_utf8();
+        match ranges.last_mut() {
+            Some(range) if range.end == start => range.end = end,
+            _ => ranges.push(start..end),
+        }
+    }
+    ranges
 }
 
 #[cfg(test)]
@@ -1866,6 +2094,22 @@ mod tests {
     }
 
     #[test]
+    fn gitkraken_command_names_find_their_commands() {
+        for (query, id) in [
+            ("checkout remote", "checkout-branch"),
+            ("search commits", "search-commits"),
+            ("merge", "merge"),
+            ("edit remote url", "edit-remote-url"),
+        ] {
+            let ids = filtered_commands(true, query)
+                .iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>();
+            assert!(ids.contains(&id), "{query:?} should find {id}, got {ids:?}");
+        }
+    }
+
+    #[test]
     fn keyword_matches_find_commands_their_label_no_longer_spells_out() {
         let matches = filtered_commands(true, "recent");
 
@@ -1923,6 +2167,57 @@ mod tests {
             matches.iter().any(|m| m.label == "Force Push"),
             "substring hits elsewhere in the label must still be included"
         );
+    }
+
+    #[test]
+    fn traditional_chinese_search_highlights_complete_displayed_characters() {
+        let matches = filtered_commands_with(&[], true, "合併", Language::TraditionalChinese);
+        let first = matches.first().expect("合併至目前分支");
+        assert_eq!(first.id, Command::Merge.id());
+        assert_eq!(first.positions, [0, 3]);
+        let ranges = highlight_ranges(&first.display_title, &first.positions);
+        assert_eq!(ranges, [0..6]);
+        assert_eq!(&first.display_title[ranges[0].clone()], "合併");
+
+        let (_, positions) =
+            fuzzy_subsequence_match("切換 Git 分支", "換G支").expect("mixed match");
+        assert_eq!(
+            highlight_ranges("切換 Git 分支", &positions),
+            [3..6, 7..8, 14..17]
+        );
+    }
+
+    #[test]
+    fn traditional_chinese_search_keeps_english_aliases_and_extension_labels() {
+        static EXTENSIONS: &[CommandEntry] = &[CommandEntry {
+            id: "extension:custom",
+            label: "外掛命令",
+            shortcut: Shortcut::None,
+            category: "Branch",
+            keywords: "",
+            requires_repo: false,
+            needs: Needs::Nothing,
+        }];
+
+        let language = Language::TraditionalChinese;
+        for query in ["push", "abort merge", "switch repository"] {
+            let localized = filtered_commands_with(EXTENSIONS, true, query, language);
+            let english = filtered_commands(true, query);
+            assert!(!localized.is_empty());
+            assert_eq!(
+                localized
+                    .iter()
+                    .map(|command| command.id)
+                    .collect::<Vec<_>>(),
+                english.iter().map(|command| command.id).collect::<Vec<_>>(),
+            );
+            assert!(localized.iter().all(|command| command.positions.is_empty()));
+        }
+        let matches = filtered_commands_with(EXTENSIONS, true, "外掛", language);
+        let extension = matches.first().expect("extension command");
+        assert_eq!(extension.id, EXTENSIONS[0].id);
+        assert_eq!(extension.display_title, EXTENSIONS[0].label);
+        assert_eq!(extension.localized_category(language), "Branch");
     }
 
     #[test]

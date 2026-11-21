@@ -673,6 +673,18 @@ impl std::fmt::Debug for InternalMsg {
                 .field("repo_id", repo_id)
                 .field("name", name)
                 .finish(),
+            InternalMsg::GitUndoRefObserved {
+                repo_id,
+                kind,
+                reference,
+                value,
+            } => f
+                .debug_struct("GitUndoRefObserved")
+                .field("repo_id", repo_id)
+                .field("kind", kind)
+                .field("reference", reference)
+                .field("value", value)
+                .finish(),
             InternalMsg::RepoActionFinishedInWorktree {
                 repo_id,
                 action,
@@ -717,6 +729,7 @@ impl std::fmt::Debug for InternalMsg {
                 .field("command", command)
                 .field("result", result)
                 .finish(),
+            InternalMsg::WorktreeFinish(msg) => f.debug_tuple("WorktreeFinish").field(msg).finish(),
         }
     }
 }

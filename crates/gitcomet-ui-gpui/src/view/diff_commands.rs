@@ -22,6 +22,23 @@ pub(super) fn for_window(root: WeakEntity<GitCometView>) -> DiffCommands {
                 });
                 return;
             }
+            if let DiffCommand::ReviewWorkingTree { repo, window } = command {
+                let _ = window.update(cx, |_, window, cx| {
+                    let _ = root.update(cx, |root, cx| {
+                        if root.active_repo_id() != Some(repo) {
+                            return;
+                        }
+                        root.store
+                            .dispatch(Msg::ReviewWorkingTree { repo_id: repo });
+                        root.navigate_review(
+                            super::review_navigation::ReviewNavigation::WorkingCopy,
+                            window,
+                            cx,
+                        );
+                    });
+                });
+                return;
+            }
             if let DiffCommand::OpenHostedMenu {
                 id,
                 items,
@@ -135,8 +152,46 @@ pub(super) fn for_window(root: WeakEntity<GitCometView>) -> DiffCommands {
                         cx.notify();
                     })
                 }
-                DiffCommand::RevealStatus { section, path } => {
+                DiffCommand::RevealStatus {
+                    section,
+                    path,
+                    after_transfer,
+                } => {
+                    let snapshot = after_transfer.and_then(|(repo_id, lifetime, generation)| {
+                        let state = root.store.snapshot();
+                        let repo = state.repos.iter().find(|repo| repo.id == repo_id)?;
+                        (repo.lifetime() == lifetime
+                            && state.active_repo == Some(repo_id)
+                            && repo.navigation.canvas_requests == generation
+                            && repo.diff_state.diff_target.as_ref()
+                                == Some(&DiffTarget::working_tree(
+                                    path.clone(),
+                                    section.diff_area(),
+                                )))
+                        .then_some(state)
+                    });
+                    if after_transfer.is_some() && snapshot.is_none() {
+                        return;
+                    }
                     root.details_pane.update(cx, |pane, cx| {
+                        if let Some(snapshot) = snapshot {
+                            pane.apply_state_snapshot(snapshot, cx);
+                        }
+                        let section = if after_transfer.is_some() {
+                            let Some(section) = pane.active_repo().and_then(|repo| {
+                                super::panels::status_navigation_section(
+                                    repo,
+                                    &path,
+                                    section.diff_area(),
+                                    pane.change_tracking_view,
+                                )
+                            }) else {
+                                return;
+                            };
+                            section
+                        } else {
+                            section
+                        };
                         let Some(position) = pane.status_path_display_position(section, &path)
                         else {
                             return;
@@ -151,7 +206,11 @@ pub(super) fn for_window(root: WeakEntity<GitCometView>) -> DiffCommands {
                             StatusSection::Untracked => &pane.untracked_scroll,
                             StatusSection::Staged => &pane.staged_scroll,
                         };
-                        scroll.scroll_to_item_strict(index, gpui::ScrollStrategy::Center);
+                        if after_transfer.is_some() {
+                            scroll.scroll_to_item(index, gpui::ScrollStrategy::Nearest);
+                        } else {
+                            scroll.scroll_to_item_strict(index, gpui::ScrollStrategy::Center);
+                        }
                         cx.notify();
                     })
                 }
@@ -173,6 +232,7 @@ pub(super) fn for_window(root: WeakEntity<GitCometView>) -> DiffCommands {
                 }
                 DiffCommand::OpenPopover { .. }
                 | DiffCommand::FocusReviewFiles { .. }
+                | DiffCommand::ReviewWorkingTree { .. }
                 | DiffCommand::OpenHostedMenu { .. }
                 | DiffCommand::OpenFileHistory { .. } => unreachable!(),
             });
@@ -193,12 +253,17 @@ impl DiffNavigation for WindowNavigation {
     }
     fn layout(&self, cx: &App) -> Option<(Pixels, Pixels, bool, bool)> {
         self.0
-            .read_with(cx, |root, _| {
+            .read_with(cx, |root, cx| {
+                let auto_hidden = root.details_auto_hidden(cx);
                 (
                     root.sidebar_render_width,
-                    root.details_render_width,
+                    if auto_hidden {
+                        px(0.0)
+                    } else {
+                        root.details_render_width
+                    },
                     root.sidebar_collapsed,
-                    root.details_collapsed,
+                    root.details_collapsed || auto_hidden,
                 )
             })
             .ok()

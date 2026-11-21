@@ -22,6 +22,7 @@ mod worktree_uncommitted;
 use commit_form::*;
 use commit_metadata::*;
 pub(in crate::view) use commit_reword::commit_reword_availability;
+pub(in crate::view) use commit_reword::commit_reword_availability_for_commit;
 #[cfg(test)]
 pub(in crate::view) use commit_reword::commit_reword_blocker;
 pub(in crate::view) use commit_reword::commit_reword_submittable;

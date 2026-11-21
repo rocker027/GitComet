@@ -1,4 +1,5 @@
 use super::*;
+use crate::localization::Language;
 
 #[gpui::test]
 fn add_repo_menu_keyboard_navigation_opens_clone_prompt(cx: &mut gpui::TestAppContext) {
@@ -7,6 +8,7 @@ fn add_repo_menu_keyboard_navigation_opens_clone_prompt(cx: &mut gpui::TestAppCo
         cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
 
     cx.update(|window, app| {
+        app.set_global(Language::TraditionalChinese);
         view.update(app, |this, cx| {
             this.popover_host.update(cx, |host, cx| {
                 host.open_popover_at(
@@ -15,6 +17,18 @@ fn add_repo_menu_keyboard_navigation_opens_clone_prompt(cx: &mut gpui::TestAppCo
                     window,
                     cx,
                 );
+                let model = host
+                    .context_menu_model(&PopoverKind::AddRepoMenu, cx)
+                    .unwrap();
+                let labels: Vec<_> = model
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        ContextMenuItem::Entry { label, .. } => Some(label.as_ref()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(labels, ["開啟儲存庫", "複製儲存庫", "初始化儲存庫"]);
             });
         });
         let _ = window.draw(app);

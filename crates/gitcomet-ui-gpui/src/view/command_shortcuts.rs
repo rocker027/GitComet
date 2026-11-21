@@ -35,6 +35,40 @@ pub(crate) fn bind_keys(cx: &mut App) {
         "secondary-shift-b",
         super::commands::Command::ToggleDetails.id(),
     ));
+    // Undo / redo of Git operations, as in GitKraken. Text inputs, the Files
+    // explorer, the terminal and menus keep these keys for their own undo.
+    // Not `secondary-y`: the conflict resolver aligns lines with it.
+    for (keys, command) in [
+        ("secondary-z", super::commands::Command::UndoGitOperation),
+        (
+            "secondary-shift-z",
+            super::commands::Command::RedoGitOperation,
+        ),
+    ] {
+        let action = RunBuiltinCommand {
+            id: command.id().to_owned(),
+        };
+        let unbind = Unbind(action.name().into());
+        cx.bind_keys([
+            KeyBinding::new(keys, action, None),
+            KeyBinding::new(
+                keys,
+                unbind,
+                Some(
+                    "!(!Terminal && !ContextMenu && !PopoverPrompt && !TextInput && !FileExplorer)",
+                ),
+            ),
+        ]);
+    }
+    // GitKraken's keys for the same commands, where they are free here.
+    cx.bind_keys(bindings(
+        "secondary-l",
+        super::commands::Command::FetchAll.id(),
+    ));
+    cx.bind_keys(bindings(
+        "secondary-shift-u",
+        super::commands::Command::UnstageAll.id(),
+    ));
     #[cfg(not(target_os = "macos"))]
     cx.bind_keys(bindings(
         "ctrl-shift-j",

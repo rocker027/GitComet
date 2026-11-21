@@ -16,7 +16,11 @@ impl SidebarPaneView {
         let SidebarRowSlot { row_style, .. } = slot;
         let theme = ctx.theme;
         let repo_id = ctx.repo_id;
-        let tooltip = tooltip.clone();
+        let tooltip = if message.is_empty() {
+            text(cx, "Stash", "貯藏").into()
+        } else {
+            tooltip
+        };
         let stash_message_for_menu = message.as_ref().to_owned();
         let context_menu_invoker: SharedString =
             format!("stash_menu_{}_{}", repo_id.0, index).into();
@@ -94,6 +98,99 @@ impl SidebarPaneView {
                 }),
             )
             .gitcomet_tooltip(theme, tooltip.clone())
+            .into_any_element()
+    }
+
+    /// One tag. A click shows its commit in the history, as GitKraken's
+    /// Tags section jumps to the tagged commit.
+    pub(super) fn sidebar_tag_item_row(
+        _this: &Self,
+        ctx: &SidebarRowContext,
+        slot: SidebarRowSlot,
+        name: SharedString,
+        target: CommitId,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let SidebarRowSlot { ix, row_style, .. } = slot;
+        let theme = ctx.theme;
+        let repo_id = ctx.repo_id;
+        let row_group: SharedString = format!("tag_row_{}_{}", repo_id.0, ix).into();
+        let row_state = components::InteractiveRowState::default();
+        let tooltip: SharedString = format!("{name} · {}", target.short()).into();
+
+        div()
+            .id(("tag_sidebar_row", ix))
+            .debug_selector(move || format!("tag_sidebar_row_{ix}"))
+            .relative()
+            .group(row_group.clone())
+            .flex()
+            .items_center()
+            .gap(ctx.px(BRANCH_TREE_GAP_PX))
+            .pl(ctx.indent_px(0))
+            .pr(ctx.trailing_pad())
+            .h(ctx.row_height())
+            .w_full()
+            .interactive_row(row_style, row_state)
+            .child(ctx.tree_toggle_slot(None))
+            .child(ctx.tree_icon_slot("icons/tag.svg", ctx.icon_primary, 14.0))
+            .child(
+                components::FadingText::new(
+                    div()
+                        .text_size(theme.ui_text(14.0))
+                        .child(filtered_label_element(
+                            name.clone(),
+                            None,
+                            &ctx.filter_query,
+                            theme.colors.foreground.primary,
+                            theme.colors.accent.foreground,
+                            theme.ui_text(14.0).into(),
+                            FontWeight::NORMAL,
+                            cx,
+                        )),
+                    row_style.resolved_background(row_state),
+                )
+                .hover_bg(
+                    row_group.clone(),
+                    row_style.resolved_hover_background(row_state),
+                )
+                .render(ctx.ui_scale_percent)
+                .flex_1(),
+            )
+            .on_activate(
+                false,
+                controls::ControlActivation::Composite,
+                cx.listener({
+                    let target = target.clone();
+                    move |this, e: &ClickEvent, _w, cx| {
+                        if !e.standard_click() {
+                            return;
+                        }
+                        this.reveal_tag_commit_in_history(repo_id, target.clone(), cx);
+                        cx.notify();
+                    }
+                }),
+            )
+            // The tag's own menu: push, compare, create a branch, and
+            // deletions that ask first.
+            .on_pointer_click(
+                MouseButton::Right,
+                cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_popover_at(
+                        PopoverKind::CommitMenu {
+                            repo_id,
+                            commit_id: target.clone(),
+                            refs: crate::view::CommitMenuRefs::Only(
+                                crate::view::HistoryMenuRef::Tag(name.to_string()),
+                            ),
+                        },
+                        e.position,
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .gitcomet_tooltip(theme, tooltip)
             .into_any_element()
     }
 
@@ -322,7 +419,7 @@ impl SidebarPaneView {
                 row.child(
                     components::Button::new(
                         format!("submodule_placeholder_load_{}", repo_id.0),
-                        "Load",
+                        text(cx, "Load", "載入"),
                     )
                     .borderless()
                     .on_click(theme, cx, move |this, _e, _window, _cx| {
@@ -354,11 +451,13 @@ impl SidebarPaneView {
         let path_label = this.cached_path_display(&path);
         let (icon_color, badge_label, can_open, tooltip) = {
             let badge_label = match status {
-                SubmoduleStatus::NotInitialized => Some("Not loaded"),
-                SubmoduleStatus::HeadMismatch => Some("Head mismatch"),
-                SubmoduleStatus::MergeConflict => Some("Conflict"),
-                SubmoduleStatus::MissingMapping => Some("Missing mapping"),
-                SubmoduleStatus::Unknown(_) => Some("Unknown"),
+                SubmoduleStatus::NotInitialized => Some(text(cx, "Not loaded", "尚未載入")),
+                SubmoduleStatus::HeadMismatch => Some(text(cx, "Head mismatch", "HEAD 不一致")),
+                SubmoduleStatus::MergeConflict => Some(text(cx, "Conflict", "衝突")),
+                SubmoduleStatus::MissingMapping => {
+                    Some(text(cx, "Missing mapping", "缺少對應設定"))
+                }
+                SubmoduleStatus::Unknown(_) => Some(text(cx, "Unknown", "未知")),
                 SubmoduleStatus::UpToDate => None,
             };
             let icon_color = match status {
@@ -381,13 +480,17 @@ impl SidebarPaneView {
             let checked_out = checked_out_head
                 .as_ref()
                 .map(|head| head.as_ref())
-                .unwrap_or("not loaded");
-            let tooltip: SharedString = format!(
-                "{}\nRecorded: {}\nChecked out: {}",
-                path.display(),
-                recorded_head.as_ref(),
-                checked_out,
-            )
+                .unwrap_or(text(cx, "not loaded", "尚未載入"));
+            let display_path = path.display();
+            let recorded = recorded_head.as_ref();
+            let tooltip: SharedString = match Language::current(cx) {
+                Language::English => {
+                    format!("{display_path}\nRecorded: {recorded}\nChecked out: {checked_out}")
+                }
+                Language::TraditionalChinese => {
+                    format!("{display_path}\n已記錄：{recorded}\n已簽出：{checked_out}")
+                }
+            }
             .into();
             (icon_color, badge_label, can_open, tooltip)
         };

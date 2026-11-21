@@ -47,6 +47,11 @@ pub(in crate::view) enum RootRequest {
     SetCommitPushAfter(bool),
     SetCommitSkipHooks(bool),
     OpenPopoverCentered(PopoverKind),
+    /// Show `commit_id` in the details pane and open its message editor.
+    EditCommitMessage {
+        repo_id: RepoId,
+        commit_id: gitcomet_core::domain::CommitId,
+    },
     OpenFileHistory {
         repo_id: RepoId,
         path: PathBuf,
@@ -268,6 +273,17 @@ impl GitCometView {
                 self.perform_close_action(action, window, cx)
             }
             RootRequest::OpenPopoverCentered(kind) => self.open_popover_centered(kind, window, cx),
+            RootRequest::EditCommitMessage { repo_id, commit_id } => {
+                self.set_details_collapsed(false, cx);
+                self.store.dispatch(gitcomet_state::msg::Msg::SelectCommit {
+                    request_id: None,
+                    repo_id,
+                    commit_id: commit_id.clone(),
+                });
+                self.details_pane.update(cx, |pane, cx| {
+                    pane.request_commit_reword(repo_id, commit_id, window, cx)
+                });
+            }
             RootRequest::OpenFileHistory { repo_id, path } => {
                 self.open_file_history(repo_id, path, window, cx)
             }

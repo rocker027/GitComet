@@ -329,7 +329,14 @@ fn macos_file_menu_hides_unconfigured_external_editor_action() {
 #[test]
 fn macos_apply_patch_menu_is_disabled_for_bare_repositories() {
     for bare in [false, true] {
-        let menus = macos_app_menus_with_options(true, true, bare, false);
+        let menus = macos_app_menus_with_options(
+            true,
+            true,
+            bare,
+            false,
+            crate::localization::Language::English,
+            Vec::new(),
+        );
         let file = menus
             .iter()
             .find(|menu| menu.name.as_ref() == "File")
@@ -337,6 +344,75 @@ fn macos_apply_patch_menu_is_disabled_for_bare_repositories() {
         let patch = file.items.iter().find(|item| matches!(item, MenuItem::Action { action, .. } if action.name() == ApplyPatch.name())).unwrap();
         assert_eq!(patch.is_disabled(), bare);
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn traditional_chinese_macos_app_menus_preserve_native_actions() {
+    use crate::localization::Language;
+
+    let recent_path = PathBuf::from("/repos/團隊/專案");
+    let menus = Language::ALL.map(|language| {
+        macos_app_menus_with_options(
+            true,
+            false,
+            true,
+            false,
+            language,
+            vec![recent_path.clone()],
+        )
+    });
+    let [english, chinese] = &menus;
+    assert_eq!(
+        chinese
+            .iter()
+            .skip(1)
+            .map(|menu| menu.name.as_ref())
+            .collect::<Vec<_>>(),
+        ["檔案", "編輯", "顯示", "Window"]
+    );
+    for (original, translated) in english.iter().zip(chinese) {
+        assert_eq!(original.items.len(), translated.items.len());
+        for (original_item, translated_item) in original.items.iter().zip(&translated.items) {
+            assert_eq!(original_item.is_disabled(), translated_item.is_disabled());
+            if let MenuItem::Action {
+                action, os_action, ..
+            } = original_item
+            {
+                assert!(matches!(
+                    translated_item,
+                    MenuItem::Action { action: translated_action, os_action: translated_os, .. }
+                        if action.name() == translated_action.name() && os_action == translated_os
+                ));
+            }
+        }
+    }
+    assert!(matches!(
+        &chinese[0].items[3],
+        MenuItem::SystemMenu(menu)
+            if menu.name.as_ref() == "服務" && menu.menu_type == SystemMenuType::Services
+    ));
+    assert!(
+        menu_action_entries(&chinese[0])
+            .contains(&("命令面板".into(), ToggleCommandPalette.name().into(),))
+    );
+    assert!(
+        menu_action_entries(&chinese[4])
+            .contains(&("切換全螢幕".into(), ToggleFullScreen.name().into(),))
+    );
+
+    let recent = chinese[1].items.iter().find_map(|item| match item {
+        MenuItem::Submenu(menu) if menu.name.as_ref() == "最近使用的儲存庫" => Some(menu),
+        _ => None,
+    });
+    let recent = recent.expect("localized recent repositories submenu");
+    assert!(matches!(
+        recent.items.as_slice(),
+        [MenuItem::Action { name, action, .. }]
+            if name.as_ref() == "專案 - /repos/團隊"
+                && action.as_any().downcast_ref::<OpenRecentRepository>().is_some_and(|recent|
+                    recent.storage_key == session::path_storage_key(&recent_path))
+    ));
 }
 
 fn seed_worktree_repo(
@@ -2013,6 +2089,11 @@ impl Render for KeyBindingProbe {
             .on_action(record_action_listener!(CloseWindow))
             .on_action(record_action_listener!(PreviousRepository))
             .on_action(record_action_listener!(NextRepository))
+            .on_action(
+                cx.listener(|this, action: &ActivateRepositoryTab, _window, _cx| {
+                    this.record_action(action.name());
+                }),
+            )
             .on_action(record_action_listener!(TerminalCopy))
             .on_action(record_action_listener!(TerminalPaste))
             .on_action(record_action_listener!(TerminalSelectAll))
@@ -2046,8 +2127,10 @@ impl Render for KeyBindingProbe {
 fn repository_command_shortcuts_resolve_from_views_and_text_inputs(cx: &mut gpui::TestAppContext) {
     let cases = [
         ("secondary-alt-enter", "commit"),
+        ("secondary-shift-m", "focus-commit-message"),
         ("secondary-alt-s", "stage-all"),
         ("secondary-alt-u", "unstage-all"),
+        ("secondary-shift-u", "unstage-all"),
         ("secondary-alt-n", "create-branch"),
         ("secondary-alt-c", "checkout-branch"),
         #[cfg(target_os = "macos")]
@@ -2058,6 +2141,7 @@ fn repository_command_shortcuts_resolve_from_views_and_text_inputs(cx: &mut gpui
         ("secondary-r", "reload-repository"),
         ("f5", "reload-repository"),
         ("secondary-shift-f", "fetch-all"),
+        ("secondary-l", "fetch-all"),
         #[cfg(target_os = "macos")]
         ("cmd-alt-t", "open-external-terminal"),
         ("secondary-b", "toggle-sidebar"),
@@ -2104,6 +2188,44 @@ fn repository_command_shortcuts_resolve_from_views_and_text_inputs(cx: &mut gpui
                 "reserved keys in {context:?}"
             );
         }
+    }
+}
+
+/// Cmd/Ctrl-Z undoes a Git operation only outside text editing and the
+/// Files explorer, which keep the key for their own undo.
+#[gpui::test]
+fn git_undo_keys_leave_text_inputs_and_the_files_explorer_alone(cx: &mut gpui::TestAppContext) {
+    for (context, expect_git_undo) in [
+        (None, true),
+        (Some("TextInput"), false),
+        (Some("FileExplorer"), false),
+    ] {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let (view, cx) =
+            cx.add_window_view(|_, cx| KeyBindingProbe::new(context, Arc::clone(&observed), cx));
+        cx.update(|window, app| {
+            app.clear_key_bindings();
+            bind_app_keys(app);
+            bind_text_input_keys(app);
+            window.focus(&view.read(app).focus_handle(), app);
+            let _ = window.draw(app);
+        });
+        for (chord, id) in [("secondary-z", "undo"), ("secondary-shift-z", "redo")] {
+            observed.lock().unwrap().clear();
+            cx.simulate_keystrokes(chord);
+            let dispatched = observed.lock().unwrap().contains(&format!("command:{id}"));
+            assert_eq!(dispatched, expect_git_undo, "{chord} in {context:?}");
+        }
+        // Cmd/Ctrl-Y is the conflict resolver's manual alignment, never Redo.
+        observed.lock().unwrap().clear();
+        cx.simulate_keystrokes("secondary-y");
+        assert!(
+            !observed
+                .lock()
+                .unwrap()
+                .contains(&"command:redo".to_string()),
+            "secondary-y in {context:?}"
+        );
     }
 }
 
@@ -2665,6 +2787,8 @@ fn app_keybindings_resolve_expected_actions(cx: &mut gpui::TestAppContext) {
         ("secondary-shift-w", CloseWindow.name()),
         ("secondary-pageup", PreviousRepository.name()),
         ("secondary-pagedown", NextRepository.name()),
+        ("secondary-1", ActivateRepositoryTab { index: 0 }.name()),
+        ("secondary-9", ActivateRepositoryTab { index: 8 }.name()),
         ("secondary-+", IncreaseUiScale.name()),
         ("secondary-=", IncreaseUiScale.name()),
         ("secondary--", DecreaseUiScale.name()),

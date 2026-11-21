@@ -136,8 +136,8 @@ cask "gitcomet" do
     url "https://github.com/${github_repo}/releases/download/v#{version}/gitcomet-v#{version}-macos-#{arch}.dmg"
     depends_on macos: :sequoia
 
-    app "GitComet.app"
-    binary "#{appdir}/GitComet.app/Contents/MacOS/gitcomet", target: "gitcomet"
+    app "RevWeave.app"
+    binary "#{appdir}/RevWeave.app/Contents/MacOS/gitcomet", target: "gitcomet"
   end
 
   on_linux do
@@ -155,7 +155,7 @@ cask "gitcomet" do
     binary "gitcomet-v#{version}-linux-#{arch}.AppImage", target: "gitcomet"
   end
 
-  name "GitComet"
+  name "RevWeave"
   desc "Fast, resource-efficient Git GUI written in Rust"
   homepage "https://github.com/${github_repo}"
 end

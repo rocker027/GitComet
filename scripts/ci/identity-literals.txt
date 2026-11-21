@@ -12,7 +12,7 @@ crates/gitcomet-app/src/launch.rs identifier 1 GitComet's default app icon, used
 crates/gitcomet-core/src/auth/askpass.rs identifier 7 askpass helper script and prompt file names
 crates/gitcomet-core/src/conflict_session.rs identifier 1 in-memory merge block sentinel
 crates/gitcomet-base/src/fs_utils.rs identifier 1 temporary file prefix
-crates/gitcomet-base/src/identity.rs display-name 9 GitComet's own identity (definition site)
+crates/gitcomet-base/src/identity.rs display-name 15 GitComet and RevWeave identity definitions
 crates/gitcomet-base/src/identity.rs identifier 9 GitComet's own identity (definition site)
 crates/gitcomet-base/src/identity.rs package-metadata 1 GitComet's own identity (definition site)
 crates/gitcomet-base/src/identity.rs vendor 7 GitComet's own identity (definition site)
@@ -50,5 +50,5 @@ crates/gitcomet-ui-gpui/src/view/settings_window/rows.rs display-name 1 layout-o
 crates/gitcomet-ui-gpui/src/view/settings_window/rows.rs vendor 1 layout-overflow fixture row
 crates/gitcomet-ui-gpui/src/workspaces.rs identifier 1 thread name
 crates/gitcomet-ui-kit/src/click.rs identifier 1 internal element id
-crates/gitcomet/build.rs identifier 3 GitComet executable's Windows resources
+crates/gitcomet/build.rs identifier 2 GitComet executable's Windows resource script
 crates/gitcomet/src/bin/perf_app_launch.rs identifier 1 benchmark launches GitComet's own executable

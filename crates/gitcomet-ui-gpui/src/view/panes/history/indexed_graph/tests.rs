@@ -9,6 +9,113 @@ fn raw(row: usize) -> [u8; 20] {
 }
 
 #[test]
+fn branch_navigation_rebuilds_when_same_length_projection_hides_a_different_row() {
+    let cancel = CancellationToken::new();
+    let mut builder = HistoryIndexBuilder::new(
+        HistorySnapshot("branch-navigation-visibility".into()),
+        LogScope::AllBranches,
+        20,
+    )
+    .unwrap();
+    let parents: &[&[usize]] = &[&[2, 3], &[2, 4], &[3], &[4], &[]];
+    for (row, parents) in parents.iter().enumerate() {
+        let parents: Vec<_> = parents.iter().copied().map(raw).collect();
+        builder
+            .push(&raw(row), parents.iter().map(|id| id.as_slice()), false)
+            .unwrap();
+    }
+    let index = builder.finish(&cancel).unwrap();
+    let stash = |row| StashEntry {
+        index: 0,
+        id: index.commit_id(row).unwrap(),
+        message: "saved".into(),
+        created_at: None,
+    };
+    let old =
+        IndexedGraph::build(index.clone(), &[], &[], &[stash(0)], None, None, &cancel).unwrap();
+    let next = IndexedGraph::build_reusing(
+        index.clone(),
+        &[],
+        &[],
+        &[stash(1)],
+        None,
+        None,
+        &cancel,
+        Some(&old),
+    )
+    .unwrap();
+    assert_eq!(old.projection.len(), next.projection.len());
+    assert_ne!(old.projection, next.projection);
+    assert!(
+        !old.branch_children
+            .shares_storage_with(&next.branch_children)
+    );
+
+    let child = |graph: &IndexedGraph, row| {
+        super::super::branch_navigation::indexed_branch_neighbor(
+            &graph.projection,
+            &graph.branch_children,
+            &index.commit_id(row).unwrap(),
+            -1,
+            None,
+        )
+    };
+    assert_eq!(child(&old, 4), Some(2));
+    assert_eq!(child(&next, 3), Some(2));
+    assert_eq!(child(&next, 4), None);
+}
+
+#[test]
+fn indexed_stash_style_survives_checkpoint_replay_and_stash_list_refresh() {
+    let base = CHECKPOINT_STRIDE + 2;
+    let mut builder = HistoryIndexBuilder::new(
+        HistorySnapshot("stash-style".into()),
+        LogScope::AllBranches,
+        20,
+    )
+    .unwrap();
+    for row in 0..=base + 1 {
+        let parent = match row {
+            0 => Some(2),
+            1 => Some(base),
+            _ if row <= base => Some(row + 1),
+            _ => None,
+        }
+        .map(raw);
+        builder
+            .push(&raw(row), parent.iter().map(|id| id.as_slice()), false)
+            .unwrap();
+    }
+    let cancel = CancellationToken::new();
+    let index = builder.finish(&cancel).unwrap();
+    let old = IndexedGraph::build(index.clone(), &[], &[], &[], None, None, &cancel).unwrap();
+    let range = CHECKPOINT_STRIDE..base + 2;
+    let old_rows = old.window(range.clone(), &cancel).unwrap();
+    assert!(
+        old_rows.rows[0]
+            .lanes_now
+            .iter()
+            .all(|lane| !lane.is_stash())
+    );
+    let entry = StashEntry {
+        index: 0,
+        id: index.commit_id(1).unwrap(),
+        message: "saved".into(),
+        created_at: None,
+    };
+    let graph =
+        IndexedGraph::build_reusing(index, &[], &[], &[entry], None, None, &cancel, Some(&old))
+            .unwrap();
+    let rows = graph.window(range, &cancel).unwrap().rows;
+    assert!(rows[0].lanes_now[1].is_stash());
+    assert!(rows[1].lanes_next[1].is_stash());
+    assert!(rows[2].lanes_now[1].is_stash());
+    assert_eq!(rows[2].joins_in[0].from_col, 1);
+    assert!(rows[2].lanes_next.iter().all(|lane| !lane.is_stash()));
+    assert!(rows[3].lanes_now.iter().all(|lane| !lane.is_stash()));
+}
+
+#[test]
 fn checkpoint_windows_match_continuous_graph_and_attribution() {
     for (linear, width) in [(true, 1), (false, 83), (false, 512)] {
         let count = 4200;

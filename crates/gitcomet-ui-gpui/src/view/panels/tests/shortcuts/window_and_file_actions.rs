@@ -212,6 +212,28 @@ fn bottom_status_bar_free_badge_opens_editions_page_and_updates_tooltip_on_hover
 }
 
 #[gpui::test]
+fn bottom_status_bar_shows_traditional_chinese_tooltip(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new_test(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    cx.update(|_window, app| {
+        app.set_global(crate::localization::Language::TraditionalChinese);
+        app.refresh_windows();
+    });
+    open_repo_for_bottom_status_bar_test(cx, &view, RepoId(714), "bottom_status_chinese");
+
+    let badge = cx.debug_bounds("bottom_status_bar_free_badge").unwrap();
+    cx.simulate_mouse_move(badge.center(), None, Modifiers::default());
+    crate::view::test_support::wait_for_native_tooltip(cx);
+
+    assert_eq!(
+        crate::view::test_support::tooltip_text(cx, &view),
+        Some("查看 GitComet 的版本方案".into())
+    );
+}
+
+#[gpui::test]
 fn bottom_status_bar_pro_link_renders_and_opens_editions_page(cx: &mut gpui::TestAppContext) {
     let (store, events) = AppStore::new_test(Arc::new(TestBackend));
     let (view, cx) = cx.add_window_view(|window, cx| {

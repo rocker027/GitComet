@@ -1,5 +1,6 @@
 use super::merge_commit_confirm::merge_commit_repo_is_ready;
 use super::*;
+use crate::localization::{Language, text};
 use gitcomet_core::domain::ApplyChangeTarget;
 
 /// Paths the dialog lists before summarizing the rest as "and N more".
@@ -54,33 +55,53 @@ pub(super) fn panel(
         this.close_popover_and_restore_focus(window, cx);
     };
 
-    let mut dialog = if single {
-        ConfirmDialog::new("Commit applied change?", DIALOG_380_WIDTH).text(
-            theme,
-            format!("Apply the change to this file from {revision} to the current branch?"),
-        )
+    let language = Language::current(cx);
+    let title = if single {
+        language.text("Commit applied change?", "要提交套用的變更嗎？")
     } else {
-        ConfirmDialog::new("Commit applied changes?", DIALOG_380_WIDTH).text(
-            theme,
-            format!(
-                "Apply the changes to these {} files from {revision} to the current branch?",
-                listed.len() + unlisted
-            ),
-        )
+        language.text("Commit applied changes?", "要提交套用的變更嗎？")
     };
+    let count = listed.len() + unlisted;
+    let message = match (language, single) {
+        (Language::English, true) => {
+            format!("Apply the change to this file from {revision} to the current branch?")
+        }
+        (Language::English, false) => format!(
+            "Apply the changes to these {count} files from {revision} to the current branch?"
+        ),
+        (Language::TraditionalChinese, true) => {
+            format!("要將 {revision} 中這個檔案的變更套用到目前分支嗎？")
+        }
+        (Language::TraditionalChinese, false) => {
+            format!("要將 {revision} 中這 {count} 個檔案的變更套用到目前分支嗎？")
+        }
+    };
+    let mut dialog = ConfirmDialog::new(title, DIALOG_380_WIDTH).text(theme, message);
     for path in listed {
         dialog = dialog.mono_value(theme, path);
     }
     if unlisted > 0 {
-        dialog = dialog.note(theme, format!("and {unlisted} more"));
+        dialog = dialog.note(
+            theme,
+            match language {
+                Language::English => format!("and {unlisted} more"),
+                Language::TraditionalChinese => format!("以及另外 {unlisted} 個檔案"),
+            },
+        );
     }
     dialog
         .note(
             theme,
             if single {
-                "Commit the applied change immediately?"
+                language.text(
+                    "Commit the applied change immediately?",
+                    "要立即提交套用的變更嗎？",
+                )
             } else {
-                "Commit the applied changes immediately?"
+                language.text(
+                    "Commit the applied changes immediately?",
+                    "要立即提交套用的變更嗎？",
+                )
             },
         )
         .render(
@@ -96,7 +117,7 @@ pub(super) fn panel(
                 .items_center()
                 .gap_1()
                 .child(
-                    components::Button::new("apply_file_change_no", "No")
+                    components::Button::new("apply_file_change_no", text(cx, "No", "僅套用"))
                         .style(components::ButtonStyle::Outlined)
                         .disabled(actions_disabled)
                         .on_click(theme, cx, {
@@ -105,7 +126,7 @@ pub(super) fn panel(
                         }),
                 )
                 .child(
-                    components::Button::new("apply_file_change_yes", "Yes")
+                    components::Button::new("apply_file_change_yes", text(cx, "Yes", "套用並提交"))
                         .style(components::ButtonStyle::Filled)
                         .disabled(actions_disabled)
                         .on_click(theme, cx, move |this, _e, window, cx| {

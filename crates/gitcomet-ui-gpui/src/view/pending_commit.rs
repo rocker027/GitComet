@@ -147,6 +147,7 @@ mod tests {
                     amend,
                     push_after_commit: false,
                     hooks: gitcomet_core::services::GitHooks::Run,
+                    stage_paths: Vec::new(),
                 },
             },
         }
@@ -280,6 +281,7 @@ mod tests {
             amend: true,
             push_after_commit: false,
             hooks: gitcomet_core::services::GitHooks::Run,
+            stage_paths: Vec::new(),
         });
         assert_eq!(p.advance(&state_with(repo)), Some(false));
         assert!(!p.settled());

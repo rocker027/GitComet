@@ -627,6 +627,62 @@ pub(super) fn schedule_rename_branch(
     );
 }
 
+/// Tells the Undo journal the value `reference` holds right before the
+/// pending operation of `kind` moves it: the state that planned the entry
+/// may lag behind the repository. Sent before the operation's completion,
+/// on the same channel, so it always arrives first.
+pub(super) fn report_git_undo_ref(
+    msg_tx: &StoreWorkerSender,
+    repo_id: RepoId,
+    kind: crate::model::PendingGitUndoKind,
+    reference: String,
+    value: Option<gitcomet_core::domain::CommitId>,
+) {
+    send_or_log(
+        msg_tx,
+        Msg::Internal(InternalMsg::GitUndoRefObserved {
+            repo_id,
+            kind,
+            reference,
+            value,
+        }),
+    );
+}
+
+/// The tip of local branch `name` as the repository has it now.
+fn local_branch_tip(
+    repo: &dyn GitRepository,
+    name: &str,
+) -> Option<gitcomet_core::domain::CommitId> {
+    repo.list_branches(&gitcomet_core::services::CancellationToken::new())
+        .ok()?
+        .into_iter()
+        .find(|branch| branch.name == name)
+        .map(|branch| branch.target)
+}
+
+/// Deletes `name`, first reporting its tip to the Undo journal.
+fn delete_branch_reporting_tip(
+    repo: &dyn GitRepository,
+    msg_tx: &StoreWorkerSender,
+    repo_id: RepoId,
+    name: &str,
+    force: bool,
+) -> Result<(), Error> {
+    let kind = if force {
+        crate::model::PendingGitUndoKind::ForceDeleteBranch
+    } else {
+        crate::model::PendingGitUndoKind::DeleteBranch
+    };
+    let tip = local_branch_tip(repo, name);
+    report_git_undo_ref(msg_tx, repo_id, kind, format!("refs/heads/{name}"), tip);
+    if force {
+        repo.delete_branch_force(name)
+    } else {
+        repo.delete_branch(name)
+    }
+}
+
 pub(super) fn schedule_delete_branch(
     executor: &TaskExecutor,
     repos: &RepositoryRuntimes,
@@ -636,6 +692,7 @@ pub(super) fn schedule_delete_branch(
 ) {
     let context = single_line_context(&name);
     let refused_name = name.clone();
+    let observer = msg_tx.clone();
     schedule_repo_action_with_hook(
         executor,
         repos,
@@ -643,7 +700,7 @@ pub(super) fn schedule_delete_branch(
         repo_id,
         RepoActionKind::DeleteBranch,
         context,
-        move |repo| repo.delete_branch(&name),
+        move |repo| delete_branch_reporting_tip(repo.as_ref(), &observer, repo_id, &name, false),
         send_refresh_branches_on_success,
         move |repo_id, result| {
             if is_branch_not_fully_merged(&result) {
@@ -760,6 +817,7 @@ pub(super) fn schedule_force_delete_branch(
     name: String,
 ) {
     let context = single_line_context(&name);
+    let observer = msg_tx.clone();
     schedule_repo_action_with_hook(
         executor,
         repos,
@@ -767,7 +825,7 @@ pub(super) fn schedule_force_delete_branch(
         repo_id,
         RepoActionKind::ForceDeleteBranch,
         context,
-        move |repo| repo.delete_branch_force(&name),
+        move |repo| delete_branch_reporting_tip(repo.as_ref(), &observer, repo_id, &name, true),
         send_refresh_branches_on_success,
         repo_action_finished(RepoActionKind::ForceDeleteBranch),
     );
@@ -976,6 +1034,7 @@ pub(super) fn schedule_commit(
 ) {
     let context = commit_context(&request.message, request.hooks);
     let (message, amend, hooks) = (request.message.clone(), request.amend, request.hooks);
+    let stage_paths = request.stage_paths.clone();
     schedule_repo_action_with_result(
         executor,
         repos,
@@ -985,6 +1044,14 @@ pub(super) fn schedule_commit(
         context,
         move |repo| {
             run_with_git_auth(auth, || {
+                // Staged in the same run, so the commit never starts before
+                // the stage is done. Other actions on the repository can
+                // still run alongside, as they can with any commit.
+                if !stage_paths.is_empty() {
+                    let paths: Vec<&std::path::Path> =
+                        stage_paths.iter().map(|path| path.as_path()).collect();
+                    repo.stage(&paths)?;
+                }
                 if amend {
                     repo.commit_amend_with_hooks(&message, identity.as_ref(), hooks)
                 } else {
@@ -1090,6 +1157,69 @@ pub(super) fn schedule_pop_stash(
                 },
             );
         },
+    );
+}
+
+/// Undo or redo: one ref transaction that fails as a whole when any ref no
+/// longer holds the value it is expected to.
+/// Confirms against the repository itself what the undo was planned from:
+/// the state can lag behind a checkout or another worktree.
+fn confirm_git_undo_checks(
+    repo: &dyn GitRepository,
+    checks: &[crate::model::GitUndoCheck],
+) -> Result<(), Error> {
+    if checks.is_empty() {
+        return Ok(());
+    }
+    let refused = |reason: String| Err(Error::new(ErrorKind::Backend(reason)));
+    let head = repo.current_branch(&gitcomet_core::services::CancellationToken::new())?;
+    for check in checks {
+        let branch = check.branch.as_str();
+        if check.must_be_head && head != branch {
+            return refused(format!(
+                "{branch} is no longer checked out; check it out first"
+            ));
+        }
+        if check.deletes && head == branch {
+            return refused(format!("{branch} is checked out"));
+        }
+        if repo.branch_checked_out_in_other_worktree(branch)?.is_some() {
+            return refused(format!("{branch} is checked out in another worktree"));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn schedule_git_undo(
+    executor: &TaskExecutor,
+    repos: &RepositoryRuntimes,
+    msg_tx: StoreWorkerSender,
+    repo_id: RepoId,
+    direction: crate::model::GitUndoDirection,
+    updates: Vec<gitcomet_core::services::RefUpdate>,
+    checks: Vec<crate::model::GitUndoCheck>,
+) {
+    let action = crate::model::GitUndoDirection::action_kind(direction);
+    let context = single_line_context(
+        updates
+            .iter()
+            .map(|update| update.reference.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    schedule_repo_action_with_hook(
+        executor,
+        repos,
+        msg_tx,
+        repo_id,
+        action,
+        context,
+        move |repo| {
+            confirm_git_undo_checks(repo.as_ref(), &checks)?;
+            repo.update_refs_with_output(&updates).map(|_| ())
+        },
+        send_refresh_branches_on_success,
+        repo_action_finished(action),
     );
 }
 
