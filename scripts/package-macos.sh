@@ -6,13 +6,14 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/package-macos.sh --version VERSION [--arch arm64|x86_64] [--release|--debug] [--no-build] [--skip-dmg] [--out-dir PATH] [--symbols-out PATH] [--codesign-identity NAME] [--codesign-keychain PATH]
+Usage: scripts/package-macos.sh [--version VERSION] [--arch arm64|x86_64] [--release|--debug] [--no-build] [--skip-dmg] [--out-dir PATH] [--symbols-out PATH] [--codesign-identity NAME] [--codesign-keychain PATH]
 
 Builds a macOS app bundle and release artifacts:
   - gitcomet-v<VERSION>-macos-<ARCH>.dmg
 
 Defaults:
-  --release, build if needed, output to ./dist
+  --version from [workspace.package] in Cargo.toml, --release, build if needed,
+  output to ./dist
 
 With --symbols-out, Breakpad symbols are written to that directory as a symbol
 store. This happens here rather than in the release workflow because this script
@@ -93,7 +94,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$version" ]]; then
-  echo "--version is required (e.g. --version 0.2.0)." >&2
+  version="$(awk '
+    /^\[workspace\.package\]/ { in_section = 1; next }
+    /^\[/ { in_section = 0 }
+    in_section && $1 == "version" { gsub(/"/, "", $3); print $3; exit }
+  ' "${SCRIPT_DIR}/../Cargo.toml")"
+fi
+if [[ -z "$version" ]]; then
+  echo "--version was not given and no [workspace.package] version was found in Cargo.toml." >&2
   exit 2
 fi
 

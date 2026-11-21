@@ -11,5 +11,6 @@ https://github.com/Auto-Explore/GitComet
 Traditional Chinese localization and changes to the commit history graph.
 2026-11-20: The fork introduced the RevWeave name and artwork, separate
 application identifiers and profile, and its own release and source links.
+2026-11-21: The fork adopted its own version numbering, starting at 1.1.0.
 
 Source and release downloads: https://github.com/rocker027/GitComet/releases
