@@ -1397,31 +1397,79 @@ fn browser_launch_does_not_set_the_foreground_flag_by_default() {
 #[test]
 fn foreground_environment_parses_boolean_values() {
     assert_eq!(
-        foreground_requested(false, None).unwrap(),
+        foreground_requested(false, "REVWEAVE_FOREGROUND", None).unwrap(),
         cfg!(debug_assertions)
     );
     for value in ["", "  "] {
         assert_eq!(
-            foreground_requested(false, Some(value.into())).unwrap(),
+            foreground_requested(false, "REVWEAVE_FOREGROUND", Some(value.into())).unwrap(),
             cfg!(debug_assertions),
             "{value:?}"
         );
     }
     for value in ["0", "false", " FALSE "] {
         assert!(
-            !foreground_requested(false, Some(value.into())).unwrap(),
+            !foreground_requested(false, "REVWEAVE_FOREGROUND", Some(value.into())).unwrap(),
             "{value}"
         );
     }
     for value in ["1", "true", " TRUE "] {
         assert!(
-            foreground_requested(false, Some(value.into())).unwrap(),
+            foreground_requested(false, "REVWEAVE_FOREGROUND", Some(value.into())).unwrap(),
             "{value}"
         );
     }
-    assert!(foreground_requested(false, Some("typo".into())).is_err());
-    assert!(foreground_requested(true, Some("typo".into())).unwrap());
-    assert!(foreground_requested(true, Some("0".into())).unwrap());
+    assert!(foreground_requested(false, "REVWEAVE_FOREGROUND", Some("typo".into())).is_err());
+    assert!(foreground_requested(true, "REVWEAVE_FOREGROUND", Some("typo".into())).unwrap());
+    assert!(foreground_requested(true, "REVWEAVE_FOREGROUND", Some("0".into())).unwrap());
+}
+
+#[test]
+fn foreground_errors_name_the_variable_that_was_read() {
+    let error =
+        foreground_requested(false, "REVWEAVE_FOREGROUND", Some("typo".into())).unwrap_err();
+    assert!(error.contains("REVWEAVE_FOREGROUND"), "{error}");
+}
+
+#[test]
+fn foreground_variable_is_named_after_the_executable() {
+    assert_eq!(foreground_env_name("revweave"), "REVWEAVE_FOREGROUND");
+    assert_eq!(foreground_env_name("gitcomet"), "GITCOMET_FOREGROUND");
+    assert_eq!(
+        foreground_env_name("comet-example"),
+        "COMET_EXAMPLE_FOREGROUND"
+    );
+}
+
+#[test]
+fn product_foreground_variable_wins_over_the_legacy_one() {
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| OsString::from(*value))
+        }
+    };
+    let both = env(&[("REVWEAVE_FOREGROUND", "1"), ("GITCOMET_FOREGROUND", "0")]);
+    assert_eq!(
+        foreground_environment("revweave", both),
+        ("REVWEAVE_FOREGROUND".to_owned(), Some(OsString::from("1")))
+    );
+    let legacy = env(&[("GITCOMET_FOREGROUND", "0")]);
+    assert_eq!(
+        foreground_environment("revweave", legacy),
+        ("GITCOMET_FOREGROUND".to_owned(), Some(OsString::from("0")))
+    );
+    let empty_product = env(&[("REVWEAVE_FOREGROUND", ""), ("GITCOMET_FOREGROUND", "0")]);
+    assert_eq!(
+        foreground_environment("revweave", empty_product),
+        ("REVWEAVE_FOREGROUND".to_owned(), Some(OsString::from("")))
+    );
+    assert_eq!(
+        foreground_environment("revweave", env(&[])),
+        ("GITCOMET_FOREGROUND".to_owned(), None)
+    );
 }
 
 #[test]

@@ -170,9 +170,10 @@ impl AppLaunch {
 
     /// Runs as the product executable with the process arguments: forwards
     /// to a running browser, detaches release builds from an interactive terminal
-    /// unless `--foreground`/`GITCOMET_FOREGROUND=1`, then runs like [`Self::run`].
-    /// Debug builds stay attached by default; `GITCOMET_FOREGROUND=0` opts in
-    /// to detachment in either build.
+    /// unless `--foreground` or `<EXECUTABLE>_FOREGROUND=1` (e.g.
+    /// `REVWEAVE_FOREGROUND`; `GITCOMET_FOREGROUND` is read when that is unset),
+    /// then runs like [`Self::run`]. Debug builds stay attached by default;
+    /// setting the variable to `0` opts in to detachment in either build.
     pub fn run_cli(self) -> i32 {
         self.run_args(std::env::args_os().collect(), LaunchEntry::Cli)
     }
@@ -219,10 +220,11 @@ impl AppLaunch {
                     return exit_code::ERROR;
                 }
                 let foreground = if is_cli_browser {
-                    match cli::foreground_requested(
-                        parsed.foreground,
-                        std::env::var_os("GITCOMET_FOREGROUND"),
-                    ) {
+                    let (name, value) = cli::foreground_environment(
+                        gitcomet_core::identity::current().executable_name(),
+                        |name| std::env::var_os(name),
+                    );
+                    match cli::foreground_requested(parsed.foreground, &name, value) {
                         Ok(foreground) => foreground,
                         Err(message) => {
                             eprintln!("{message}");

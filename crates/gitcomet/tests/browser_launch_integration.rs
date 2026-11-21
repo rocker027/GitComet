@@ -25,13 +25,14 @@ fn run_without_display(
         .env_remove("WAYLAND_DISPLAY")
         .env_remove("XDG_SESSION_TYPE")
         .env_remove("GITCOMET_FOREGROUND")
+        .env_remove("REVWEAVE_FOREGROUND")
         .env("GITCOMET_PROFILE_ROOT", profile)
         .env(
             "GITCOMET_BROWSER_INSTANCE_FILE",
             profile.join("instance.json"),
         );
     if let Some(foreground) = foreground {
-        command.env("GITCOMET_FOREGROUND", foreground);
+        command.env("REVWEAVE_FOREGROUND", foreground);
     }
     command.output().unwrap()
 }

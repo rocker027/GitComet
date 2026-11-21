@@ -248,7 +248,44 @@ pub(crate) struct ParsedLaunch {
     pub(crate) startup_socket: Option<PathBuf>,
 }
 
-pub(crate) fn foreground_requested(flag: bool, value: Option<OsString>) -> Result<bool, String> {
+/// The foreground variable older builds read; still honoured when the
+/// product's own variable is unset.
+pub(crate) const LEGACY_FOREGROUND_ENV: &str = "GITCOMET_FOREGROUND";
+
+/// The product's foreground variable, e.g. `REVWEAVE_FOREGROUND` for the
+/// `revweave` executable.
+pub(crate) fn foreground_env_name(executable_name: &str) -> String {
+    let prefix: String = executable_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("{prefix}_FOREGROUND")
+}
+
+/// The foreground variable to honour and its value: the product's own when
+/// set, otherwise [`LEGACY_FOREGROUND_ENV`].
+pub(crate) fn foreground_environment(
+    executable_name: &str,
+    var: impl Fn(&str) -> Option<OsString>,
+) -> (String, Option<OsString>) {
+    let name = foreground_env_name(executable_name);
+    if let Some(value) = var(&name) {
+        return (name, Some(value));
+    }
+    (LEGACY_FOREGROUND_ENV.to_owned(), var(LEGACY_FOREGROUND_ENV))
+}
+
+pub(crate) fn foreground_requested(
+    flag: bool,
+    name: &str,
+    value: Option<OsString>,
+) -> Result<bool, String> {
     if flag {
         return Ok(true);
     }
@@ -263,7 +300,7 @@ pub(crate) fn foreground_requested(flag: bool, value: Option<OsString>) -> Resul
         Some("") => Ok(cfg!(debug_assertions)),
         Some("0" | "false") => Ok(false),
         Some("1" | "true") => Ok(true),
-        _ => Err("Invalid GITCOMET_FOREGROUND value: expected 1/true or 0/false.".into()),
+        _ => Err(format!("Invalid {name} value: expected 1/true or 0/false.")),
     }
 }
 
